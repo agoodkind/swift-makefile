@@ -6,7 +6,7 @@
 
 - `bootstrap.mk` fetches `swift.mk`, shared configs, shared helper scripts, and shared modules into `.make/`.
 - `swift.mk` defines the shared public targets.
-- `swift-build.mk` defines shared build, run, generate, clean, and deploy targets from consumer-provided commands.
+- `swift-build.mk` defines shared build, run, generate, clean, deploy, and install targets from consumer-provided commands.
 - `swift-release.mk` defines shared release wrapper targets from consumer-provided commands.
 - `scripts/` contains the shared shell and awk helpers.
 - `swiftcheck/` contains the shared SwiftSyntax analyzer package.
@@ -14,6 +14,11 @@
 ## Public targets
 
 - `make build`
+- `make generate`
+- `make clean`
+- `make run`
+- `make deploy`
+- `make install`
 - `make check`
 - `make build-check`
 - `make lint`
@@ -43,6 +48,7 @@
 ## Bootstrap
 
 `bootstrap.sh` writes a small SwiftPM consumer `Makefile` and `bootstrap.mk`.
+Consumers that want shared build-style targets must load `swift-build.mk`.
 
 ## Local override
 

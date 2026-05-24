@@ -1,4 +1,4 @@
-.PHONY: build deploy run generate clean
+.PHONY: build deploy install run generate clean
 
 build: $(default-build-deps)
 ifneq ($(strip $(SWIFT_GENERATE_CMD)),)
@@ -24,12 +24,14 @@ else
 	@$(SWIFT_GENERATE_CMD)
 endif
 
-deploy:
+deploy: build
 ifeq ($(strip $(SWIFT_DEPLOY_CMD)),)
 	@echo "swift-build.mk: SWIFT_DEPLOY_CMD is not set"; exit 1
 else
 	@$(SWIFT_DEPLOY_CMD)
 endif
+
+install: deploy
 
 clean:
 ifneq ($(strip $(SWIFT_CLEAN_CMD)),)

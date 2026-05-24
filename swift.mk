@@ -1,4 +1,4 @@
-.PHONY: build deploy clean help run generate lint lint-tools lint-swiftlint \
+.PHONY: build deploy install clean help run generate lint lint-tools lint-swiftlint \
 	lint-swiftlint-baseline lint-swiftlint-baseline-prune-fixed lint-swiftlint-baseline-remove-fixed lint-swiftlint-baseline-accept-new \
 	lint-files lint-diff lint-format lint-complexity lint-complexity-baseline lint-complexity-baseline-prune-fixed lint-complexity-baseline-remove-fixed lint-complexity-baseline-accept-new fmt test analyze audit build-check build-check-start check \
 	lint-deadcode lint-deadcode-baseline lint-deadcode-baseline-prune-fixed lint-deadcode-baseline-remove-fixed lint-deadcode-baseline-accept-new \
@@ -244,42 +244,14 @@ else
 default-build-deps :=
 endif
 
-ifeq ($(filter swift-build.mk,$(SWIFT_MK_MODULES)),)
-build: $(default-build-deps)
-ifeq ($(strip $(SWIFT_BUILD_CMD)),)
-	@echo "build: SWIFT_BUILD_CMD is not set"; exit 1
-else
-	@$(SWIFT_BUILD_CMD)
-endif
-
-generate:
-ifneq ($(strip $(SWIFT_GENERATE_CMD)),)
-	@$(SWIFT_GENERATE_CMD)
-endif
-
-run: build
-ifeq ($(strip $(SWIFT_RUN_CMD)),)
-	@echo "run: SWIFT_RUN_CMD is not set"; exit 1
-else
-	@$(SWIFT_RUN_CMD)
-endif
-
-deploy:
-ifeq ($(strip $(SWIFT_DEPLOY_CMD)),)
-	@echo "deploy: SWIFT_DEPLOY_CMD is not set"; exit 1
-else
-	@$(SWIFT_DEPLOY_CMD)
-endif
-
-clean:
-ifneq ($(strip $(SWIFT_CLEAN_CMD)),)
-	@$(SWIFT_CLEAN_CMD)
-endif
-endif
-
 help:
 	@printf '%s\n' 'Canonical entry points:'
 	@printf '  %-40s %s\n' 'build' 'run build-check, then execute SWIFT_BUILD_CMD'
+	@printf '  %-40s %s\n' 'run' 'run build, then execute SWIFT_RUN_CMD'
+	@printf '  %-40s %s\n' 'deploy' 'run build, then execute SWIFT_DEPLOY_CMD'
+	@printf '  %-40s %s\n' 'install' 'alias for deploy'
+	@printf '  %-40s %s\n' 'generate' 'execute SWIFT_GENERATE_CMD when configured'
+	@printf '  %-40s %s\n' 'clean' 'execute SWIFT_CLEAN_CMD when configured'
 	@printf '  %-40s %s\n' 'check' 'alias for lint'
 	@printf '  %-40s %s\n' 'lint' 'run every lint gate'
 	@printf '  %-40s %s\n' 'build-check' 'run lint and audit'
