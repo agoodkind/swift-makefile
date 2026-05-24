@@ -1,0 +1,10 @@
+.make/
+.build/
+.swiftpm/
+Package.resolved
+build/
+Products/
+Derived/
+DerivedData/
+*.xcodeproj
+*.xcworkspace

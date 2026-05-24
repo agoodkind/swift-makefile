@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  workflow_call:
+
+jobs:
+  release:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Compute release tag
+        id: tag
+        run: |
+          TS=$(date -u +%Y%m%d%H%M)
+          SHA=$(git rev-parse --short HEAD)
+          TAG="${TS}-${SHA}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      - name: Push tag
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG"
+          git push origin "$TAG"
+      - name: Archive repo
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          mkdir release
+          git archive --format tar.gz --output "release/swift-makefile-${TAG}.tar.gz" HEAD
+      - name: Publish release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          gh release create "$TAG" "release/swift-makefile-${TAG}.tar.gz"

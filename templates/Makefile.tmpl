@@ -1,0 +1,16 @@
+# `make help` is the canonical source of truth for the shared Swift targets.
+# Consumer repos keep this file small and keep shared lint, build, audit,
+# baseline, and update behavior in swift-makefile.
+
+SWIFT_MK_MODULES := swift-build.mk
+SWIFT_MK_BUILD_CMD ?= [[BUILD_CMD]]
+SWIFT_MK_TEST_CMD ?= [[TEST_CMD]]
+SWIFT_MK_RUN_CMD ?= [[RUN_CMD]]
+SWIFT_MK_CLEAN_CMD ?= [[CLEAN_CMD]]
+SWIFT_FORMAT_TARGETS ?= [[FORMAT_TARGETS]]
+SWIFTLINT_TARGETS ?= [[LINT_TARGETS]]
+SWIFTCHECK_EXTRA_TARGETS ?= [[LINT_TARGETS]]
+
+include bootstrap.mk
+
+.DEFAULT_GOAL := check

@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -eu
+
+staged=$(git diff --cached --name-only --diff-filter=ACM -- '*.swift' || true)
+[[ -z "${staged}" ]] && exit 0
+
+git_root=$(git rev-parse --show-toplevel)
+
+find_makefile_dir() {
+    local file_path="$1"
+    local directory_path
+
+    directory_path=$(dirname "${git_root}/${file_path}")
+    while [[ "${directory_path}" != "/" && "${directory_path}" != "${git_root}/.." ]]; do
+        if [[ -f "${directory_path}/Makefile" ]] && grep -qE '^(include|-include) bootstrap\.mk$' "${directory_path}/Makefile"; then
+            printf '%s\n' "${directory_path}"
+            return 0
+        fi
+        directory_path=$(dirname "${directory_path}")
+    done
+    return 1
+}
+
+declare -A by_dir
+while IFS= read -r file_path; do
+    [[ -n "${file_path}" ]] || continue
+    if mk_dir=$(find_makefile_dir "${file_path}"); then
+        mk_dir_rel="${mk_dir#${git_root}/}"
+        if [[ "${mk_dir_rel}" == "${mk_dir}" ]]; then
+            rel_path="${file_path}"
+        else
+            rel_path="${file_path#${mk_dir_rel}/}"
+        fi
+        by_dir["${mk_dir}"]+="${rel_path} "
+    fi
+done <<< "${staged}"
+
+status=0
+for mk_dir in "${!by_dir[@]}"; do
+    (
+        cd "${mk_dir}"
+        make lint-diff
+    ) || status=$?
+done
+
+exit "${status}"
