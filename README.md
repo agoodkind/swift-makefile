@@ -2,6 +2,8 @@
 
 `swift-makefile` provides shared Make targets, shared lint policy, shared baseline policy, a shared SwiftSyntax analyzer, and shared update scripts for Swift repos.
 
+Provided AS IS under the MIT License with no warranty. See [LICENSE](LICENSE).
+
 ## Files
 
 - `bootstrap.mk` fetches `swift.mk`, shared configs, shared helper scripts, and shared modules into `.make/`.
