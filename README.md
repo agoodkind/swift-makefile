@@ -60,7 +60,7 @@ Consumers that want shared build-style targets must load `swift-build.mk`.
 
 ## Local override
 
-Set `SWIFT_MK_DEV_DIR=/Users/agoodkind/Sites/swift-makefile` to force a consumer repo to fetch shared files from the local checkout.
+Set `SWIFT_MK_DEV_DIR=$HOME/Sites/swift-makefile` (or your own checkout path) to force a consumer repo to fetch shared files from the local checkout.
 
 ## Fleet update
 
