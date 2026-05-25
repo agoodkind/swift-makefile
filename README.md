@@ -45,6 +45,14 @@
 - Shared baseline files record `first_added` and `last_seen` for SwiftLint, SwiftLint complexity, Periphery, and `swiftcheck-extra` findings.
 - `swiftcheck-extra` reports logging, type, lifecycle, cleanup, sleep, task, and fatal-exit violations.
 
+## Build caching
+
+- `SWIFT_MK_XCODE_CACHE` defaults to `auto` and enables local Xcode compilation caching on Xcode 26 or newer.
+- `SWIFT_MK_XCODE_CACHE_DIAGNOSTICS=1` enables compilation-cache diagnostic remarks for `xcodebuild` paths.
+- `SWIFT_MK_SWIFTPM_CACHE_ARGS` defaults to the supported shared SwiftPM cache flags exposed by the local toolchain.
+- `ccache` and `sccache` are not treated as Swift compilation caches in `swift-makefile`.
+- Tuist remote cache is opt-in for Tuist consumers. It is not enabled by default here. Projects that want it should configure their Tuist `fullHandle`, enable Xcode caching in `Tuist.swift`, and run `tuist setup cache`.
+
 ## Bootstrap
 
 `bootstrap.sh` writes a small SwiftPM consumer `Makefile` and `bootstrap.mk`.

@@ -144,6 +144,27 @@ OSV_SCANNER_ARGS ?= --recursive --allow-no-lockfiles
 BUILD_CHECKS ?= true
 LINT_CONCURRENCY ?= auto
 
+SWIFT_MK_XCODE_VERSION_MAJOR := $(shell xcodebuild_path=$$(command -v xcodebuild || printf ''); if [ -n "$$xcodebuild_path" ]; then "$$xcodebuild_path" -version | awk '/^Xcode / { split($$2, version_parts, "."); print version_parts[1]; exit }'; else printf 0; fi)
+SWIFT_MK_XCODE_CACHE ?= auto
+SWIFT_MK_XCODE_CACHE_DIAGNOSTICS ?= false
+SWIFT_MK_XCODE_CACHE_AUTO_ENABLED := $(shell awk 'BEGIN { version = "$(SWIFT_MK_XCODE_VERSION_MAJOR)" + 0; if (version >= 26) print "YES"; else print "NO"; }')
+SWIFT_MK_XCODE_CACHE_ENABLED := NO
+ifneq ($(filter $(SWIFT_MK_XCODE_CACHE),1 true TRUE yes YES on ON),)
+SWIFT_MK_XCODE_CACHE_ENABLED := YES
+else ifneq ($(filter $(SWIFT_MK_XCODE_CACHE),0 false FALSE no NO off OFF),)
+SWIFT_MK_XCODE_CACHE_ENABLED := NO
+else ifneq ($(filter $(SWIFT_MK_XCODE_CACHE),auto AUTO),)
+SWIFT_MK_XCODE_CACHE_ENABLED := $(SWIFT_MK_XCODE_CACHE_AUTO_ENABLED)
+endif
+SWIFT_MK_XCODE_CACHE_DIAGNOSTICS_ENABLED := NO
+ifneq ($(filter $(SWIFT_MK_XCODE_CACHE_DIAGNOSTICS),1 true TRUE yes YES on ON),)
+SWIFT_MK_XCODE_CACHE_DIAGNOSTICS_ENABLED := YES
+endif
+SWIFT_MK_XCODEBUILD_ARGS := $(strip $(if $(filter YES,$(SWIFT_MK_XCODE_CACHE_ENABLED)),COMPILATION_CACHE_ENABLE_CACHING=YES $(if $(filter YES,$(SWIFT_MK_XCODE_CACHE_DIAGNOSTICS_ENABLED)),COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=YES,),))
+SWIFT_MK_XCODEBUILD_NO_CACHE_ARGS := COMPILATION_CACHE_ENABLE_CACHING=NO COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=NO
+SWIFT_MK_SWIFTPM_CACHE_ARGS_AUTO := $(shell swift_path=$$(command -v swift || printf ''); if [ -n "$$swift_path" ]; then build_help=$$("$$swift_path" build --help || true); args=""; printf '%s\n' "$$build_help" | grep -q -- '--enable-dependency-cache' && args="$$args --enable-dependency-cache"; printf '%s\n' "$$build_help" | grep -q -- '--enable-build-manifest-caching' && args="$$args --enable-build-manifest-caching"; printf '%s\n' "$$build_help" | grep -q -- '--manifest-cache' && args="$$args --manifest-cache shared"; printf '%s\n' "$$args" | awk '{$$1=$$1; print}'; fi)
+SWIFT_MK_SWIFTPM_CACHE_ARGS ?= $(SWIFT_MK_SWIFTPM_CACHE_ARGS_AUTO)
+
 SWIFT_MK_GATE_TOKEN_CMD ?= curl -fsSL "https://en.wikipedia.org/api/rest_v1/feed/featured/$$(date -u +%Y/%m/%d)" | jq -r '.tfa.titles.canonical'
 BYPASS_LINT ?=
 BYPASS_CONFIRM ?=
@@ -153,8 +174,8 @@ BASELINE_TOKEN ?=
 BASELINE_TOKEN_CMD ?= $(SWIFT_MK_GATE_TOKEN_CMD)
 BASELINE_UPDATE_MODE ?= sync
 
-SWIFT_BUILD_CMD ?= swift build
-SWIFT_TEST_CMD ?= swift test
+SWIFT_BUILD_CMD ?= swift build $(SWIFT_MK_SWIFTPM_CACHE_ARGS)
+SWIFT_TEST_CMD ?= swift test $(SWIFT_MK_SWIFTPM_CACHE_ARGS)
 SWIFT_RUN_CMD ?=
 SWIFT_GENERATE_CMD ?=
 SWIFT_CLEAN_CMD ?= swift package clean
@@ -203,6 +224,12 @@ export PERIPHERY_EXCLUDE_PATHS
 export OSV_SCANNER
 export OSV_SCANNER_ARGS
 export LINT_CONCURRENCY
+export SWIFT_MK_XCODE_VERSION_MAJOR
+export SWIFT_MK_XCODE_CACHE
+export SWIFT_MK_XCODE_CACHE_DIAGNOSTICS
+export SWIFT_MK_XCODEBUILD_ARGS
+export SWIFT_MK_XCODEBUILD_NO_CACHE_ARGS
+export SWIFT_MK_SWIFTPM_CACHE_ARGS
 export LINT_GATES
 export LINT_FILES
 export LINT_LINE_RANGES
@@ -259,6 +286,11 @@ help:
 	@printf '  %-40s %s\n' 'test' 'execute SWIFT_TEST_CMD'
 	@printf '  %-40s %s\n' 'analyze' 'run deadcode analysis and SWIFT_ANALYZE_CMD'
 	@printf '  %-40s %s\n' 'audit' 'run dependency audit and SWIFT_AUDIT_EXTRA_CMD'
+	@printf '\n%s\n' 'Build caching:'
+	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE=auto|1|0' 'default local Xcode 26 compilation cache behavior'
+	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_DIAGNOSTICS=1' 'emit Xcode compilation cache diagnostic remarks'
+	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE_ARGS=...' 'override shared SwiftPM cache flags'
+	@printf '  %-40s %s\n' 'ccache/sccache' 'C-family cache tools; not Swift compilation caches'
 	@printf '\n%s\n' 'Scoped iteration:'
 	@printf '  %-40s %s\n' 'lint-diff' 'run scoped lint against staged Swift files'
 	@printf '  %-40s %s\n' 'lint-files LINT_FILES=...' 'run scoped lint against listed files'
