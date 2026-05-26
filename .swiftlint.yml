@@ -32,7 +32,6 @@ disabled_rules:
   - multiline_literal_brackets
   - multiline_parameters_brackets
   - no_grouping_extension
-  - no_magic_numbers
   - one_declaration_per_file
   - prefer_self_in_static_references
   - prefixed_toplevel_constant

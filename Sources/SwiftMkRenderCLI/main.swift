@@ -16,13 +16,16 @@ enum SwiftMkRenderCLI {
         }
     }
 
+    private static let templatePathArgumentIndex = 1
+    private static let expectedArgumentCount = 2
+
     private static func run() throws {
         let arguments = CommandLine.arguments
-        guard arguments.count == 2 else {
+        guard arguments.count == expectedArgumentCount else {
             throw CLIError.usage
         }
 
-        let templatePath = arguments[1]
+        let templatePath = arguments[templatePathArgumentIndex]
         let inputData = FileHandle.standardInput.readDataToEndOfFile()
         let context = try JSONDecoder().decode(RenderContext.self, from: inputData)
         let templateText = try String(contentsOfFile: templatePath, encoding: .utf8)

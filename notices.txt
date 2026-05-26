@@ -1,0 +1,5 @@
+# swift-makefile notices, read by `swift-mk notice` on a real build.
+# Format, tab-separated: id<TAB>directive<TAB>summary
+# directive is "-" for an announcement, or KEY=VALUE tokens for an auto-baseline
+# scope (GATE, RULE, PATTERN).
+1	GATE=swiftlint RULE=no_magic_numbers	Enabled the SwiftLint no_magic_numbers rule. Existing magic-number sites were auto-baselined into your swiftlint baseline; review the diff and commit it. New magic numbers will fail lint.

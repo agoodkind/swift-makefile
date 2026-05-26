@@ -4,6 +4,7 @@
 	lint-deadcode lint-deadcode-baseline lint-deadcode-baseline-prune-fixed lint-deadcode-baseline-remove-fixed lint-deadcode-baseline-accept-new \
 	swiftcheck-extra swiftcheck-extra-baseline swiftcheck-extra-baseline-prune-fixed swiftcheck-extra-baseline-remove-fixed swiftcheck-extra-baseline-accept-new swiftcheck-extra-bin \
 	baseline baseline-prune-fixed baseline-remove-fixed baseline-accept-new baseline-add-new \
+	swift-mk-bin swift-mk-notice lint-swiftlint-scope lint-swiftlint-baseline-scope lint-swiftlint-baseline-scope-accept-new \
 	swift-mk-sync update-swift-mk smoke-fetch update-consumers update-consumers-dry-run log-audit install-hooks
 
 SWIFT_MK_BASE_URL ?= https://raw.githubusercontent.com/agoodkind/swift-makefile/main
@@ -22,8 +23,11 @@ SWIFT_MK_SELF := $(lastword $(MAKEFILE_LIST))
 SWIFT_MK_SELF_DIR := $(patsubst %/,%,$(dir $(abspath $(SWIFT_MK_SELF))))
 SWIFT_MK_LOCAL_SCRIPT_DIR := $(if $(strip $(SWIFT_MK_DEV_DIR)),$(SWIFT_MK_DEV_DIR)/scripts,$(SWIFT_MK_SELF_DIR)/scripts)
 SWIFT_MK_FETCHED_SCRIPT_DIR := $(CURDIR)/.make/scripts
-SWIFT_MK_HELPER_DIR := $(if $(wildcard $(SWIFT_MK_LOCAL_SCRIPT_DIR)/swift-mk-lint.sh),$(SWIFT_MK_LOCAL_SCRIPT_DIR),$(SWIFT_MK_FETCHED_SCRIPT_DIR))
+SWIFT_MK_HELPER_DIR := $(if $(wildcard $(SWIFT_MK_LOCAL_SCRIPT_DIR)/swift-mk-build.sh),$(SWIFT_MK_LOCAL_SCRIPT_DIR),$(SWIFT_MK_FETCHED_SCRIPT_DIR))
 SWIFT_MK_FETCH_SCRIPT := $(SWIFT_MK_HELPER_DIR)/swift-mk-fetch-one.sh
+SWIFT_MK_BIN ?= $(CURDIR)/.make/swift-mk
+SWIFT_MK_LOCAL_NOTICES := $(if $(strip $(SWIFT_MK_DEV_DIR)),$(SWIFT_MK_DEV_DIR)/notices.txt,$(SWIFT_MK_SELF_DIR)/notices.txt)
+SWIFT_MK_NOTICES_FILE := $(if $(wildcard $(SWIFT_MK_LOCAL_NOTICES)),$(SWIFT_MK_LOCAL_NOTICES),$(CURDIR)/.make/notices.txt)
 
 define _swift_mk_fetch_bootstrap_commands
 	mkdir -p "$$(dirname "$(2)")"; \
@@ -76,19 +80,36 @@ endef
 
 SWIFT_MK_SCRIPT_FILES := \
 	scripts/swift-mk-fetch-one.sh \
-	scripts/swift-mk-common.sh \
-	scripts/swift-mk-gate.sh \
-	scripts/swift-mk-findings.awk \
-	scripts/swift-mk-baseline.awk \
-	scripts/swift-mk-lint.sh \
-	scripts/swift-mk-baseline.sh \
-	scripts/swift-mk-swiftcheck-extra.sh \
+	scripts/swift-mk-build.sh \
 	scripts/swift-mk-sync.sh \
 	scripts/swift-mk-fleet-update.sh \
 	scripts/install-hooks.sh \
 	hooks/pre-commit \
 	swiftcheck/Package.swift \
-	swiftcheck/Sources/swiftcheck-extra/main.swift
+	swiftcheck/Sources/swiftcheck-extra/main.swift \
+	Package.swift \
+	Sources/SwiftMkRenderCore/TemplateRenderer.swift \
+	Sources/SwiftMkRenderCLI/main.swift \
+	Sources/SwiftMkCLI/main.swift \
+	Sources/SwiftMkCore/Findings.swift \
+	Sources/SwiftMkCore/Text.swift \
+	Sources/SwiftMkCore/Env.swift \
+	Sources/SwiftMkCore/Shell.swift \
+	Sources/SwiftMkCore/Capture.swift \
+	Sources/SwiftMkCore/Baseline.swift \
+	Sources/SwiftMkCore/Baseline+Gate.swift \
+	Sources/SwiftMkCore/BaselineSpec.swift \
+	Sources/SwiftMkCore/TokenGate.swift \
+	Sources/SwiftMkCore/Scope.swift \
+	Sources/SwiftMkCore/Swiftcheck.swift \
+	Sources/SwiftMkCore/Lint.swift \
+	Sources/SwiftMkCore/Lint+Run.swift \
+	Sources/SwiftMkCore/BaselineRunner.swift \
+	Sources/SwiftMkCore/Notice.swift \
+	Sources/SwiftMkCore/Output.swift \
+	Tests/SwiftMkRenderCoreTests/TemplateRendererTests.swift \
+	Tests/SwiftMkCoreTests/SwiftMkCoreTests.swift \
+	notices.txt
 
 ifeq ($(SWIFT_MK_HELPER_DIR),$(SWIFT_MK_FETCHED_SCRIPT_DIR))
 ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
@@ -125,6 +146,8 @@ SWIFTLINT_TARGETS ?= Sources Tests Package.swift
 SWIFTLINT_BASELINE ?= .swiftlint-baseline.txt
 SWIFTLINT_DEFAULT_EXCLUDE_PATHS ?=
 SWIFTLINT_EXCLUDE_PATHS ?=
+SWIFTLINT_BASELINE_SCOPE_PATTERN ?=
+RULE ?=
 
 SWIFT_FORMAT ?= xcrun swift-format
 SWIFT_FORMAT_TARGETS ?= $(SWIFTLINT_TARGETS)
@@ -210,6 +233,10 @@ export SWIFTLINT
 export SWIFTLINT_FLAGS
 export SWIFTLINT_TARGETS
 export SWIFTLINT_BASELINE
+export SWIFTLINT_BASELINE_SCOPE_PATTERN
+export RULE
+export SWIFT_MK_BIN
+export SWIFT_MK_NOTICES_FILE
 export SWIFTLINT_DEFAULT_EXCLUDE_PATHS
 export SWIFTLINT_EXCLUDE_PATHS
 export SWIFT_FORMAT
@@ -312,94 +339,109 @@ help:
 	@printf '  %-40s %s\n' 'update-consumers' 'refresh every opted-in consumer repo'
 	@printf '  %-40s %s\n' 'update-consumers-dry-run' 'show fleet update work without writes'
 
-lint: lint-tools
-	@bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-lint.sh" lint
+swift-mk-bin:
+	@SWIFT_MK_ROOT="$(CURDIR)" bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-build.sh" resolve
 
-lint-tools:
-	@bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-lint.sh" lint-tools
+swift-mk-notice: swift-mk-bin
+	@"$(SWIFT_MK_BIN)" notice || true
+
+lint: lint-tools | swift-mk-notice
+	@"$(SWIFT_MK_BIN)" lint
+
+lint-tools: swift-mk-bin
+	@"$(SWIFT_MK_BIN)" lint-tools
 
 lint-swiftlint: lint-tools
-	@bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-lint.sh" lint-swiftlint
+	@"$(SWIFT_MK_BIN)" lint-swiftlint
 
-lint-format:
-	@bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-lint.sh" lint-format
+lint-format: swift-mk-bin
+	@"$(SWIFT_MK_BIN)" lint-format
 
-lint-complexity:
-	@bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-lint.sh" lint-complexity
+lint-complexity: swift-mk-bin
+	@"$(SWIFT_MK_BIN)" lint-complexity
 
-lint-complexity-baseline:
-	@BASELINE_UPDATE_MODE=sync bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-baseline.sh" complexity
+lint-complexity-baseline: swift-mk-bin
+	@BASELINE_UPDATE_MODE=sync "$(SWIFT_MK_BIN)" baseline complexity
 
-lint-complexity-baseline-prune-fixed:
-	@BASELINE_UPDATE_MODE=prune-fixed bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-baseline.sh" complexity
+lint-complexity-baseline-prune-fixed: swift-mk-bin
+	@BASELINE_UPDATE_MODE=prune-fixed "$(SWIFT_MK_BIN)" baseline complexity
 
 lint-complexity-baseline-remove-fixed: lint-complexity-baseline-prune-fixed
 
-lint-complexity-baseline-accept-new:
-	@BASELINE_UPDATE_MODE=accept-new bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-baseline.sh" complexity
+lint-complexity-baseline-accept-new: swift-mk-bin
+	@BASELINE_UPDATE_MODE=accept-new "$(SWIFT_MK_BIN)" baseline complexity
 
 lint-files: lint-tools swiftcheck-extra-bin
-	@bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-lint.sh" lint-files
+	@"$(SWIFT_MK_BIN)" lint-files
 
 lint-diff: lint-tools swiftcheck-extra-bin
-	@bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-lint.sh" lint-diff
+	@"$(SWIFT_MK_BIN)" lint-diff
 
 fmt: lint-tools
-	@bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-lint.sh" fmt
+	@"$(SWIFT_MK_BIN)" fmt
 
-test:
-	@bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-lint.sh" test
+test: swift-mk-bin
+	@"$(SWIFT_MK_BIN)" test
 
-log-audit:
-	@bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-lint.sh" log-audit
+log-audit: swift-mk-bin
+	@"$(SWIFT_MK_BIN)" log-audit
 
-audit:
-	@bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-lint.sh" audit
+audit: swift-mk-bin
+	@"$(SWIFT_MK_BIN)" audit
 
 analyze: lint-deadcode
 	@if [ -n "$(strip $(SWIFT_ANALYZE_CMD))" ]; then eval "$(SWIFT_ANALYZE_CMD)"; fi
 
-lint-deadcode:
-	@bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-lint.sh" lint-deadcode
+lint-deadcode: swift-mk-bin
+	@"$(SWIFT_MK_BIN)" lint-deadcode
 
-swiftcheck-extra-bin:
-	@bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-swiftcheck-extra.sh" bin
+swiftcheck-extra-bin: swift-mk-bin
+	@"$(SWIFT_MK_BIN)" swiftcheck-extra-bin
 
 swiftcheck-extra: swiftcheck-extra-bin
-	@bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-swiftcheck-extra.sh" run
+	@"$(SWIFT_MK_BIN)" swiftcheck-extra
 
-lint-swiftlint-baseline:
-	@BASELINE_UPDATE_MODE=sync bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-baseline.sh" swiftlint
+lint-swiftlint-baseline: swift-mk-bin
+	@BASELINE_UPDATE_MODE=sync "$(SWIFT_MK_BIN)" baseline swiftlint
 
-lint-swiftlint-baseline-prune-fixed:
-	@BASELINE_UPDATE_MODE=prune-fixed bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-baseline.sh" swiftlint
+lint-swiftlint-baseline-prune-fixed: swift-mk-bin
+	@BASELINE_UPDATE_MODE=prune-fixed "$(SWIFT_MK_BIN)" baseline swiftlint
 
 lint-swiftlint-baseline-remove-fixed: lint-swiftlint-baseline-prune-fixed
 
-lint-swiftlint-baseline-accept-new:
-	@BASELINE_UPDATE_MODE=accept-new bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-baseline.sh" swiftlint
+lint-swiftlint-baseline-accept-new: swift-mk-bin
+	@BASELINE_UPDATE_MODE=accept-new "$(SWIFT_MK_BIN)" baseline swiftlint
 
-lint-deadcode-baseline:
-	@BASELINE_UPDATE_MODE=sync bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-baseline.sh" deadcode
+lint-swiftlint-scope: lint-tools
+	@"$(SWIFT_MK_BIN)" lint-swiftlint-scope
 
-lint-deadcode-baseline-prune-fixed:
-	@BASELINE_UPDATE_MODE=prune-fixed bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-baseline.sh" deadcode
+lint-swiftlint-baseline-scope: swift-mk-bin
+	@BASELINE_UPDATE_MODE=sync "$(SWIFT_MK_BIN)" baseline swiftlint-scope
+
+lint-swiftlint-baseline-scope-accept-new: swift-mk-bin
+	@BASELINE_UPDATE_MODE=accept-new "$(SWIFT_MK_BIN)" baseline swiftlint-scope
+
+lint-deadcode-baseline: swift-mk-bin
+	@BASELINE_UPDATE_MODE=sync "$(SWIFT_MK_BIN)" baseline deadcode
+
+lint-deadcode-baseline-prune-fixed: swift-mk-bin
+	@BASELINE_UPDATE_MODE=prune-fixed "$(SWIFT_MK_BIN)" baseline deadcode
 
 lint-deadcode-baseline-remove-fixed: lint-deadcode-baseline-prune-fixed
 
-lint-deadcode-baseline-accept-new:
-	@BASELINE_UPDATE_MODE=accept-new bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-baseline.sh" deadcode
+lint-deadcode-baseline-accept-new: swift-mk-bin
+	@BASELINE_UPDATE_MODE=accept-new "$(SWIFT_MK_BIN)" baseline deadcode
 
-swiftcheck-extra-baseline:
-	@BASELINE_UPDATE_MODE=sync bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-baseline.sh" swiftcheck-extra
+swiftcheck-extra-baseline: swift-mk-bin
+	@BASELINE_UPDATE_MODE=sync "$(SWIFT_MK_BIN)" baseline swiftcheck-extra
 
-swiftcheck-extra-baseline-prune-fixed:
-	@BASELINE_UPDATE_MODE=prune-fixed bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-baseline.sh" swiftcheck-extra
+swiftcheck-extra-baseline-prune-fixed: swift-mk-bin
+	@BASELINE_UPDATE_MODE=prune-fixed "$(SWIFT_MK_BIN)" baseline swiftcheck-extra
 
 swiftcheck-extra-baseline-remove-fixed: swiftcheck-extra-baseline-prune-fixed
 
-swiftcheck-extra-baseline-accept-new:
-	@BASELINE_UPDATE_MODE=accept-new bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-baseline.sh" swiftcheck-extra
+swiftcheck-extra-baseline-accept-new: swift-mk-bin
+	@BASELINE_UPDATE_MODE=accept-new "$(SWIFT_MK_BIN)" baseline swiftcheck-extra
 
 build-check: build-check-start lint audit
 
@@ -408,16 +450,16 @@ build-check-start:
 
 check: lint
 
-baseline:
-	@BASELINE_UPDATE_MODE=sync bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-baseline.sh" all
+baseline: swift-mk-bin
+	@BASELINE_UPDATE_MODE=sync "$(SWIFT_MK_BIN)" baseline all
 
-baseline-prune-fixed:
-	@BASELINE_UPDATE_MODE=prune-fixed bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-baseline.sh" all
+baseline-prune-fixed: swift-mk-bin
+	@BASELINE_UPDATE_MODE=prune-fixed "$(SWIFT_MK_BIN)" baseline all
 
 baseline-remove-fixed: baseline-prune-fixed
 
-baseline-accept-new:
-	@BASELINE_UPDATE_MODE=accept-new bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-baseline.sh" all
+baseline-accept-new: swift-mk-bin
+	@BASELINE_UPDATE_MODE=accept-new "$(SWIFT_MK_BIN)" baseline all
 
 baseline-add-new: baseline-accept-new
 

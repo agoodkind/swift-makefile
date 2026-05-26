@@ -25,7 +25,9 @@ CHECK_ARGS := \
 	SWIFT_MK_SWIFTLINT_CONFIG='../.swiftlint.yml' \
 	SWIFT_MK_SWIFT_FORMAT_CONFIG='../.swift-format' \
 	SWIFT_MK_PERIPHERY_CONFIG='../.periphery.yml' \
+	SWIFTLINT_FLAGS='--config ../.swiftlint.yml --reporter xcode' \
 	PERIPHERY_ARGS='scan --config ../.periphery.yml --exclude-tests' \
+	SWIFT_MK_BIN='$(CURDIR)/.make/swift-mk' \
 	SWIFTCHECK_EXTRA_BUILD_REPO='$(CURDIR)/swiftcheck'
 
 ROOT_SWIFT_MK := $(MAKE) -f $(SWIFT_MK) $(ROOT_ARGS)
