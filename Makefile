@@ -38,6 +38,7 @@ CHECK_SWIFT_MK := $(MAKE) -C swiftcheck -f ../$(SWIFT_MK) $(CHECK_ARGS)
 .PHONY: build check lint fmt test analyze audit build-check lint-tools \
 	lint-swiftlint lint-format lint-complexity lint-deadcode swiftcheck-extra \
 	lint-swiftlint-baseline lint-swiftlint-baseline-prune-fixed lint-swiftlint-baseline-remove-fixed lint-swiftlint-baseline-accept-new \
+	lint-swiftlint-scope lint-swiftlint-baseline-scope lint-swiftlint-baseline-scope-accept-new \
 	lint-complexity-baseline lint-complexity-baseline-prune-fixed lint-complexity-baseline-remove-fixed lint-complexity-baseline-accept-new \
 	lint-deadcode-baseline lint-deadcode-baseline-prune-fixed lint-deadcode-baseline-remove-fixed lint-deadcode-baseline-accept-new \
 	swiftcheck-extra-baseline swiftcheck-extra-baseline-prune-fixed swiftcheck-extra-baseline-remove-fixed swiftcheck-extra-baseline-accept-new \
@@ -76,6 +77,18 @@ lint-swiftlint-baseline-remove-fixed: lint-swiftlint-baseline-prune-fixed
 lint-swiftlint-baseline-accept-new:
 	$(ROOT_SWIFT_MK) lint-swiftlint-baseline-accept-new
 	$(CHECK_SWIFT_MK) lint-swiftlint-baseline-accept-new
+
+lint-swiftlint-scope:
+	$(ROOT_SWIFT_MK) lint-swiftlint-scope
+	$(CHECK_SWIFT_MK) lint-swiftlint-scope
+
+lint-swiftlint-baseline-scope:
+	$(ROOT_SWIFT_MK) lint-swiftlint-baseline-scope
+	$(CHECK_SWIFT_MK) lint-swiftlint-baseline-scope
+
+lint-swiftlint-baseline-scope-accept-new:
+	$(ROOT_SWIFT_MK) lint-swiftlint-baseline-scope-accept-new
+	$(CHECK_SWIFT_MK) lint-swiftlint-baseline-scope-accept-new
 
 lint-format:
 	$(ROOT_SWIFT_MK) lint-format
