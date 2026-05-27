@@ -7,7 +7,7 @@ set -eo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 swift_mk_output_path() {
-    printf "%s/.make/swift-mk\n" "${SWIFT_MK_ROOT:-${PWD}}"
+    printf "%s\n" "${SWIFT_MK_BIN:-${SWIFT_MK_ROOT:-${PWD}}/.make/swift-mk}"
 }
 
 swift_mk_package_path() {
@@ -43,17 +43,11 @@ swift_mk_build_from_repo() {
 }
 
 swift_mk_resolve_bin() {
-    local configured_bin
     local package_path
     local output_path
     local newest_source
 
-    configured_bin="${SWIFT_MK_BIN:-}"
     output_path=$(swift_mk_output_path)
-    if [[ -n "${configured_bin}" ]]; then
-        [[ -x "${configured_bin}" ]] || { printf "swift-mk: %s not executable\n" "${configured_bin}"; return 1; }
-        return 0
-    fi
     package_path=$(swift_mk_package_path)
     newest_source=""
     if [[ -x "${output_path}" ]]; then
