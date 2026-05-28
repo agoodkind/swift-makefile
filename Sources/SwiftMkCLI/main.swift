@@ -13,7 +13,7 @@ struct SwiftMk: ParsableCommand {
             LintComplexity.self, LintDeadcode.self, LintFiles.self, LintDiff.self,
             LintSwiftlintScope.self, SwiftcheckExtra.self, SwiftcheckExtraBin.self,
             Fmt.self, TestCommand.self, Audit.self, LogAudit.self,
-            BaselineCommand.self, NoticeCommand.self, Render.self,
+            BaselineCommand.self, NoticeCommand.self, Render.self, RenderBatch.self,
         ]
     )
 }
@@ -152,5 +152,94 @@ struct Render: ParsableCommand {
         let rendered = try TemplateRenderer.render(
             templateText: templateText, values: context.values)
         FileHandle.standardOutput.write(Data(rendered.utf8))
+    }
+}
+
+struct RenderBatch: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "render-batch",
+        abstract:
+            "Render every *.template file under --templates-dir to --output-dir "
+            + "using environment variables for [[KEY]] substitutions."
+    )
+
+    @Option(name: .customLong("templates-dir"))
+    var templatesDir: String
+
+    @Option(name: .customLong("output-dir"))
+    var outputDir: String
+
+    @Option(
+        name: .customLong("env"),
+        parsing: .upToNextOption,
+        help: "Names of environment variables to expose as [[KEY]] substitutions."
+    )
+    var envKeys: [String] = []
+
+    func run() throws {
+        Output.info(
+            "render-batch: starting templates=\(templatesDir) output=\(outputDir)"
+        )
+        let fileManager = FileManager.default
+        let environment = ProcessInfo.processInfo.environment
+        var values: [String: String] = [:]
+        for key in envKeys {
+            values[key] = environment[key] ?? ""
+        }
+
+        let templatesURL = URL(fileURLWithPath: templatesDir, isDirectory: true)
+        var isDir: ObjCBool = false
+        guard
+            fileManager.fileExists(atPath: templatesURL.path, isDirectory: &isDir),
+            isDir.boolValue
+        else {
+            throw RenderBatchError.templatesDirMissing(templatesURL.path)
+        }
+
+        let outputURL = URL(fileURLWithPath: outputDir, isDirectory: true)
+        try fileManager.createDirectory(
+            at: outputURL, withIntermediateDirectories: true)
+
+        guard
+            let enumerator = fileManager.enumerator(
+                at: templatesURL,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            )
+        else {
+            throw RenderBatchError.cannotEnumerate(templatesURL.path)
+        }
+
+        let templateSuffix = ".template"
+        var renderedCount = 0
+        for case let templateURL as URL in enumerator {
+            let templateName = templateURL.lastPathComponent
+            guard templateName.hasSuffix(templateSuffix) else { continue }
+            let templateText = try String(contentsOf: templateURL, encoding: .utf8)
+            let rendered = try TemplateRenderer.render(
+                templateText: templateText, values: values)
+            let outputName = String(templateName.dropLast(templateSuffix.count))
+            let outputFileURL = outputURL.appendingPathComponent(outputName)
+            try rendered.write(to: outputFileURL, atomically: true, encoding: .utf8)
+            renderedCount += 1
+        }
+
+        Output.info(
+            "render-batch: rendered \(renderedCount) file(s) to \(outputURL.path)"
+        )
+    }
+}
+
+private enum RenderBatchError: Error, CustomStringConvertible {
+    case cannotEnumerate(String)
+    case templatesDirMissing(String)
+
+    var description: String {
+        switch self {
+        case .cannotEnumerate(let path):
+            return "cannot enumerate directory: \(path)"
+        case .templatesDirMissing(let path):
+            return "templates directory not found: \(path)"
+        }
     }
 }

@@ -9,6 +9,8 @@ let package = Package(
     products: [
         .executable(name: "swift-mk-render", targets: ["SwiftMkRenderCLI"]),
         .executable(name: "swift-mk", targets: ["SwiftMkCLI"]),
+        .library(name: "SwiftMkCore", targets: ["SwiftMkCore"]),
+        .library(name: "SwiftMkRenderCore", targets: ["SwiftMkRenderCore"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0")

@@ -12,6 +12,7 @@ Provided AS IS under the MIT License with no warranty. See [LICENSE](LICENSE).
 - `swift.mk` defines the shared public targets.
 - `swift-build.mk` defines shared build, run, generate, clean, deploy, and install targets from consumer-provided commands.
 - `swift-release.mk` defines shared release wrapper targets from consumer-provided commands.
+- `xcconfig.mk` renders `*.template` files into `Derived/Generated/$(TARGET_NAME)/` for Tuist projects that treat one or more xcconfig files as the source of truth. The consumer Makefile `-include`s its xcconfig files, lists the keys it wants exposed (`XCCONFIG_EXPORTED_VARS`), points at its templates dir (`XCCONFIG_TEMPLATES_DIR`), and lists target names (`XCCONFIG_GENERATOR_TARGETS`). The `xcconfig-generate-config` target renders once per target; `xcconfig-generate-project` chains that into `tuist generate --no-open` so the glob inside `Project.swift` finds the generated files. Templates use `[[KEY]]` substitutions. See `swift-mk render-batch --help` for the underlying renderer.
 - `scripts/` holds only the bash bootstrap, fetch, build, and distribution layer that runs before the binary exists: `swift-mk-fetch-one.sh`, `swift-mk-build.sh`, `swift-mk-sync.sh`, `swift-mk-fleet-update.sh`, and `install-hooks.sh`.
 - `swiftcheck/` contains the shared SwiftSyntax analyzer package.
 
