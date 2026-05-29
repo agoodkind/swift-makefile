@@ -270,7 +270,6 @@ final class AuditVisitor: SyntaxVisitor {
             "password",
             "privatekey",
             "private_key",
-            "wireguard",
             "cookie",
             "set-cookie",
             "authorization",
