@@ -1,6 +1,15 @@
+//
+//  TemplateRendererTests.swift
+//  SwiftMkRenderCoreTests
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-24.
+//
+
 import Testing
 
 @testable import SwiftMkRenderCore
+
+// MARK: - TemplateRenderer Tests
 
 @Test
 func renderReplacesEveryPlaceholder() throws {

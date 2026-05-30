@@ -1,4 +1,13 @@
+//
+//  Scope.swift
+//  SwiftMkCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-25.
+//
+
 import Foundation
+
+// MARK: - Scope
 
 /// Resolve the scope regex for a scoped swiftlint baseline or run.
 public enum Scope {
@@ -12,6 +21,8 @@ public enum Scope {
         return ""
     }
 }
+
+// MARK: - Lint
 
 extension Lint {
     /// Capture only the findings for one rule: run swiftlint (only that rule

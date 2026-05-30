@@ -1,4 +1,13 @@
+//
+//  Baseline.swift
+//  SwiftMkCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-25.
+//
+
 import Foundation
+
+// MARK: - BaselineMode
 
 /// Baseline update mode.
 public enum BaselineMode: String, Sendable {
@@ -15,6 +24,8 @@ public enum BaselineMode: String, Sendable {
         }
     }
 }
+
+// MARK: - Baseline
 
 /// Reads, compares, and rewrites baseline files.
 ///

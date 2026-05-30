@@ -1,4 +1,13 @@
+//
+//  Notice.swift
+//  SwiftMkCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-25.
+//
+
 import Foundation
+
+// MARK: - Notice
 
 /// Announce changes and auto-baseline a newly introduced rule's slice.
 ///

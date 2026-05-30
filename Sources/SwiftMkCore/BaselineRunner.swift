@@ -1,4 +1,13 @@
+//
+//  BaselineRunner.swift
+//  SwiftMkCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-25.
+//
+
 import Foundation
+
+// MARK: - BaselineRunner
 
 /// Drive baseline updates per component. Port of `scripts/swift-mk-baseline.sh`.
 public enum BaselineRunner {
@@ -32,13 +41,15 @@ public enum BaselineRunner {
         var scope: String = ""
     }
 
-    /// Capture findings for a component and rewrite its baseline.
+    /// Capture findings for a component and rewrite its baseline, returning the
+    /// neutral counts describing what changed.
+    @discardableResult
     private static func writeFrom(
         _ component: Component,
         capture: (String, String) -> Void,
         mode: BaselineMode,
         context: PathContext
-    ) throws {
+    ) throws -> BaselineUpdateStats {
         Capture.ensureMakeDir()
         let raw = ".make/\(component.label)-baseline.raw.out"
         let findings = ".make/\(component.label)-baseline.out"
@@ -50,7 +61,8 @@ public enum BaselineRunner {
             excludePattern: component.exclude,
             scopePattern: component.scope
         )
-        try Baseline.writeComponent(title: component.title, spec, mode: mode, context: context)
+        return try Baseline.writeComponent(
+            title: component.title, spec, mode: mode, context: context)
     }
 
     private static func swiftlintComponent(scope: String = "") -> Component {
@@ -64,10 +76,13 @@ public enum BaselineRunner {
         )
     }
 
-    public static func updateSwiftlint(mode: BaselineMode, context: PathContext) throws {
-        guard tokenGatePasses() else { return }
+    @discardableResult
+    public static func updateSwiftlint(
+        mode: BaselineMode, context: PathContext
+    ) throws -> BaselineUpdateStats? {
+        guard tokenGatePasses() else { return nil }
         _ = Lint.runTools(context: context)
-        try writeFrom(
+        return try writeFrom(
             swiftlintComponent(),
             capture: { raw, findings in
                 Lint.captureSwiftlint(
@@ -82,8 +97,11 @@ public enum BaselineRunner {
         )
     }
 
-    public static func updateComplexity(mode: BaselineMode, context: PathContext) throws {
-        guard tokenGatePasses() else { return }
+    @discardableResult
+    public static func updateComplexity(
+        mode: BaselineMode, context: PathContext
+    ) throws -> BaselineUpdateStats? {
+        guard tokenGatePasses() else { return nil }
         _ = Lint.runTools(context: context)
         let rules = Lint.complexityRules()
         let component = Component(
@@ -93,7 +111,7 @@ public enum BaselineRunner {
             baselineDefault: ".swiftlint-complexity-baseline.txt",
             exclude: Lint.swiftlintExclude()
         )
-        try writeFrom(
+        return try writeFrom(
             component,
             capture: { raw, findings in
                 Lint.captureSwiftlint(
@@ -108,8 +126,11 @@ public enum BaselineRunner {
         )
     }
 
-    public static func updateDeadcode(mode: BaselineMode, context: PathContext) throws {
-        guard tokenGatePasses() else { return }
+    @discardableResult
+    public static func updateDeadcode(
+        mode: BaselineMode, context: PathContext
+    ) throws -> BaselineUpdateStats? {
+        guard tokenGatePasses() else { return nil }
         _ = Lint.runTools(context: context)
         let component = Component(
             title: "periphery",
@@ -118,7 +139,7 @@ public enum BaselineRunner {
             baselineDefault: ".periphery-baseline.txt",
             exclude: Lint.peripheryExclude()
         )
-        try writeFrom(
+        return try writeFrom(
             component,
             capture: { Lint.captureDeadcode(rawPath: $0, findingsPath: $1, context: context) },
             mode: mode,
@@ -126,8 +147,11 @@ public enum BaselineRunner {
         )
     }
 
-    public static func updateSwiftcheck(mode: BaselineMode, context: PathContext) throws {
-        guard tokenGatePasses() else { return }
+    @discardableResult
+    public static func updateSwiftcheck(
+        mode: BaselineMode, context: PathContext
+    ) throws -> BaselineUpdateStats? {
+        guard tokenGatePasses() else { return nil }
         _ = Swiftcheck.resolveBin()
         let component = Component(
             title: "swiftcheck-extra",
@@ -136,7 +160,7 @@ public enum BaselineRunner {
             baselineDefault: ".swiftcheck-extra-baseline.txt",
             exclude: swiftcheckExclude()
         )
-        try writeFrom(
+        return try writeFrom(
             component,
             capture: { raw, findings in
                 Swiftcheck.captureFindings(rawPath: raw, findingsPath: findings, context: context)
@@ -147,16 +171,19 @@ public enum BaselineRunner {
     }
 
     /// Token-gated scoped swiftlint baseline. Refuses to run unscoped.
-    public static func updateSwiftlintScope(mode: BaselineMode, context: PathContext) throws {
+    @discardableResult
+    public static func updateSwiftlintScope(
+        mode: BaselineMode, context: PathContext
+    ) throws -> BaselineUpdateStats? {
         let scope = Scope.swiftlintPattern()
         guard !scope.isEmpty else {
             Output.log(
                 "swiftlint scope baseline: set RULE=<id> or SWIFTLINT_BASELINE_SCOPE_PATTERN")
-            return
+            return nil
         }
-        guard tokenGatePasses() else { return }
+        guard tokenGatePasses() else { return nil }
         _ = Lint.runTools(context: context)
-        try writeFrom(
+        return try writeFrom(
             swiftlintComponent(scope: scope),
             capture: { raw, findings in
                 Lint.captureSwiftlintScope(rawPath: raw, findingsPath: findings, context: context)
@@ -167,14 +194,17 @@ public enum BaselineRunner {
     }
 
     /// Token-free, scope-limited swiftlint baseline used by the notice rollout.
-    public static func autoBaselineSwiftlintScope(context: PathContext) throws {
+    @discardableResult
+    public static func autoBaselineSwiftlintScope(
+        context: PathContext
+    ) throws -> BaselineUpdateStats? {
         let scope = Scope.swiftlintPattern()
         guard !scope.isEmpty else {
             Output.log("auto-baseline: missing scope; set RULE or SWIFTLINT_BASELINE_SCOPE_PATTERN")
-            return
+            return nil
         }
         _ = Lint.runTools(context: context)
-        try writeFrom(
+        return try writeFrom(
             swiftlintComponent(scope: scope),
             capture: { raw, findings in
                 Lint.captureSwiftlintScope(rawPath: raw, findingsPath: findings, context: context)
@@ -188,16 +218,44 @@ public enum BaselineRunner {
         let mode = self.mode()
         switch component {
         case "all":
-            try updateSwiftlint(mode: mode, context: context)
-            try updateComplexity(mode: mode, context: context)
-            try updateDeadcode(mode: mode, context: context)
-            try updateSwiftcheck(mode: mode, context: context)
-        case "swiftlint": try updateSwiftlint(mode: mode, context: context)
-        case "complexity": try updateComplexity(mode: mode, context: context)
-        case "deadcode": try updateDeadcode(mode: mode, context: context)
-        case "swiftcheck-extra": try updateSwiftcheck(mode: mode, context: context)
-        case "swiftlint-scope": try updateSwiftlintScope(mode: mode, context: context)
-        case "auto-baseline-scope": try autoBaselineSwiftlintScope(context: context)
+            var stats: [BaselineUpdateStats] = []
+            if let value = try updateSwiftlint(mode: mode, context: context) {
+                stats.append(value)
+            }
+            if let value = try updateComplexity(mode: mode, context: context) {
+                stats.append(value)
+            }
+            if let value = try updateDeadcode(mode: mode, context: context) {
+                stats.append(value)
+            }
+            if let value = try updateSwiftcheck(mode: mode, context: context) {
+                stats.append(value)
+            }
+            BaselineReport.renderRollup(stats)
+        case "swiftlint":
+            if let value = try updateSwiftlint(mode: mode, context: context) {
+                BaselineReport.renderSingle(value)
+            }
+        case "complexity":
+            if let value = try updateComplexity(mode: mode, context: context) {
+                BaselineReport.renderSingle(value)
+            }
+        case "deadcode":
+            if let value = try updateDeadcode(mode: mode, context: context) {
+                BaselineReport.renderSingle(value)
+            }
+        case "swiftcheck-extra":
+            if let value = try updateSwiftcheck(mode: mode, context: context) {
+                BaselineReport.renderSingle(value)
+            }
+        case "swiftlint-scope":
+            if let value = try updateSwiftlintScope(mode: mode, context: context) {
+                BaselineReport.renderSingle(value)
+            }
+        case "auto-baseline-scope":
+            if let value = try autoBaselineSwiftlintScope(context: context) {
+                BaselineReport.renderSingle(value)
+            }
         default:
             Output.emitStandardError("baseline: unknown component \(component)\n")
         }

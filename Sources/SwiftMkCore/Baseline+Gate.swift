@@ -1,4 +1,13 @@
+//
+//  Baseline+Gate.swift
+//  SwiftMkCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-25.
+//
+
 import Foundation
+
+// MARK: - Baseline Gate
 
 extension Baseline {
     /// Extract baseline findings: strip metadata, normalize, exclude, scope, dedupe.
@@ -68,55 +77,13 @@ extension Baseline {
         return true
     }
 
-    /// Per-update key counts. Port of `swift_mk_print_baseline_update_counts`.
-    public static func printUpdateCounts(
-        _ spec: BaselineSpec, mode: BaselineMode, context: PathContext
-    ) {
-        let findingsLines = Text.readLines(spec.findingsPath)
-        let baselineLines = findings(spec, context: context)
-        let findingsKeys = keyize(findingsLines, context)
-        let baselineKeys = keyize(baselineLines, context)
-        let new = findingsKeys.subtracting(baselineKeys).count
-        let refreshed = findingsKeys.intersection(baselineKeys).count
-        let gone = baselineKeys.subtracting(findingsKeys).count
-
-        Output.log("This update:")
-        Output.log("  Findings captured: \(findingsLines.count)")
-        switch mode {
-        case .pruneFixed:
-            Output.log("  Keys added: 0")
-            Output.log("  Keys refreshed: \(refreshed)")
-            Output.log("  Keys removed: \(gone)")
-            if new > 0 { Output.log("  Keys left unsaved: \(new)") }
-        case .acceptNew:
-            Output.log("  Keys added: \(new)")
-            Output.log("  Keys refreshed: \(refreshed)")
-            Output.log("  Keys removed: 0")
-            if gone > 0 { Output.log("  Keys kept unchanged: \(gone)") }
-        case .sync:
-            Output.log("  Keys added: \(new)")
-            Output.log("  Keys refreshed: \(refreshed)")
-            Output.log("  Keys removed: \(gone)")
-        }
-    }
-
-    /// Overall coverage counts. Port of `swift_mk_print_baseline_overall_counts`.
-    public static func printOverallCounts(_ spec: BaselineSpec, context: PathContext) {
-        let findingsLines = Text.readLines(spec.findingsPath)
-        let baselineLines = findings(spec, context: context)
-        let baselineKeys = keyize(baselineLines, context)
-        let covered = findingsLines.filter { baselineKeys.contains(Findings.key($0, context)) }
-            .count
-        Output.log("\nOverall baseline:")
-        Output.log("  Current findings covered: \(covered)")
-        Output.log("  Total keys: \(baselineKeys.count)")
-    }
-
-    /// Full component baseline update: counts, rewrite, overall counts.
-    /// Port of `write_component_baseline`.
+    /// Full component baseline update: snapshot the key set, rewrite the file,
+    /// and return neutral counts describing what changed. Rendering is the
+    /// caller's job. Port of `write_component_baseline`.
+    @discardableResult
     public static func writeComponent(
         title: String, _ spec: BaselineSpec, mode: BaselineMode, context: PathContext
-    ) throws {
+    ) throws -> BaselineUpdateStats {
         let directory = URL(fileURLWithPath: spec.baselinePath).deletingLastPathComponent().path
         if !directory.isEmpty {
             do {
@@ -129,11 +96,10 @@ extension Baseline {
         if !FileManager.default.fileExists(atPath: spec.baselinePath) {
             FileManager.default.createFile(atPath: spec.baselinePath, contents: nil)
         }
-        Output.log("\(spec.label) baseline update")
-        Output.log("  File: \(spec.baselinePath)")
-        Output.log("  Mode: \(mode.rawValue)")
-        Output.log("  Scope: \(spec.scopePattern.isEmpty ? "all" : spec.scopePattern)\n")
-        printUpdateCounts(spec, mode: mode, context: context)
+
+        let findingsLines = Text.readLines(spec.findingsPath)
+        let oldBaselineKeys = keyize(findings(spec, context: context), context)
+
         let temporary = spec.baselinePath + ".tmp"
         try writeBaselineFile(
             BaselineWriteRequest(
@@ -154,7 +120,22 @@ extension Baseline {
         } catch {
             Output.error("baseline: could not replace \(spec.baselinePath): \(error)")
         }
-        printOverallCounts(spec, context: context)
-        Output.log("\n\(spec.label): baseline \(spec.baselinePath) refreshed")
+
+        let newBaselineKeys = keyize(findings(spec, context: context), context)
+        let covered = findingsLines.filter { line in
+            newBaselineKeys.contains(Findings.key(line, context))
+        }.count
+
+        return BaselineUpdateStats(
+            label: spec.label,
+            baselinePath: spec.baselinePath,
+            scopePattern: spec.scopePattern,
+            findingsCaptured: findingsLines.count,
+            added: newBaselineKeys.subtracting(oldBaselineKeys).count,
+            refreshed: oldBaselineKeys.intersection(newBaselineKeys).count,
+            removed: oldBaselineKeys.subtracting(newBaselineKeys).count,
+            covered: covered,
+            remaining: newBaselineKeys.count
+        )
     }
 }

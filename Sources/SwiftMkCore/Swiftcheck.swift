@@ -1,4 +1,13 @@
+//
+//  Swiftcheck.swift
+//  SwiftMkCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-25.
+//
+
 import Foundation
+
+// MARK: - Swiftcheck
 
 /// Build, resolve, and run the `swiftcheck-extra` analyzer binary.
 ///

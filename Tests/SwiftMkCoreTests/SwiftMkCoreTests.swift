@@ -1,7 +1,20 @@
+//
+//  SwiftMkCoreTests.swift
+//  SwiftMkCoreTests
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-25.
+//
+
 import Foundation
 import Testing
 
 @testable import SwiftMkCore
+
+// MARK: - SwiftMkCoreTests
+
+/// Empty namesake type so SwiftLint `file_name` finds a declaration matching
+/// `SwiftMkCoreTests.swift`; the suite is written as free `@Test` functions.
+enum SwiftMkCoreTests {}
 
 @Test
 func keyBlanksLineAndColumn() {
@@ -141,4 +154,131 @@ func diffGateFindsNewAndPassesOnMatch() throws {
             context: context
         ) == false
     )
+}
+
+// MARK: BaselineReport
+
+private func makeStats(
+    label: String,
+    added: Int = 0,
+    refreshed: Int = 0,
+    removed: Int = 0,
+    remaining: Int = 0,
+    findingsCaptured: Int = 0,
+    covered: Int = 0,
+    scopePattern: String = ""
+) -> BaselineUpdateStats {
+    BaselineUpdateStats(
+        label: label,
+        baselinePath: ".\(label)-baseline.txt",
+        scopePattern: scopePattern,
+        findingsCaptured: findingsCaptured,
+        added: added,
+        refreshed: refreshed,
+        removed: removed,
+        covered: covered,
+        remaining: remaining
+    )
+}
+
+/// Tokens the output contract forbids in any user-facing baseline output.
+private let forbiddenTokens = [
+    "prune", "accept-new", "accept new", "remove-fixed", "removefixed",
+    "skip", "disable", "silence", "weaken", "circumvent",
+    "Mode:", "sync", "pruneFixed", "acceptNew",
+]
+
+private func assertNoForbiddenTokens(_ text: String) {
+    let lower = text.lowercased()
+    for token in forbiddenTokens {
+        #expect(!lower.contains(token.lowercased()), "forbidden token \"\(token)\" in: \(text)")
+    }
+}
+
+@Test
+func reportChangePhraseIsNeutral() {
+    #expect(BaselineReport.changePhrase(makeStats(label: "a", removed: 2)) == "2 removed")
+    #expect(BaselineReport.changePhrase(makeStats(label: "a", added: 3)) == "3 added")
+    #expect(
+        BaselineReport.changePhrase(makeStats(label: "a", added: 3, removed: 1))
+            == "3 added, 1 removed")
+    #expect(BaselineReport.changePhrase(makeStats(label: "a", refreshed: 9)) == "no change")
+    #expect(BaselineReport.changePhrase(makeStats(label: "a")) == "no change")
+}
+
+@Test
+func reportIsNoopReflectsKeyChange() {
+    #expect(makeStats(label: "a", refreshed: 5).isNoop)
+    #expect(!makeStats(label: "a", added: 1).isNoop)
+    #expect(!makeStats(label: "a", removed: 1).isNoop)
+}
+
+@Test
+func reportSingleLinesAreNeutral() {
+    let lines = BaselineReport.singleLines(
+        makeStats(label: "golangci-lint", removed: 2, remaining: 17))
+    #expect(lines == ["golangci-lint baseline", "  2 removed, 17 remaining."])
+    assertNoForbiddenTokens(lines.joined(separator: "\n"))
+}
+
+@Test
+func reportRollupListsEachToolAndSummary() {
+    let stats = [
+        makeStats(label: "golangci-lint", removed: 2, remaining: 17),
+        makeStats(label: "gocyclo", refreshed: 4, remaining: 0),
+        makeStats(label: "deadcode", remaining: 0),
+        makeStats(label: "staticcheck-extra", removed: 1, remaining: 14),
+    ]
+    let lines = BaselineReport.rollupLines(stats)
+    let text = lines.joined(separator: "\n")
+    #expect(lines.first == "Updating 4 baselines")
+    #expect(text.contains("golangci-lint"))
+    #expect(text.contains("no change"))
+    #expect(text.contains("Done. 31 remaining across 4 baselines."))
+    assertNoForbiddenTokens(text)
+}
+
+@Test
+func reportJSONHasNeutralFieldsAndNoMode() throws {
+    struct DecodedBaselineEntry: Decodable {
+        let label: String
+        let removed: Int
+        let remaining: Int
+        let changed: Bool
+    }
+    struct DecodedTotals: Decodable {
+        let removed: Int
+        let baselines: Int
+    }
+    struct DecodedReport: Decodable {
+        let baselines: [DecodedBaselineEntry]
+        let totals: DecodedTotals
+    }
+
+    let stats = [
+        makeStats(
+            label: "golangci-lint",
+            added: 0,
+            refreshed: 17,
+            removed: 2,
+            remaining: 17,
+            findingsCaptured: 69,
+            covered: 69
+        ),
+        makeStats(label: "gocyclo", remaining: 0),
+    ]
+    let json = BaselineReport.jsonString(stats)
+    assertNoForbiddenTokens(json)
+
+    let report = try JSONDecoder().decode(DecodedReport.self, from: Data(json.utf8))
+    #expect(report.baselines.count == 2)
+    #expect(report.baselines[0].label == "golangci-lint")
+    #expect(report.baselines[0].removed == 2)
+    #expect(report.baselines[0].remaining == 17)
+    #expect(report.baselines[0].changed)
+    #expect(!report.baselines[1].changed)
+    #expect(report.totals.removed == 2)
+    #expect(report.totals.baselines == 2)
+    // No `mode` key anywhere in the document.
+    #expect(!json.contains("\"mode\""))
 }

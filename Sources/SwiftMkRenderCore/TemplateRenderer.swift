@@ -1,4 +1,13 @@
+//
+//  TemplateRenderer.swift
+//  SwiftMkRenderCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-24.
+//
+
 import Foundation
+
+// MARK: - TemplateRendererError
 
 public enum TemplateRendererError: Error, CustomStringConvertible, Equatable {
     case missingValue(String)
@@ -10,6 +19,8 @@ public enum TemplateRendererError: Error, CustomStringConvertible, Equatable {
         }
     }
 }
+
+// MARK: - TemplateRenderer
 
 public enum TemplateRenderer {
     public static func render(templateText: String, values: [String: String]) throws -> String {

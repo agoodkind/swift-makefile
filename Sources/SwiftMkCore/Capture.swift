@@ -1,4 +1,13 @@
+//
+//  Capture.swift
+//  SwiftMkCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-25.
+//
+
 import Foundation
+
+// MARK: - LineRange
 
 /// An inclusive line range within a single file, used by diff-scoped linting.
 public struct LineRange: Sendable {
@@ -16,6 +25,8 @@ public struct LineRange: Sendable {
         file == otherFile && line >= start && line <= end
     }
 }
+
+// MARK: - Capture
 
 /// Capture lint output and reduce it to normalized, deduplicated findings.
 public enum Capture {

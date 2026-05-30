@@ -1,13 +1,21 @@
+//
+//  Lint.swift
+//  SwiftMkCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-25.
+//
+
 import Foundation
 
 #if canImport(Darwin)
     import Darwin
 #endif
 
+// MARK: - Lint
+
 /// Lint orchestration. Port of `scripts/swift-mk-lint.sh`.
 public enum Lint {
-    static let remediation =
-        "Fix these findings in code. Do not disable, silence, weaken, or otherwise circumvent the checks."
+    static let remediation = "Fix the new findings before this gate will pass."
 
     static let complexityRulesDefault = [
         "cyclomatic_complexity", "function_body_length", "closure_body_length", "file_length",
@@ -265,6 +273,8 @@ public enum Lint {
         return printOrGate(gateName: "lint-deadcode", spec: spec, context: context)
     }
 }
+
+// MARK: - GateStatus
 
 /// Last external command status, mirroring `SWIFT_MK_COMMAND_STATUS`.
 enum GateStatus {

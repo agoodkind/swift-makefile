@@ -1,4 +1,13 @@
+//
+//  Lint+Run.swift
+//  SwiftMkCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-25.
+//
+
 import Foundation
+
+// MARK: - Lint Run
 
 extension Lint {
     // MARK: tools

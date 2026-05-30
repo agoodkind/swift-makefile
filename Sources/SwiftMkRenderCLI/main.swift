@@ -1,9 +1,20 @@
+//
+//  main.swift
+//  SwiftMkRenderCLI
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-24.
+//
+
 import Foundation
 import SwiftMkRenderCore
+
+// MARK: - RenderContext
 
 struct RenderContext: Decodable {
     let values: [String: String]
 }
+
+// MARK: - SwiftMkRenderCLI
 
 @main
 enum SwiftMkRenderCLI {
@@ -36,6 +47,8 @@ enum SwiftMkRenderCLI {
         FileHandle.standardOutput.write(Data(renderedText.utf8))
     }
 }
+
+// MARK: - CLIError
 
 private enum CLIError: Error, CustomStringConvertible {
     case usage

@@ -1,4 +1,13 @@
+//
+//  Shell.swift
+//  SwiftMkCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-25.
+//
+
 import Foundation
+
+// MARK: - Shell
 
 /// Run external programs and capture their output.
 public enum Shell {

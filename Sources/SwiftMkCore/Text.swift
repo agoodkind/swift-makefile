@@ -1,4 +1,13 @@
+//
+//  Text.swift
+//  SwiftMkCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-25.
+//
+
 import Foundation
+
+// MARK: - PathContext
 
 /// Path-normalization context: the working directory and project root, each
 /// with a trailing slash, matching the `pwd`/`cwd` variables the awk receives.
@@ -17,6 +26,8 @@ public struct PathContext: Sendable {
         return PathContext(pwd: workingDirectory + "/", cwd: root + "/")
     }
 }
+
+// MARK: - Text
 
 /// File and regex helpers shared by the lint and baseline engines.
 public enum Text {

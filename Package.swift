@@ -1,5 +1,14 @@
 // swift-tools-version: 6.0
+//
+//  Package.swift
+//  swift-makefile
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-24.
+//
+
 import PackageDescription
+
+// MARK: - Package
 
 let package = Package(
     name: "swift-makefile",

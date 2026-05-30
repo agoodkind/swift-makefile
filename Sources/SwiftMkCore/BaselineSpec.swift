@@ -1,4 +1,13 @@
+//
+//  BaselineSpec.swift
+//  SwiftMkCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-25.
+//
+
 import Foundation
+
+// MARK: - BaselineSpec
 
 /// The finding stream and baseline file a gate or count compares, together with
 /// the label, exclude pattern, and scope pattern that select rows from each.
@@ -23,6 +32,8 @@ public struct BaselineSpec: Sendable {
         self.scopePattern = scopePattern
     }
 }
+
+// MARK: - BaselineWriteRequest
 
 /// Inputs for rewriting a baseline file from the current findings.
 public struct BaselineWriteRequest: Sendable {

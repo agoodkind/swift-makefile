@@ -1,7 +1,16 @@
+//
+//  main.swift
+//  SwiftMkCLI
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-25.
+//
+
 import ArgumentParser
 import Foundation
 import SwiftMkCore
 import SwiftMkRenderCore
+
+// MARK: - SwiftMk
 
 @main
 struct SwiftMk: ParsableCommand {
@@ -22,11 +31,15 @@ private func gate(_ body: (PathContext) -> Bool) throws {
     if !body(PathContext.current()) { throw ExitCode(1) }
 }
 
+// MARK: - LintCommand
+
 struct LintCommand: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "lint")
 
     func run() throws { try gate(Lint.runLint) }
 }
+
+// MARK: - LintTools
 
 struct LintTools: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "lint-tools")
@@ -34,11 +47,15 @@ struct LintTools: ParsableCommand {
     func run() throws { try gate(Lint.runTools) }
 }
 
+// MARK: - LintSwiftlint
+
 struct LintSwiftlint: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "lint-swiftlint")
 
     func run() throws { try gate(Lint.runSwiftlint) }
 }
+
+// MARK: - LintFormat
 
 struct LintFormat: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "lint-format")
@@ -46,11 +63,15 @@ struct LintFormat: ParsableCommand {
     func run() throws { try gate(Lint.runFormat) }
 }
 
+// MARK: - LintComplexity
+
 struct LintComplexity: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "lint-complexity")
 
     func run() throws { try gate(Lint.runComplexity) }
 }
+
+// MARK: - LintDeadcode
 
 struct LintDeadcode: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "lint-deadcode")
@@ -58,17 +79,23 @@ struct LintDeadcode: ParsableCommand {
     func run() throws { try gate(Lint.runDeadcode) }
 }
 
+// MARK: - LintFiles
+
 struct LintFiles: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "lint-files")
 
     func run() throws { try gate(Lint.runLintFiles) }
 }
 
+// MARK: - LintDiff
+
 struct LintDiff: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "lint-diff")
 
     func run() throws { try gate(Lint.runLintDiff) }
 }
+
+// MARK: - LintSwiftlintScope
 
 struct LintSwiftlintScope: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "lint-swiftlint-scope")
@@ -81,11 +108,15 @@ struct LintSwiftlintScope: ParsableCommand {
     }
 }
 
+// MARK: - SwiftcheckExtra
+
 struct SwiftcheckExtra: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "swiftcheck-extra")
 
     func run() throws { try gate(Swiftcheck.runGate) }
 }
+
+// MARK: - SwiftcheckExtraBin
 
 struct SwiftcheckExtraBin: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "swiftcheck-extra-bin")
@@ -93,11 +124,15 @@ struct SwiftcheckExtraBin: ParsableCommand {
     func run() throws { if !Swiftcheck.resolveBin() { throw ExitCode(1) } }
 }
 
+// MARK: - Fmt
+
 struct Fmt: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "fmt")
 
     func run() throws { try gate(Lint.runFmt) }
 }
+
+// MARK: - TestCommand
 
 struct TestCommand: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "test")
@@ -105,11 +140,15 @@ struct TestCommand: ParsableCommand {
     func run() throws { try gate(Lint.runTest) }
 }
 
+// MARK: - Audit
+
 struct Audit: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "audit")
 
     func run() throws { try gate(Lint.runAudit) }
 }
+
+// MARK: - LogAudit
 
 struct LogAudit: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "log-audit")
@@ -117,17 +156,23 @@ struct LogAudit: ParsableCommand {
     func run() throws { try gate(Lint.runLogAudit) }
 }
 
+// MARK: - BaselineCommand
+
 struct BaselineCommand: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "baseline")
 
     @Argument var component: String = "all"
     @Option(name: .long) var rule: String?
+    @Flag(name: .long, help: "Emit machine-readable JSON instead of text.") var json = false
 
     func run() throws {
         if let rule { setenv("RULE", rule, 1) }
+        if json { setenv("BASELINE_OUTPUT_FORMAT", "json", 1) }
         try BaselineRunner.update(component: component, context: PathContext.current())
     }
 }
+
+// MARK: - NoticeCommand
 
 struct NoticeCommand: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "notice")
@@ -137,6 +182,8 @@ struct NoticeCommand: ParsableCommand {
         Notice.run(context: PathContext.current())
     }
 }
+
+// MARK: - Render
 
 struct Render: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "render")
@@ -154,6 +201,8 @@ struct Render: ParsableCommand {
         FileHandle.standardOutput.write(Data(rendered.utf8))
     }
 }
+
+// MARK: - RenderBatch
 
 struct RenderBatch: ParsableCommand {
     static let configuration = CommandConfiguration(
@@ -229,6 +278,8 @@ struct RenderBatch: ParsableCommand {
         )
     }
 }
+
+// MARK: - RenderBatchError
 
 private enum RenderBatchError: Error, CustomStringConvertible {
     case cannotEnumerate(String)
