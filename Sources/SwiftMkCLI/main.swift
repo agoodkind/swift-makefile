@@ -369,16 +369,40 @@ struct XcodeFileHeader: ParsableCommand {
         for case let templateURL as URL in enumerator {
             let templateName = templateURL.lastPathComponent
             guard templateName.hasSuffix(templateSuffix) else { continue }
-            let templateText = try String(contentsOf: templateURL, encoding: .utf8)
-            let rendered = try TemplateRenderer.render(
-                templateText: templateText, values: values)
             let outputName = String(templateName.dropLast(templateSuffix.count))
             let outputFileURL = outputURL.appendingPathComponent(outputName)
-            let existing = try? String(contentsOf: outputFileURL, encoding: .utf8)
-            if existing == rendered { continue }
-            try rendered.write(to: outputFileURL, atomically: true, encoding: .utf8)
-            written += 1
+            if try renderPlist(at: templateURL, to: outputFileURL, values: values) {
+                written += 1
+            }
         }
         return written
+    }
+
+    /// Decode the macros plist with Foundation's property-list reader, substitute
+    /// the identity tokens in the FILEHEADER value, and write a canonical XML
+    /// plist only when it changes. Returns whether the output was written.
+    private static func renderPlist(
+        at templateURL: URL, to outputFileURL: URL, values: [String: String]
+    ) throws -> Bool {
+        let templateData = try Data(contentsOf: templateURL)
+        var macros = try PropertyListDecoder().decode(
+            TemplateMacros.self, from: templateData)
+        macros.fileHeader = try TemplateRenderer.render(
+            templateText: macros.fileHeader, values: values)
+        let encoder = PropertyListEncoder()
+        encoder.outputFormat = .xml
+        let rendered = try encoder.encode(macros)
+        let existing = try? Data(contentsOf: outputFileURL)
+        if existing == rendered { return false }
+        try rendered.write(to: outputFileURL, options: .atomic)
+        return true
+    }
+
+    private struct TemplateMacros: Codable {
+        var fileHeader: String
+
+        enum CodingKeys: String, CodingKey {
+            case fileHeader = "FILEHEADER"
+        }
     }
 }
