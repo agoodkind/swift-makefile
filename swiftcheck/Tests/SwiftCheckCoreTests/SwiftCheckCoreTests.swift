@@ -3,6 +3,7 @@
 //  SwiftCheckCoreTests
 //
 //  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-24.
+//  Copyright © 2026
 //
 
 import Foundation

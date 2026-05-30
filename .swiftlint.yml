@@ -58,6 +58,7 @@ file_header:
     \/\/  [^\n]+
     \/\/
     \/\/  Created by Alexander Goodkind <alex@goodkind\.io> on \d{4}-\d{2}-\d{2}\.
+    \/\/  Copyright © \d{4}.*
     \/\/
 
 line_length:
