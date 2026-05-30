@@ -1,6 +1,15 @@
+//
+//  Rule.swift
+//  SwiftCheckCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-24.
+//
+
 import Foundation
 import SwiftParser
 import SwiftSyntax
+
+// MARK: - Rule
 
 public enum Rule: String, CaseIterable, Sendable {
     case bannedDirectOutput = "banned_direct_output"
@@ -9,6 +18,7 @@ public enum Rule: String, CaseIterable, Sendable {
     case forceUnwrap = "force_unwrap"
     case ignoredCleanupError = "ignored_cleanup_error"
     case missingBoundaryLog = "missing_boundary_log"
+    case missingSectionMark = "missing_section_mark"
     case noAny = "no_any"
     case noAnyObject = "no_anyobject"
     case sensitiveLogField = "sensitive_log_field"
@@ -48,25 +58,35 @@ public enum Rule: String, CaseIterable, Sendable {
             return "runtime boundary functions must emit a structured log"
         case .ignoredCleanupError:
             return "cleanup paths must not discard errors silently"
+        case .missingSectionMark:
+            return "add a titled `// MARK: - <section>` divider before this top-level declaration"
         }
     }
 }
+
+// MARK: - Violation
 
 public struct Violation: Comparable, Hashable, Sendable {
     public let path: String
     public let line: Int
     public let column: Int
     public let rule: Rule
+    public let detail: String?
 
-    public init(path: String, line: Int, column: Int, rule: Rule) {
+    public init(path: String, line: Int, column: Int, rule: Rule, detail: String? = nil) {
         self.path = path
         self.line = line
         self.column = column
         self.rule = rule
+        self.detail = detail
+    }
+
+    public var message: String {
+        detail ?? rule.message
     }
 
     public var renderedLine: String {
-        "\(path):\(line):\(column): \(rule.rawValue): \(rule.message)"
+        "\(path):\(line):\(column): \(rule.rawValue): \(message)"
     }
 
     public static func < (lhs: Violation, rhs: Violation) -> Bool {
@@ -177,6 +197,8 @@ func location(for position: AbsolutePosition, converter: SourceLocationConverter
     let location = converter.location(for: position)
     return (location.line, location.column)
 }
+
+// MARK: - AuditVisitor
 
 final class AuditVisitor: SyntaxVisitor {
     private let path: String
@@ -420,5 +442,11 @@ func auditFile(path: String, enabledRules: Set<Rule>) throws -> [Violation] {
     let converter = SourceLocationConverter(fileName: path, tree: tree)
     let visitor = AuditVisitor(path: path, enabledRules: enabledRules, converter: converter)
     visitor.walk(tree)
-    return Array(visitor.violations).sorted()
+    var violations = visitor.violations
+    if enabledRules.contains(.missingSectionMark) {
+        let sectionViolations = missingSectionMarkViolations(
+            path: path, tree: tree, converter: converter)
+        violations.formUnion(sectionViolations)
+    }
+    return Array(violations).sorted()
 }

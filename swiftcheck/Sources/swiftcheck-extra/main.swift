@@ -1,5 +1,14 @@
+//
+//  main.swift
+//  swiftcheck-extra
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-24.
+//
+
 import Foundation
 import SwiftCheckCore
+
+// MARK: - CLIError
 
 enum CLIError: Error, CustomStringConvertible {
     case unknownFlag(String)

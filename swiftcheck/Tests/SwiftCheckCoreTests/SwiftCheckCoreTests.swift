@@ -1,7 +1,16 @@
+//
+//  SwiftCheckCoreTests.swift
+//  SwiftCheckCoreTests
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-24.
+//
+
 import Foundation
 import Testing
 
 @testable import SwiftCheckCore
+
+// MARK: - SwiftCheckCore Tests
 
 @Test
 func scanFindsAnyTypeUsage() throws {
