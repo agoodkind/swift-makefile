@@ -43,9 +43,9 @@ CHECK_SWIFT_MK := $(MAKE) -C swiftcheck -f ../$(SWIFT_MK) $(CHECK_ARGS)
 	lint-deadcode-baseline lint-deadcode-baseline-prune-fixed lint-deadcode-baseline-remove-fixed lint-deadcode-baseline-accept-new \
 	swiftcheck-extra-baseline swiftcheck-extra-baseline-prune-fixed swiftcheck-extra-baseline-remove-fixed swiftcheck-extra-baseline-accept-new \
 	baseline baseline-prune-fixed baseline-remove-fixed baseline-accept-new baseline-add-new \
-	update-swift-mk swift-mk-sync smoke-fetch update-consumers update-consumers-dry-run help
+	update-swift-mk swift-mk-sync smoke-fetch update-consumers update-consumers-dry-run help xcode-file-header
 
-build:
+build: xcode-file-header
 	$(ROOT_SWIFT_MK) build
 	$(CHECK_SWIFT_MK) BUILD_CHECKS=false build
 
@@ -192,7 +192,12 @@ update-consumers:
 update-consumers-dry-run:
 	$(ROOT_SWIFT_MK) update-consumers-dry-run
 
-check: lint
+check: lint xcode-file-header
+
+# swift-makefile stamps its own Xcode file-header macros on every build from the
+# current git identity. Consumers invoke this target on demand instead.
+xcode-file-header:
+	$(ROOT_SWIFT_MK) xcode-file-header
 
 help:
 	$(ROOT_SWIFT_MK) help

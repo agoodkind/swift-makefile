@@ -57,7 +57,7 @@ file_header:
     \/\/  [^\n]+\.swift
     \/\/  [^\n]+
     \/\/
-    \/\/  Created by Alexander Goodkind <alex@goodkind\.io> on \d{4}-\d{2}-\d{2}\.
+    \/\/  Created by [^<\n]+ <[^>\n]+> on [^\n]+\.
     \/\/  Copyright © \d{4}.*
     \/\/
 

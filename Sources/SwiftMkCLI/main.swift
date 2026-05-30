@@ -24,6 +24,7 @@ struct SwiftMk: ParsableCommand {
             LintSwiftlintScope.self, SwiftcheckExtra.self, SwiftcheckExtraBin.self,
             Fmt.self, TestCommand.self, Audit.self, LogAudit.self,
             BaselineCommand.self, NoticeCommand.self, Render.self, RenderBatch.self,
+            XcodeFileHeader.self,
         ]
     )
 }
@@ -293,5 +294,91 @@ private enum RenderBatchError: Error, CustomStringConvertible {
         case .templatesDirMissing(let path):
             return "templates directory not found: \(path)"
         }
+    }
+}
+
+// MARK: - XcodeFileHeader
+
+struct XcodeFileHeader: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "xcode-file-header",
+        abstract:
+            "Render Xcode file-header macros (IDETemplateMacros.plist) from the "
+            + "current git identity, rewriting outputs only when they change."
+    )
+
+    @Option(name: .customLong("templates-dir"))
+    var templatesDir: String
+
+    @Option(name: .customLong("output-dir"))
+    var outputDir: String?
+
+    func run() throws {
+        let name = Self.gitConfig("user.name")
+        let email = Self.gitConfig("user.email")
+        guard !name.isEmpty, !email.isEmpty else {
+            Output.log(
+                "xcode-file-header: no git identity (user.name/user.email); skipping")
+            return
+        }
+        let values = ["GIT_USER_NAME": name, "GIT_USER_EMAIL": email]
+        let destination = outputDir ?? Self.defaultOutputDir()
+        let written = try Self.renderChangedTemplates(
+            templatesDir: templatesDir, outputDir: destination, values: values)
+        Output.info("xcode-file-header: \(written) file(s) updated in \(destination)")
+    }
+
+    private static func gitConfig(_ key: String) -> String {
+        Shell.run("git", ["config", key]).stdout
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func defaultOutputDir() -> String {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Developer/Xcode/UserData").path
+    }
+
+    /// Render every `*.template` under `templatesDir`, writing each output only
+    /// when its content differs from what is already on disk. Returns the count
+    /// of files actually written.
+    private static func renderChangedTemplates(
+        templatesDir: String, outputDir: String, values: [String: String]
+    ) throws -> Int {
+        let fileManager = FileManager.default
+        let templatesURL = URL(fileURLWithPath: templatesDir, isDirectory: true)
+        var isDir: ObjCBool = false
+        guard
+            fileManager.fileExists(atPath: templatesURL.path, isDirectory: &isDir),
+            isDir.boolValue
+        else {
+            throw RenderBatchError.templatesDirMissing(templatesURL.path)
+        }
+        let outputURL = URL(fileURLWithPath: outputDir, isDirectory: true)
+        try fileManager.createDirectory(at: outputURL, withIntermediateDirectories: true)
+        guard
+            let enumerator = fileManager.enumerator(
+                at: templatesURL,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            )
+        else {
+            throw RenderBatchError.cannotEnumerate(templatesURL.path)
+        }
+        let templateSuffix = ".template"
+        var written = 0
+        for case let templateURL as URL in enumerator {
+            let templateName = templateURL.lastPathComponent
+            guard templateName.hasSuffix(templateSuffix) else { continue }
+            let templateText = try String(contentsOf: templateURL, encoding: .utf8)
+            let rendered = try TemplateRenderer.render(
+                templateText: templateText, values: values)
+            let outputName = String(templateName.dropLast(templateSuffix.count))
+            let outputFileURL = outputURL.appendingPathComponent(outputName)
+            let existing = try? String(contentsOf: outputFileURL, encoding: .utf8)
+            if existing == rendered { continue }
+            try rendered.write(to: outputFileURL, atomically: true, encoding: .utf8)
+            written += 1
+        }
+        return written
     }
 }

@@ -5,7 +5,7 @@
 	swiftcheck-extra swiftcheck-extra-baseline swiftcheck-extra-baseline-prune-fixed swiftcheck-extra-baseline-remove-fixed swiftcheck-extra-baseline-accept-new swiftcheck-extra-bin \
 	baseline baseline-prune-fixed baseline-remove-fixed baseline-accept-new baseline-add-new \
 	swift-mk-bin swift-mk-notice lint-swiftlint-scope lint-swiftlint-baseline-scope lint-swiftlint-baseline-scope-accept-new \
-	swift-mk-sync update-swift-mk smoke-fetch update-consumers update-consumers-dry-run log-audit install-hooks
+	swift-mk-sync update-swift-mk smoke-fetch update-consumers update-consumers-dry-run log-audit install-hooks xcode-file-header
 
 SWIFT_MK_BASE_URL ?= https://raw.githubusercontent.com/agoodkind/swift-makefile/main
 SWIFT_MK_API_REPO ?= agoodkind/swift-makefile
@@ -112,7 +112,8 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/Output.swift \
 	Tests/SwiftMkRenderCoreTests/TemplateRendererTests.swift \
 	Tests/SwiftMkCoreTests/SwiftMkCoreTests.swift \
-	notices.txt
+	notices.txt \
+	templates/xcode/IDETemplateMacros.plist.template
 
 ifeq ($(SWIFT_MK_HELPER_DIR),$(SWIFT_MK_FETCHED_SCRIPT_DIR))
 ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
@@ -132,6 +133,11 @@ endif
 SWIFT_MK_SWIFTLINT_CONFIG ?= .make/swiftlint.yml
 SWIFT_MK_SWIFT_FORMAT_CONFIG ?= .make/swift-format.json
 SWIFT_MK_PERIPHERY_CONFIG ?= .make/periphery.yml
+
+# Default Xcode location for the rendered file-header macros. Override to a
+# project's xcshareddata for a per-project header. swift-mk reads the git
+# identity itself.
+XCODE_TEMPLATE_DIR ?= $(HOME)/Library/Developer/Xcode/UserData
 
 ifneq ($(strip $(SWIFT_MK_BOOTSTRAP_FETCHED)$(SWIFT_MK_SKIP_FETCH)),)
 SWIFT_MK_FETCHED_SWIFTLINT := $(call swift-mk-require-one,$(SWIFT_MK_SWIFTLINT_CONFIG))
@@ -341,6 +347,15 @@ help:
 
 swift-mk-bin:
 	@SWIFT_MK_ROOT="$(CURDIR)" bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-build.sh" resolve
+
+# Render the Xcode file-header macros from the current git identity so newly
+# created files are stamped with this author. swift-mk reads the git identity,
+# renders the template, and rewrites the plist only when it changes. Consumers
+# invoke this on demand; swift-makefile's own Makefile runs it on every build.
+xcode-file-header: swift-mk-bin
+	@"$(SWIFT_MK_BIN)" xcode-file-header \
+		--templates-dir "$(SWIFT_MK_SELF_DIR)/templates/xcode" \
+		--output-dir "$(XCODE_TEMPLATE_DIR)"
 
 swift-mk-notice: swift-mk-bin
 	@"$(SWIFT_MK_BIN)" notice || true
