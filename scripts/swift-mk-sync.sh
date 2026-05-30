@@ -5,43 +5,29 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 FETCH_SCRIPT="${SCRIPT_DIR}/swift-mk-fetch-one.sh"
 
 asset_list() {
+    local script_file
+    local module_name
+
+    # Top-level configs that are not carried in SWIFT_MK_SCRIPT_FILES.
     printf "swift.mk\n"
     printf ".swiftlint.yml\n"
     printf ".swift-format\n"
     printf ".periphery.yml\n"
     printf "swift-build.mk\n"
     printf "swift-release.mk\n"
-    printf "scripts/swift-mk-fetch-one.sh\n"
-    printf "scripts/swift-mk-build.sh\n"
-    printf "scripts/swift-mk-sync.sh\n"
-    printf "scripts/swift-mk-fleet-update.sh\n"
-    printf "scripts/install-hooks.sh\n"
-    printf "hooks/pre-commit\n"
-    printf "swiftcheck/Package.swift\n"
-    printf "swiftcheck/Sources/swiftcheck-extra/main.swift\n"
-    printf "Package.swift\n"
-    printf "notices.txt\n"
-    printf "Sources/SwiftMkRenderCore/TemplateRenderer.swift\n"
-    printf "Sources/SwiftMkRenderCLI/main.swift\n"
-    printf "Sources/SwiftMkCLI/main.swift\n"
-    printf "Sources/SwiftMkCore/Findings.swift\n"
-    printf "Sources/SwiftMkCore/Text.swift\n"
-    printf "Sources/SwiftMkCore/Env.swift\n"
-    printf "Sources/SwiftMkCore/Shell.swift\n"
-    printf "Sources/SwiftMkCore/Capture.swift\n"
-    printf "Sources/SwiftMkCore/Baseline.swift\n"
-    printf "Sources/SwiftMkCore/Baseline+Gate.swift\n"
-    printf "Sources/SwiftMkCore/BaselineSpec.swift\n"
-    printf "Sources/SwiftMkCore/TokenGate.swift\n"
-    printf "Sources/SwiftMkCore/Scope.swift\n"
-    printf "Sources/SwiftMkCore/Swiftcheck.swift\n"
-    printf "Sources/SwiftMkCore/Lint.swift\n"
-    printf "Sources/SwiftMkCore/Lint+Run.swift\n"
-    printf "Sources/SwiftMkCore/BaselineRunner.swift\n"
-    printf "Sources/SwiftMkCore/Notice.swift\n"
-    printf "Sources/SwiftMkCore/Output.swift\n"
-    printf "Tests/SwiftMkRenderCoreTests/TemplateRendererTests.swift\n"
-    printf "Tests/SwiftMkCoreTests/SwiftMkCoreTests.swift\n"
+
+    # The canonical fetched file set is authored once in swift.mk as
+    # SWIFT_MK_SCRIPT_FILES and exported into this script's environment, so the
+    # swiftcheck package sources live in exactly one list and cannot drift.
+    if [[ -z "${SWIFT_MK_SCRIPT_FILES:-}" ]]; then
+        printf "swift-mk-sync: SWIFT_MK_SCRIPT_FILES is empty; run via make (e.g. make smoke-fetch)\n" >&2
+        exit 1
+    fi
+    # shellcheck disable=SC2086
+    for script_file in ${SWIFT_MK_SCRIPT_FILES}; do
+        printf "%s\n" "${script_file}"
+    done
+
     for module_name in ${SWIFT_MK_MODULES:-}; do
         printf "%s\n" "${module_name}"
     done
@@ -81,7 +67,29 @@ smoke_fetch() {
         bash "${FETCH_SCRIPT}" "${asset_name}" "${destination_path}" ""
     done < <(asset_list | awk 'NF && !seen[$0]++')
     count_output=$(find .make -type f | wc -l | tr -d " ")
+    printf "smoke-fetch: %s assets fetched into .make/\n" "${count_output}"
+    smoke_build_swiftcheck
     printf "smoke-fetch: OK (%s assets fetched into .make/)\n" "${count_output}"
+}
+
+# Build the swiftcheck package from the freshly fetched tree so an incomplete
+# fetch manifest (a declared target source missing from the asset list) fails
+# here instead of silently breaking a consumer's on-demand build on a clean
+# runner. SwiftPM validates every declared target's source directory at manifest
+# load, so a missing SwiftCheckCore or SwiftCheckCoreTests source fails the build.
+smoke_build_swiftcheck() {
+    local package_path=".make/swiftcheck"
+    local product="${SWIFTCHECK_EXTRA_BUILD_PRODUCT:-swiftcheck-extra}"
+
+    if [[ ! -f "${package_path}/Package.swift" ]]; then
+        printf "smoke-fetch: %s/Package.swift missing after fetch\n" "${package_path}" >&2
+        exit 1
+    fi
+    printf "smoke-fetch: building %s from the fetched swiftcheck package\n" "${product}"
+    if ! swift build --package-path "${package_path}" -c release --product "${product}"; then
+        printf "smoke-fetch: building %s from %s failed; the fetch manifest is incomplete or a swiftcheck source path is missing\n" "${product}" "${package_path}" >&2
+        exit 1
+    fi
 }
 
 case "${1:-}" in

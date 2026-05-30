@@ -4,6 +4,12 @@ on:
   workflow_call:
 
 jobs:
+  smoke-fetch:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: make smoke-fetch
+
   lint:
     runs-on: macos-latest
     steps:

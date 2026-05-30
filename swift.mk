@@ -86,7 +86,10 @@ SWIFT_MK_SCRIPT_FILES := \
 	scripts/install-hooks.sh \
 	hooks/pre-commit \
 	swiftcheck/Package.swift \
+	swiftcheck/Sources/SwiftCheckCore/Rule.swift \
+	swiftcheck/Sources/SwiftCheckCore/TopLevelTypeDeclaration.swift \
 	swiftcheck/Sources/swiftcheck-extra/main.swift \
+	swiftcheck/Tests/SwiftCheckCoreTests/SwiftCheckCoreTests.swift \
 	Package.swift \
 	Sources/SwiftMkRenderCore/TemplateRenderer.swift \
 	Sources/SwiftMkRenderCLI/main.swift \
@@ -210,7 +213,7 @@ SWIFT_LOG_AUDIT_CMD ?=
 SWIFTCHECK_EXTRA_BIN ?=
 SWIFTCHECK_EXTRA_BUILD_REPO ?= $(if $(and $(SWIFT_MK_DEV_DIR),$(wildcard $(SWIFT_MK_DEV_DIR)/swiftcheck/Package.swift)),$(SWIFT_MK_DEV_DIR)/swiftcheck,$(CURDIR)/.make/swiftcheck)
 SWIFTCHECK_EXTRA_BUILD_PRODUCT ?= swiftcheck-extra
-SWIFTCHECK_EXTRA_FLAGS ?= -no_any -no_anyobject -untyped_json -force_unwrap -force_try -silent_try -silent_catch -banned_direct_output -task_detached -sleep_in_production -fatal_exit -sensitive_log_field -missing_boundary_log -ignored_cleanup_error
+SWIFTCHECK_EXTRA_FLAGS ?= -no_any -no_anyobject -untyped_json -force_unwrap -force_try -silent_try -silent_catch -banned_direct_output -task_detached -sleep_in_production -fatal_exit -sensitive_log_field -missing_boundary_log -ignored_cleanup_error -missing_section_mark
 SWIFTCHECK_EXTRA_TARGETS ?= $(SWIFTLINT_TARGETS)
 SWIFTCHECK_EXTRA_BASELINE ?= .swiftcheck-extra-baseline.txt
 SWIFTCHECK_EXTRA_DEFAULT_EXCLUDE_PATHS ?=
@@ -328,11 +331,8 @@ help:
 	@printf '  %-40s %s\n' 'lint-complexity' 'SwiftLint metrics with baseline gate'
 	@printf '  %-40s %s\n' 'lint-deadcode' 'Periphery with baseline gate'
 	@printf '  %-40s %s\n' 'swiftcheck-extra' 'custom SwiftSyntax analyzers with baseline gate'
-	@printf '\n%s\n' 'Baseline maintenance, guarded by BASELINE_CONFIRM and BASELINE_TOKEN:'
-	@printf '  %-40s %s\n' 'baseline' 'sync all baselines to current findings'
-	@printf '  %-40s %s\n' 'baseline-prune-fixed' 'remove fixed findings without saving new findings'
-	@printf '  %-40s %s\n' 'baseline-accept-new' 'save new findings without removing fixed findings'
-	@printf '  %-40s %s\n' 'lint-complexity-baseline-accept-new' 'save new SwiftLint complexity findings only'
+	@printf '\n%s\n' 'Baseline maintenance (maintainer use, guarded by BASELINE_CONFIRM and BASELINE_TOKEN):'
+	@printf '  %-40s %s\n' 'baseline' 'refresh the recorded baselines'
 	@printf '\n%s\n' 'Pipeline maintenance:'
 	@printf '  %-40s %s\n' 'swift-mk-sync / update-swift-mk' 'refresh swift.mk, helper scripts, configs, modules, and swiftcheck source'
 	@printf '  %-40s %s\n' 'smoke-fetch' 'force a fetch-path smoke run'
