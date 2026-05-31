@@ -100,6 +100,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/Shell.swift \
 	Sources/SwiftMkCore/Capture.swift \
 	Sources/SwiftMkCore/Baseline.swift \
+	Sources/SwiftMkCore/BaselineReport.swift \
 	Sources/SwiftMkCore/Baseline+Gate.swift \
 	Sources/SwiftMkCore/BaselineSpec.swift \
 	Sources/SwiftMkCore/TokenGate.swift \
