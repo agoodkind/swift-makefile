@@ -235,6 +235,8 @@ func reportRollupListsEachToolAndSummary() {
     #expect(lines.first == "Updating 4 baselines")
     #expect(text.contains("golangci-lint"))
     #expect(text.contains("no change"))
+    #expect(text.contains("no existing"))
+    #expect(text.contains("4 -> 0"))
     #expect(text.contains("Done. 31 remaining across 4 baselines."))
     assertNoForbiddenTokens(text)
 }

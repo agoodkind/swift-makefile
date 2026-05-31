@@ -78,6 +78,17 @@ public enum BaselineReport {
         return parts.joined(separator: ", ")
     }
 
+    /// Third-column phrase: the before/after key counts, or "no existing" when
+    /// the baseline was empty and stayed empty. `before` is the old key set,
+    /// which partitions exactly into removed and refreshed.
+    static func remainingPhrase(_ stats: BaselineUpdateStats) -> String {
+        let before = stats.removed + stats.refreshed
+        if before == 0, stats.remaining == 0 {
+            return "no existing"
+        }
+        return "\(before) -> \(stats.remaining)"
+    }
+
     /// Lines for a single-component run.
     static func singleLines(_ stats: BaselineUpdateStats) -> [String] {
         [
@@ -99,7 +110,7 @@ public enum BaselineReport {
             let label = stats.label.padding(toLength: labelWidth, withPad: " ", startingAt: 0)
             let change = changePhrase(stats).padding(
                 toLength: changeWidth, withPad: " ", startingAt: 0)
-            lines.append("  \(label)   \(change)   \(stats.remaining) remaining")
+            lines.append("  \(label)   \(change)   \(remainingPhrase(stats))")
         }
         let totalRemaining = all.reduce(0) { $0 + $1.remaining }
         lines.append("")
