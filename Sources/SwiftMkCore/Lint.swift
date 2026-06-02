@@ -163,7 +163,14 @@ public enum Lint {
                 environment: environment
             )
         } else {
-            let targets = Env.words(Env.get("SWIFTLINT_TARGETS", "Sources Tests Package.swift"))
+            // Apply the exclude pattern to the target list so an excluded path
+            // (such as generated Swift) is never linted. Without this, an explicit
+            // file target would still fail the strict run even though its findings
+            // are excluded afterward.
+            let targets = Text.filterExclude(
+                Env.words(Env.get("SWIFTLINT_TARGETS", "Sources Tests Package.swift")),
+                swiftlintExclude()
+            )
             result = Shell.run(
                 swiftlint,
                 ["lint", "--strict"] + onlyArgs + flags + targets,
