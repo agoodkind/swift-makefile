@@ -58,7 +58,7 @@ file_header:
     \/\/  [^\n]+
     \/\/
     \/\/  Created by [^<\n]+ <[^>\n]+> on [^\n]+\.
-    \/\/  Copyright © \d{4}.*
+    \/\/  Copyright © \d{4}, all rights reserved\.
     \/\/
 
 line_length:

@@ -3,7 +3,7 @@
 //  SwiftCheckCore
 //
 //  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-24.
-//  Copyright © 2026
+//  Copyright © 2026, all rights reserved.
 //
 
 import Foundation
