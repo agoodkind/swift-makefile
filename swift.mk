@@ -154,7 +154,10 @@ SWIFTLINT ?= swiftlint
 SWIFTLINT_FLAGS ?= --config $(SWIFT_MK_SWIFTLINT_CONFIG) --reporter xcode
 SWIFTLINT_TARGETS ?= Sources Tests Package.swift
 SWIFTLINT_BASELINE ?= .swiftlint-baseline.txt
-SWIFTLINT_DEFAULT_EXCLUDE_PATHS ?=
+# Generated Swift is machine-written, so the linters skip it by default. A repo
+# can add more paths through SWIFTLINT_EXCLUDE_PATHS without losing this default.
+SWIFT_MK_GENERATED_EXCLUDE_PATHS ?= /Generated/,\.generated\.
+SWIFTLINT_DEFAULT_EXCLUDE_PATHS ?= $(SWIFT_MK_GENERATED_EXCLUDE_PATHS)
 SWIFTLINT_EXCLUDE_PATHS ?=
 SWIFTLINT_BASELINE_SCOPE_PATTERN ?=
 RULE ?=
@@ -168,7 +171,7 @@ SWIFTLINT_COMPLEXITY_BASELINE ?= .swiftlint-complexity-baseline.txt
 PERIPHERY ?= periphery
 PERIPHERY_ARGS ?= scan --config $(SWIFT_MK_PERIPHERY_CONFIG) --strict
 PERIPHERY_BASELINE ?= .periphery-baseline.txt
-PERIPHERY_DEFAULT_EXCLUDE_PATHS ?=
+PERIPHERY_DEFAULT_EXCLUDE_PATHS ?= $(SWIFT_MK_GENERATED_EXCLUDE_PATHS)
 PERIPHERY_EXCLUDE_PATHS ?=
 
 OSV_SCANNER ?= osv-scanner
@@ -223,7 +226,7 @@ SWIFTCHECK_EXTRA_BUILD_PRODUCT ?= swiftcheck-extra
 SWIFTCHECK_EXTRA_FLAGS ?= -no_any -no_anyobject -untyped_json -force_unwrap -force_try -silent_try -silent_catch -banned_direct_output -task_detached -sleep_in_production -fatal_exit -sensitive_log_field -missing_boundary_log -ignored_cleanup_error -missing_section_mark
 SWIFTCHECK_EXTRA_TARGETS ?= $(SWIFTLINT_TARGETS)
 SWIFTCHECK_EXTRA_BASELINE ?= .swiftcheck-extra-baseline.txt
-SWIFTCHECK_EXTRA_DEFAULT_EXCLUDE_PATHS ?=
+SWIFTCHECK_EXTRA_DEFAULT_EXCLUDE_PATHS ?= $(SWIFT_MK_GENERATED_EXCLUDE_PATHS)
 SWIFTCHECK_EXTRA_EXCLUDE_PATHS ?=
 
 LINT_GATES ?= lint-swiftlint lint-format lint-complexity lint-deadcode swiftcheck-extra $(if $(strip $(SWIFT_LOG_AUDIT_CMD)),log-audit,)
