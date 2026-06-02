@@ -140,6 +140,26 @@ public enum Lint {
             Env.get("SWIFTLINT_DEFAULT_EXCLUDE_PATHS"), Env.get("SWIFTLINT_EXCLUDE_PATHS"))
     }
 
+    /// Drops paths that git ignores, so generated or otherwise untracked files are
+    /// never linted. `git check-ignore` prints the ignored subset of its argument
+    /// paths; outside a git work tree it reports none and every path is kept.
+    static func dropGitIgnored(_ paths: [String]) -> [String] {
+        guard !paths.isEmpty else {
+            return paths
+        }
+        let result = Shell.run("git", ["check-ignore"] + paths)
+        let ignored = Set(
+            result.stdout
+                .split(separator: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+        )
+        guard !ignored.isEmpty else {
+            return paths
+        }
+        return paths.filter { !ignored.contains($0) }
+    }
+
     static func captureSwiftlint(
         rawPath: String, findingsPath: String, onlyRules: [String], context: PathContext
     ) {
@@ -163,13 +183,15 @@ public enum Lint {
                 environment: environment
             )
         } else {
-            // Apply the exclude pattern to the target list so an excluded path
-            // (such as generated Swift) is never linted. Without this, an explicit
-            // file target would still fail the strict run even though its findings
-            // are excluded afterward.
-            let targets = Text.filterExclude(
-                Env.words(Env.get("SWIFTLINT_TARGETS", "Sources Tests Package.swift")),
-                swiftlintExclude()
+            // Apply the exclude pattern and drop git-ignored paths from the target
+            // list so an excluded or untracked path (such as generated Swift) is
+            // never linted. Without this, an explicit file target would still fail
+            // the strict run even though its findings are excluded afterward.
+            let targets = dropGitIgnored(
+                Text.filterExclude(
+                    Env.words(Env.get("SWIFTLINT_TARGETS", "Sources Tests Package.swift")),
+                    swiftlintExclude()
+                )
             )
             result = Shell.run(
                 swiftlint,

@@ -162,13 +162,20 @@ public enum Swiftcheck {
             return
         }
         let flags = Env.words(Env.get("SWIFTCHECK_EXTRA_FLAGS"))
-        let targets = Env.words(Env.get("SWIFTCHECK_EXTRA_TARGETS", "Sources Tests Package.swift"))
-        let result = Shell.run(binary, flags + targets)
-        Capture.write(result.combined, to: rawPath)
         let exclude = Text.excludePattern(
             Env.get("SWIFTCHECK_EXTRA_DEFAULT_EXCLUDE_PATHS"),
             Env.get("SWIFTCHECK_EXTRA_EXCLUDE_PATHS")
         )
+        // Drop excluded and git-ignored paths so generated or untracked files are
+        // never analyzed.
+        let targets = Lint.dropGitIgnored(
+            Text.filterExclude(
+                Env.words(Env.get("SWIFTCHECK_EXTRA_TARGETS", "Sources Tests Package.swift")),
+                exclude
+            )
+        )
+        let result = Shell.run(binary, flags + targets)
+        Capture.write(result.combined, to: rawPath)
         let normalized = Text.readLines(rawPath).map { Findings.normalizePath($0, context) }
         let excluded = Text.filterExclude(normalized, exclude)
         do {
