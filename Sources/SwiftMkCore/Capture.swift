@@ -98,6 +98,7 @@ public enum Capture {
         guard !paths.isEmpty else {
             return findings
         }
+        Output.debug("capture: checking \(paths.count) finding path(s) against git ignore")
         let result = Shell.run("git", ["check-ignore"] + Array(paths))
         let ignored = Set(
             result.stdout

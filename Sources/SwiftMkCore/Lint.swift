@@ -147,6 +147,7 @@ public enum Lint {
         guard !paths.isEmpty else {
             return paths
         }
+        Output.debug("lint: checking \(paths.count) path(s) against git ignore")
         let result = Shell.run("git", ["check-ignore"] + paths)
         let ignored = Set(
             result.stdout

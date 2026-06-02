@@ -329,7 +329,8 @@ struct XcodeFileHeader: ParsableCommand {
     }
 
     private static func gitConfig(_ key: String) -> String {
-        Shell.run("git", ["config", key]).stdout
+        Output.debug("xcode-file-header: reading git config \(key)")
+        return Shell.run("git", ["config", key]).stdout
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -384,6 +385,9 @@ struct XcodeFileHeader: ParsableCommand {
     private static func renderPlist(
         at templateURL: URL, to outputFileURL: URL, values: [String: String]
     ) throws -> Bool {
+        Output.debug(
+            "xcode-file-header: rendering plist template=\(templateURL.path) output=\(outputFileURL.path)"
+        )
         let templateData = try Data(contentsOf: templateURL)
         var macros = try PropertyListDecoder().decode(
             TemplateMacros.self, from: templateData)
@@ -392,7 +396,19 @@ struct XcodeFileHeader: ParsableCommand {
         let encoder = PropertyListEncoder()
         encoder.outputFormat = .xml
         let rendered = try encoder.encode(macros)
-        let existing = try? Data(contentsOf: outputFileURL)
+        let existing: Data?
+        do {
+            existing = try Data(contentsOf: outputFileURL)
+        } catch {
+            let cocoaError = error as NSError
+            guard
+                cocoaError.domain == NSCocoaErrorDomain,
+                cocoaError.code == NSFileReadNoSuchFileError
+            else {
+                throw error
+            }
+            existing = nil
+        }
         if existing == rendered { return false }
         try rendered.write(to: outputFileURL, options: .atomic)
         return true
