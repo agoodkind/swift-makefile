@@ -35,6 +35,16 @@ public enum Findings {
         return output
     }
 
+    /// The file path of a finding line, the text before its first
+    /// `:line:column:` coordinate. Returns nil when the line carries no
+    /// coordinate, so the caller keeps lines it cannot attribute to a file.
+    public static func filePath(_ line: String) -> String? {
+        guard let range = line.firstRange(of: locationPattern) else {
+            return nil
+        }
+        return String(line[line.startIndex..<range.lowerBound])
+    }
+
     /// Replace the first `:line:column:` with `:::` after path normalization.
     public static func key(_ line: String, pwd: String, cwd: String) -> String {
         let normalized = normalizePath(line, pwd: pwd, cwd: cwd)

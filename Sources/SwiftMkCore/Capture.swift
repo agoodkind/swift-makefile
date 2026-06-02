@@ -80,11 +80,39 @@ public enum Capture {
             matched = raw
         }
         let normalized = matched.map { Findings.normalizePath($0, context) }
-        let excluded = Text.filterExclude(normalized, excludePattern)
+        let excluded = dropGitIgnoredFindings(Text.filterExclude(normalized, excludePattern))
         do {
             try Text.writeLines(Text.sortedUnique(excluded), to: findingsPath)
         } catch {
             Output.error("capture: could not write findings to \(findingsPath): \(error)")
+        }
+    }
+
+    /// Drops findings whose file is git-ignored, so generated or untracked output
+    /// never trips a gate. A path pattern is deliberately not used for this: it
+    /// would let a tracked file in a matching directory escape the gate. Findings
+    /// without an attributable path, and all findings outside a git work tree, are
+    /// kept. `git check-ignore` prints the ignored subset of its argument paths.
+    static func dropGitIgnoredFindings(_ findings: [String]) -> [String] {
+        let paths = Set(findings.compactMap { Findings.filePath($0) })
+        guard !paths.isEmpty else {
+            return findings
+        }
+        let result = Shell.run("git", ["check-ignore"] + Array(paths))
+        let ignored = Set(
+            result.stdout
+                .split(separator: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+        )
+        guard !ignored.isEmpty else {
+            return findings
+        }
+        return findings.filter { line in
+            guard let path = Findings.filePath(line) else {
+                return true
+            }
+            return !ignored.contains(path)
         }
     }
 
