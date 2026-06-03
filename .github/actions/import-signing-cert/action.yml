@@ -9,7 +9,7 @@ inputs:
     description: Import password for the .p12.
     required: true
   identity-name:
-    description: Full identity name to resolve, e.g. "Developer ID Application: Name (TEAMID)".
+    description: 'Full identity name to resolve, e.g. "Developer ID Application: Name (TEAMID)".'
     required: true
 
 outputs:
