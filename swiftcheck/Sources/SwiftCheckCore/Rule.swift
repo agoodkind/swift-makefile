@@ -195,8 +195,8 @@ func boundaryNeedlePresent(in source: String) -> Bool {
 func location(for position: AbsolutePosition, converter: SourceLocationConverter) -> (
     line: Int, column: Int
 ) {
-    let location = converter.location(for: position)
-    return (location.line, location.column)
+    let resolved = converter.location(for: position)
+    return (resolved.line, resolved.column)
 }
 
 // MARK: - AuditVisitor
