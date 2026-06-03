@@ -40,6 +40,15 @@ swift_mk_build_from_repo() {
     bin_path="$(swift build --package-path "${package_path}" -c "${config}" --show-bin-path | tr -d '\r' | tail -n 1)/swift-mk"
     cp "${bin_path}" "${output_path}"
     chmod +x "${output_path}"
+    # A copied arm64 binary can carry a stale linker signature and a provenance
+    # xattr that make the kernel kill it on launch ("Killed: 9"). Clear the xattrs
+    # and re-sign ad-hoc so the cached binary runs.
+    if command -v xattr >/dev/null 2>&1; then
+        xattr -c "${output_path}" 2>/dev/null || true
+    fi
+    if command -v codesign >/dev/null 2>&1; then
+        codesign --force --sign - "${output_path}" >/dev/null 2>&1 || true
+    fi
 }
 
 swift_mk_resolve_bin() {
