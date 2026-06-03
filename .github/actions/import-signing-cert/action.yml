@@ -1,0 +1,46 @@
+name: Import Developer ID signing certificate
+description: Import the Developer ID Application certificate with apple-actions/import-codesign-certs and resolve its codesigning identity SHA-1.
+
+inputs:
+  p12-base64:
+    description: Base64-encoded Developer ID Application .p12.
+    required: true
+  p12-password:
+    description: Import password for the .p12.
+    required: true
+  identity-name:
+    description: Full identity name to resolve, e.g. "Developer ID Application: Name (TEAMID)".
+    required: true
+
+outputs:
+  identity-sha1:
+    description: SHA-1 of the resolved codesigning identity.
+    value: ${{ steps.resolve.outputs.identity-sha1 }}
+
+runs:
+  using: composite
+  steps:
+    - uses: apple-actions/import-codesign-certs@v3
+      with:
+        p12-file-base64: ${{ inputs.p12-base64 }}
+        p12-password: ${{ inputs.p12-password }}
+
+    - name: Resolve identity SHA-1
+      id: resolve
+      shell: bash
+      env:
+        IDENTITY_NAME: ${{ inputs.identity-name }}
+      run: |
+        set -euo pipefail
+
+        identity_sha1="$(
+            security find-identity -v -p codesigning \
+                | awk -v identity="\"$IDENTITY_NAME\"" 'index($0, identity) { print $2; exit }'
+        )"
+
+        if [[ -z "$identity_sha1" ]]; then
+            echo "Developer ID Application identity '$IDENTITY_NAME' not found in keychain" >&2
+            exit 1
+        fi
+
+        printf 'identity-sha1=%s\n' "$identity_sha1" >> "$GITHUB_OUTPUT"

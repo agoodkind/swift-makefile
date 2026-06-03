@@ -1,0 +1,56 @@
+name: Notarize and staple
+description: Submit an artifact to Apple's Notary service with notarytool and staple the ticket.
+
+inputs:
+  artifact-path:
+    description: Path to the .dmg, .pkg, or .zip to notarize and staple.
+    required: true
+  notary-key-base64:
+    description: Base64-encoded App Store Connect API .p8 key.
+    required: true
+  notary-key-id:
+    description: App Store Connect API key id.
+    required: true
+  notary-issuer-id:
+    description: App Store Connect API issuer id (UUID).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Notarize and staple
+      shell: bash
+      env:
+        ARTIFACT_PATH: ${{ inputs.artifact-path }}
+        NOTARY_KEY_BASE64: ${{ inputs.notary-key-base64 }}
+        NOTARY_KEY_ID: ${{ inputs.notary-key-id }}
+        NOTARY_ISSUER_ID: ${{ inputs.notary-issuer-id }}
+      run: |
+        set -euo pipefail
+
+        key_path="$RUNNER_TEMP/notary-AuthKey.p8"
+        submit_output_path="$RUNNER_TEMP/notarytool-submit.json"
+        printf '%s' "$NOTARY_KEY_BASE64" | base64 --decode > "$key_path"
+
+        set +e
+        xcrun notarytool submit "$ARTIFACT_PATH" \
+            --key "$key_path" \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" \
+            --wait \
+            --output-format json > "$submit_output_path"
+        submit_exit_code=$?
+        set -e
+
+        submission_status="$(plutil -extract status raw -o - "$submit_output_path" 2>/dev/null || true)"
+        if [[ "$submit_exit_code" -ne 0 ]]; then
+            cat "$submit_output_path" >&2 || true
+            exit "$submit_exit_code"
+        fi
+        if [[ "$submission_status" != "Accepted" ]]; then
+            echo "Notary submission was not accepted: ${submission_status:-missing status}" >&2
+            cat "$submit_output_path" >&2 || true
+            exit 1
+        fi
+
+        xcrun stapler staple "$ARTIFACT_PATH"
