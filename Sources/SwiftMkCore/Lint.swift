@@ -263,6 +263,10 @@ public enum Lint {
 
     // MARK: deadcode (periphery)
 
+    /// A `periphery` exit status of 0 means no findings and 1 means findings; this
+    /// threshold and above is a build or usage failure the gate fails loudly on.
+    static let deadcodeHardFailStatus: Int32 = 2
+
     static func peripheryExclude() -> String {
         Text.excludePattern(
             Env.get("PERIPHERY_DEFAULT_EXCLUDE_PATHS"), Env.get("PERIPHERY_EXCLUDE_PATHS"))
@@ -280,6 +284,7 @@ public enum Lint {
             Env.get("PERIPHERY", "periphery"), args, environment: lintEnvironment())
         GateStatus.last = result.status
         Capture.write(result.combined, to: rawPath)
+        DeadcodeScan.appendXcodeFindings(rawPath: rawPath)
         Capture.extractFindings(
             rawPath: rawPath,
             findingsPath: findingsPath,
@@ -295,6 +300,15 @@ public enum Lint {
         let raw = ".make/periphery.raw.out"
         let findings = ".make/periphery.out"
         captureDeadcode(rawPath: raw, findingsPath: findings, context: context)
+        let status = GateStatus.last
+        if status >= deadcodeHardFailStatus {
+            Output.log("lint-deadcode: FAILED")
+            Output.log("  Exit status: \(status)\n")
+            Output.log("Output:")
+            Output.log(Text.readLines(raw).joined(separator: "\n"))
+            Baseline.recordFailedGate("lint-deadcode")
+            return false
+        }
         let spec = BaselineSpec(
             findingsPath: findings,
             baselinePath: Env.get("PERIPHERY_BASELINE", ".periphery-baseline.txt"),

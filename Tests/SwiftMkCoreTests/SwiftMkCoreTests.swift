@@ -285,3 +285,67 @@ func reportJSONHasNeutralFieldsAndNoMode() throws {
     // No `mode` key anywhere in the document.
     #expect(!json.contains("\"mode\""))
 }
+
+// MARK: - DeadcodeScan
+
+@Test
+func deadcodeParsesProjectSchemes() {
+    let json = """
+        { "project": { "name": "App", "schemes": ["App", "AppTests"] } }
+        """
+    #expect(DeadcodeScan.parseSchemes(json) == ["App", "AppTests"])
+}
+
+@Test
+func deadcodeParsesWorkspaceSchemes() {
+    let json = """
+        { "workspace": { "name": "App", "schemes": ["App", "Agent"] } }
+        """
+    #expect(DeadcodeScan.parseSchemes(json) == ["App", "Agent"])
+}
+
+@Test
+func deadcodeParsesPackageTargets() {
+    let json = """
+        { "name": "Pkg", "targets": [ { "name": "Core" }, { "name": "CoreTests" } ] }
+        """
+    #expect(DeadcodeScan.parsePackageTargets(json) == ["Core", "CoreTests"])
+}
+
+@Test
+func deadcodeJsonDataSkipsPreamble() {
+    let text = "Command line invocation:\n  tool args\n{ \"project\": {} }"
+    #expect(DeadcodeScan.jsonData(text) == Data("{ \"project\": {} }".utf8))
+}
+
+@Test
+func deadcodeSchemesToScanDropsPackageTargets() {
+    let scan = DeadcodeScan.schemesToScan(
+        ["App", "Agent", "Core", "Log"], packageTargets: ["Core", "Log"])
+    #expect(scan == ["App", "Agent"])
+}
+
+@Test
+func deadcodeGeneratorCommandMatchesManifest() {
+    let xcodegen = DeadcodeScan.generatorCommand(forManifest: "project.yml")
+    #expect(xcodegen.tool == "xcodegen")
+    #expect(xcodegen.arguments == ["generate"])
+    let tuist = DeadcodeScan.generatorCommand(forManifest: "Project.swift")
+    #expect(tuist.tool == "tuist")
+    #expect(tuist.arguments == ["generate", "--no-open"])
+}
+
+@Test
+func deadcodeFindsIndexStoreUnderDerivedData() throws {
+    let base = NSTemporaryDirectory() + "swiftmk-deadcode-" + UUID().uuidString
+    let store = base + "/Index.noindex/DataStore"
+    try FileManager.default.createDirectory(
+        atPath: store, withIntermediateDirectories: true)
+    #expect(DeadcodeScan.existingIndexStore(base) == store)
+    #expect(DeadcodeScan.existingIndexStore(base + "-missing") == nil)
+}
+
+@Test
+func deadcodeHardFailThresholdIsTwo() {
+    #expect(Lint.deadcodeHardFailStatus == 2)
+}

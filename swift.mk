@@ -199,6 +199,10 @@ SWIFT_MK_XCODE_CACHE_DIAGNOSTICS_ENABLED := YES
 endif
 SWIFT_MK_XCODEBUILD_ARGS := $(strip $(if $(filter YES,$(SWIFT_MK_XCODE_CACHE_ENABLED)),COMPILATION_CACHE_ENABLE_CACHING=YES $(if $(filter YES,$(SWIFT_MK_XCODE_CACHE_DIAGNOSTICS_ENABLED)),COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=YES,),))
 SWIFT_MK_XCODEBUILD_NO_CACHE_ARGS := COMPILATION_CACHE_ENABLE_CACHING=NO COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=NO
+# Canonical DerivedData path. A consumer that builds Xcode targets routes its
+# `xcodebuild -derivedDataPath` here, and the dead-code gate reads the index store
+# from the same place, so coverage analysis is deterministic across repos.
+SWIFT_MK_DERIVED_DATA ?= $(CURDIR)/.derived-data
 SWIFT_MK_SWIFTPM_CACHE_ARGS_AUTO := $(shell swift_path=$$(command -v swift || printf ''); if [ -n "$$swift_path" ]; then build_help=$$("$$swift_path" build --help || true); args=""; printf '%s\n' "$$build_help" | grep -q -- '--enable-dependency-cache' && args="$$args --enable-dependency-cache"; printf '%s\n' "$$build_help" | grep -q -- '--enable-build-manifest-caching' && args="$$args --enable-build-manifest-caching"; printf '%s\n' "$$build_help" | grep -q -- '--manifest-cache' && args="$$args --manifest-cache shared"; printf '%s\n' "$$args" | awk '{$$1=$$1; print}'; fi)
 SWIFT_MK_SWIFTPM_CACHE_ARGS ?= $(SWIFT_MK_SWIFTPM_CACHE_ARGS_AUTO)
 
@@ -212,6 +216,10 @@ BASELINE_TOKEN_CMD ?= $(SWIFT_MK_GATE_TOKEN_CMD)
 BASELINE_UPDATE_MODE ?= sync
 
 SWIFT_BUILD_CMD ?= swift build $(SWIFT_MK_SWIFTPM_CACHE_ARGS)
+# The build the dead-code gate runs to refresh the index store. Defaults to
+# SWIFT_BUILD_CMD; set it when SWIFT_BUILD_CMD needs a target argument or builds a
+# single platform, so the gate has a target-free build that covers every platform.
+SWIFT_DEADCODE_BUILD_CMD ?=
 SWIFT_TEST_CMD ?= swift test $(SWIFT_MK_SWIFTPM_CACHE_ARGS)
 SWIFT_RUN_CMD ?=
 SWIFT_GENERATE_CMD ?=
@@ -270,6 +278,7 @@ export SWIFT_MK_XCODE_CACHE
 export SWIFT_MK_XCODE_CACHE_DIAGNOSTICS
 export SWIFT_MK_XCODEBUILD_ARGS
 export SWIFT_MK_XCODEBUILD_NO_CACHE_ARGS
+export SWIFT_MK_DERIVED_DATA
 export SWIFT_MK_SWIFTPM_CACHE_ARGS
 export LINT_GATES
 export LINT_FILES
@@ -284,6 +293,7 @@ export BYPASS_CONFIRM
 export BYPASS_TOKEN_CMD
 export SWIFT_MK_GATE_TOKEN_CMD
 export SWIFT_BUILD_CMD
+export SWIFT_DEADCODE_BUILD_CMD
 export SWIFT_TEST_CMD
 export SWIFT_RUN_CMD
 export SWIFT_GENERATE_CMD

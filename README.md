@@ -73,6 +73,25 @@ Distribution and fleet:
 - Periphery configuration lives in `.periphery.yml`.
 - `swiftcheck-extra` reports logging, type, lifecycle, cleanup, sleep, task, and fatal-exit violations.
 
+### Dead-code coverage of Xcode targets
+
+The dead-code gate scans the Swift package and, when the repository has an Xcode project, every Xcode target. It reuses the index store from the project's own build, so it passes no scan configuration and no build settings to Periphery. A consumer with an Xcode project wires three things:
+
+- Include `bootstrap.mk` and the `swift-build.mk` module.
+- Set `SWIFT_BUILD_CMD` to the command that builds the Xcode targets, and route that build through `-derivedDataPath $(SWIFT_MK_DERIVED_DATA)`. The gate runs this build before every scan so the index reflects the current sources; an incremental build keeps it fast. When `SWIFT_BUILD_CMD` needs a target argument or builds a single platform, set `SWIFT_DEADCODE_BUILD_CMD` to a target-free build that compiles every platform to cover, and the gate uses it instead. Coverage follows what compiled, so build each platform whose `#if` branches you want analyzed.
+- Set `SWIFT_GENERATE_CMD` to the command that generates the project when the project is a generated artifact. When `SWIFT_GENERATE_CMD` is unset, the gate runs `xcodegen generate` for a `project.yml` or `tuist generate` for a `Project.swift` or `Workspace.swift`.
+
+`SWIFT_MK_DERIVED_DATA` is the canonical DerivedData path the build writes to and the gate reads the index store from. It defaults to `$(CURDIR)/.derived-data`; add it to `.gitignore`. Schemes come from `xcodebuild -list -json`, and schemes whose name is a Swift package target are excluded from the Xcode scan because the package scan already covers them. Coverage follows what the build compiled, so building each platform a target supports covers each `#if` branch.
+
+The gate fails with a message naming the cause when a repository declares an Xcode project it cannot scan:
+
+- A `Project.swift`, `Workspace.swift`, or `project.yml` is present but no project was generated.
+- An Xcode project is present but `SWIFT_BUILD_CMD` is unset.
+- No index store exists under `SWIFT_MK_DERIVED_DATA` after the build.
+- No Xcode schemes resolve to scan.
+
+A repository with only a `Package.swift` is scanned as a Swift package and needs none of this.
+
 ### Baselines
 
 Each of the four lint gates keeps its own baseline file:
