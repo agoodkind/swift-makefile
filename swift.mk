@@ -106,6 +106,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/TokenGate.swift \
 	Sources/SwiftMkCore/Scope.swift \
 	Sources/SwiftMkCore/Swiftcheck.swift \
+	Sources/SwiftMkCore/DeadcodeScan.swift \
 	Sources/SwiftMkCore/Lint.swift \
 	Sources/SwiftMkCore/Lint+Run.swift \
 	Sources/SwiftMkCore/BaselineRunner.swift \
