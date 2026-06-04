@@ -211,7 +211,23 @@ enum DeadcodeScan {
         Output.info("deadcode: building via SWIFT_BUILD_CMD to refresh the index store")
         let result = Shell.sh(buildCommand)
         if result.status != 0 {
-            Output.error("deadcode: SWIFT_BUILD_CMD failed status=\(result.status)")
+            // A failed build leaves a partial index whose missing references read as
+            // false "unused" findings, so the scan must not run. Save the output
+            // under a trace-scoped name, surface the compiler errors, and fail.
+            let logPath = BuildFailureLog.write(
+                output: result.combined,
+                logDirectory: Logging.logDirectory,
+                traceID: Logging.correlation.traceID)
+            for line in BuildFailureLog.errorLines(in: result.combined) {
+                Output.error("deadcode: \(line)")
+            }
+            failHard(
+                rawPath: rawPath,
+                message:
+                    "lint-deadcode: SWIFT_BUILD_CMD failed status=\(result.status); the "
+                    + "index store is incomplete, not scanning; full build output at "
+                    + (logPath ?? "(build log unavailable)"))
+            return nil
         }
         if let produced = existingIndexStore(derivedData) {
             Output.info("deadcode: index store at \(produced)")
