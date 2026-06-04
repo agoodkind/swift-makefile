@@ -61,6 +61,12 @@ public enum Logging {
         if !isHeaderless() {
             printHeaderOnce(correlationValue)
         }
+        // Export the run's span when a collector endpoint is set. The exporter
+        // adopts the run's trace id, so a collector sees the same trace id the
+        // header prints. The flush runs at process exit through atexit, which
+        // fires even though the CLI subcommands return rather than call exit.
+        OTelExport.start(correlationValue)
+        atexit { OTelExport.shutdown() }
     }
 
     /// Append one diagnostic record to its per-concern JSONL file. The concern is

@@ -23,7 +23,11 @@ let package = Package(
         .library(name: "SwiftMkRenderCore", targets: ["SwiftMkRenderCore"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0")
+        .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
+        .package(
+            url: "https://github.com/open-telemetry/opentelemetry-swift-core.git", from: "2.4.1"),
+        .package(url: "https://github.com/open-telemetry/opentelemetry-swift.git", from: "2.4.1"),
+        .package(url: "https://github.com/grpc/grpc-swift.git", exact: "1.27.5"),
     ],
     targets: [
         .target(
@@ -39,7 +43,13 @@ let package = Package(
         ),
         .target(
             name: "SwiftMkCore",
-            dependencies: ["SwiftMkRenderCore"]
+            dependencies: [
+                "SwiftMkRenderCore",
+                .product(name: "OpenTelemetryApi", package: "opentelemetry-swift-core"),
+                .product(name: "OpenTelemetrySdk", package: "opentelemetry-swift-core"),
+                .product(name: "OpenTelemetryProtocolExporter", package: "opentelemetry-swift"),
+                .product(name: "GRPC", package: "grpc-swift"),
+            ]
         ),
         .executableTarget(
             name: "SwiftMkCLI",
