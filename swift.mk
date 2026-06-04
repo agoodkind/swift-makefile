@@ -1,6 +1,6 @@
 .PHONY: build deploy install clean help run generate lint lint-tools lint-swiftlint \
 	lint-swiftlint-baseline lint-swiftlint-baseline-prune-fixed lint-swiftlint-baseline-remove-fixed lint-swiftlint-baseline-accept-new \
-	lint-files lint-diff lint-format lint-complexity lint-complexity-baseline lint-complexity-baseline-prune-fixed lint-complexity-baseline-remove-fixed lint-complexity-baseline-accept-new fmt test analyze audit build-check build-check-start check \
+	lint-files lint-diff lint-format lint-complexity lint-complexity-baseline lint-complexity-baseline-prune-fixed lint-complexity-baseline-remove-fixed lint-complexity-baseline-accept-new fmt test analyze audit build-check check \
 	lint-deadcode lint-deadcode-baseline lint-deadcode-baseline-prune-fixed lint-deadcode-baseline-remove-fixed lint-deadcode-baseline-accept-new \
 	swiftcheck-extra swiftcheck-extra-baseline swiftcheck-extra-baseline-prune-fixed swiftcheck-extra-baseline-remove-fixed swiftcheck-extra-baseline-accept-new swiftcheck-extra-bin \
 	baseline baseline-prune-fixed baseline-remove-fixed baseline-accept-new baseline-add-new \
@@ -179,7 +179,6 @@ PERIPHERY_EXCLUDE_PATHS ?=
 OSV_SCANNER ?= osv-scanner
 OSV_SCANNER_ARGS ?= --recursive --allow-no-lockfiles
 
-BUILD_CHECKS ?= true
 LINT_CONCURRENCY ?= auto
 
 SWIFT_MK_XCODE_VERSION_MAJOR := $(shell xcodebuild_path=$$(command -v xcodebuild || printf ''); if [ -n "$$xcodebuild_path" ]; then "$$xcodebuild_path" -version | awk '/^Xcode / { split($$2, version_parts, "."); print version_parts[1]; exit }'; else printf 0; fi)
@@ -316,12 +315,6 @@ export SWIFT_MK_CONSUMER_MANIFEST
 export SWIFT_MK_UPDATE_INCLUDE_DIRTY
 export SWIFT_MK_UPDATE_VALIDATE
 export SWIFT_MK_UPDATE_DRY_RUN
-
-ifeq ($(BUILD_CHECKS),true)
-default-build-deps := build-check
-else
-default-build-deps :=
-endif
 
 help:
 	@printf '%s\n' 'Canonical entry points:'
@@ -474,10 +467,8 @@ swiftcheck-extra-baseline-remove-fixed: swiftcheck-extra-baseline-prune-fixed
 swiftcheck-extra-baseline-accept-new: swift-mk-bin
 	@BASELINE_UPDATE_MODE=accept-new "$(SWIFT_MK_BIN)" baseline swiftcheck-extra
 
-build-check: build-check-start lint audit
-
-build-check-start:
-	@printf 'build-check: running lint and audit\n'
+build-check: swift-mk-bin
+	@"$(SWIFT_MK_BIN)" build-check
 
 check: lint
 

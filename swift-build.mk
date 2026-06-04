@@ -1,6 +1,6 @@
 .PHONY: build deploy install run generate clean
 
-build: $(default-build-deps)
+build: build-check
 ifneq ($(strip $(SWIFT_GENERATE_CMD)),)
 	@$(SWIFT_GENERATE_CMD)
 endif

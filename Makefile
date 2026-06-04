@@ -47,7 +47,7 @@ CHECK_SWIFT_MK := $(MAKE) -C swiftcheck -f ../$(SWIFT_MK) $(CHECK_ARGS)
 
 build: xcode-file-header
 	$(ROOT_SWIFT_MK) build
-	$(CHECK_SWIFT_MK) BUILD_CHECKS=false build
+	$(CHECK_SWIFT_MK) build
 
 build-check:
 	$(ROOT_SWIFT_MK) build-check

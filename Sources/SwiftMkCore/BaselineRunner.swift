@@ -17,10 +17,10 @@ public enum BaselineRunner {
     }
 
     static func tokenGatePasses() -> Bool {
-        TokenGate.passes(
+        TokenGate.passesNative(
             confirmValue: Env.get("BASELINE_CONFIRM"),
             tokenValue: Env.get("BASELINE_TOKEN"),
-            tokenCommand: Env.get("BASELINE_TOKEN_CMD", Env.get("SWIFT_MK_GATE_TOKEN_CMD"))
+            tokenCommandOverride: Env.get("BASELINE_TOKEN_CMD")
         )
     }
 

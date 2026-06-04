@@ -144,18 +144,42 @@ extension Lint {
         }
         if failed.isEmpty { return true }
 
-        let bypass = TokenGate.slugify(Env.get("BYPASS_LINT"))
-        if !bypass.isEmpty, Env.get("BYPASS_CONFIRM") == "1" {
-            let command = Env.get("BYPASS_TOKEN_CMD", Env.get("SWIFT_MK_GATE_TOKEN_CMD"))
-            let expected = TokenGate.slugify(Shell.sh(command).stdout)
-            if !expected.isEmpty, expected == bypass {
-                Output.log("LINT FINDINGS NON-BLOCKING via BYPASS_LINT=\(expected)")
-                return true
-            }
+        if bypassActive() {
+            Output.log("LINT FINDINGS NON-BLOCKING via BYPASS_LINT")
+            return true
         }
         Output.log("\nlint: FAILED")
         Output.log("  Failed gates: \(failed.joined(separator: " "))")
         return false
+    }
+
+    /// Whether the lint bypass is active: BYPASS_LINT holds today's token and
+    /// BYPASS_CONFIRM is affirmative. Prints nothing, so the lint chain and the
+    /// build-check orchestrator can both consult it. BYPASS_TOKEN_CMD overrides
+    /// the native token fetch when set.
+    public static func bypassActive() -> Bool {
+        TokenGate.passesNative(
+            confirmValue: Env.get("BYPASS_CONFIRM"),
+            tokenValue: Env.get("BYPASS_LINT"),
+            tokenCommandOverride: Env.get("BYPASS_TOKEN_CMD")
+        )
+    }
+
+    /// Run the full non-test quality gate: the lint chain, then the dependency
+    /// audit, then the log audit when SWIFT_LOG_AUDIT_CMD is set. A valid bypass
+    /// skips the whole phase. Returns true when every step passed.
+    @discardableResult
+    public static func runBuildCheck(context: PathContext) -> Bool {
+        if bypassActive() {
+            Output.log("build-check skipped via BYPASS_LINT")
+            return true
+        }
+        var ok = runLint(context: context)
+        ok = runAudit(context: context) && ok
+        if !Env.get("SWIFT_LOG_AUDIT_CMD").isEmpty {
+            ok = runLogAudit(context: context) && ok
+        }
+        return ok
     }
 
     // MARK: scoped iteration

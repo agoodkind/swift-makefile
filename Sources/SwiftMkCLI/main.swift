@@ -24,7 +24,7 @@ struct SwiftMk: ParsableCommand {
             LintSwiftlintScope.self, SwiftcheckExtra.self, SwiftcheckExtraBin.self,
             Fmt.self, TestCommand.self, Audit.self, LogAudit.self,
             BaselineCommand.self, NoticeCommand.self, Render.self, RenderBatch.self,
-            XcodeFileHeader.self,
+            XcodeFileHeader.self, BuildCheck.self, GateToken.self,
         ]
     )
 }
@@ -156,6 +156,30 @@ struct LogAudit: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "log-audit")
 
     func run() throws { try gate(Lint.runLogAudit) }
+}
+
+// MARK: - BuildCheck
+
+struct BuildCheck: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "build-check")
+
+    func run() throws { try gate(Lint.runBuildCheck) }
+}
+
+// MARK: - GateToken
+
+/// Print the rotating daily token for BYPASS_LINT or BASELINE_TOKEN. Hidden: it
+/// carries the maintainer secret, so it is not advertised in help.
+struct GateToken: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "gate-token", shouldDisplay: false)
+
+    func run() throws {
+        guard let slug = TokenGate.dailyTokenSlug() else {
+            Output.logError("gate-token: could not resolve the daily token")
+            throw ExitCode(1)
+        }
+        Output.log(slug)
+    }
 }
 
 // MARK: - BaselineCommand
