@@ -190,11 +190,13 @@ enum DeadcodeScan {
         return Env.get("SWIFT_BUILD_CMD")
     }
 
-    /// Refresh and locate the build's index store. The build always runs so the
-    /// index reflects the current sources; an incremental build only recompiles
-    /// what changed, so a result is never carried over from a stale store. A repo
-    /// with an Xcode project and no `SWIFT_BUILD_CMD` cannot produce one, which is a
-    /// hard fail.
+    /// Refresh and locate the build's index store, then wait for it to settle.
+    /// The build always runs so the index reflects the current sources. Xcode
+    /// writes the index store as background indexing finishes, which can lag the
+    /// build command's exit, so the scan waits until the store stops growing to
+    /// avoid reading a partial store and reporting phantom unused symbols that
+    /// clear on a later run. A repo with an Xcode project and no `SWIFT_BUILD_CMD`
+    /// cannot produce one, which is a hard fail.
     static func ensureIndexStore(rawPath: String) -> String? {
         let derivedData = Env.get("SWIFT_MK_DERIVED_DATA")
         let buildCommand = coverageBuildCommand()
@@ -212,6 +214,8 @@ enum DeadcodeScan {
             Output.error("deadcode: SWIFT_BUILD_CMD failed status=\(result.status)")
         }
         if let produced = existingIndexStore(derivedData) {
+            Output.info("deadcode: index store at \(produced)")
+            IndexStoreSettle.waitForStable(produced)
             return produced
         }
         failHard(
@@ -243,7 +247,7 @@ enum DeadcodeScan {
         indexStore: String,
         rawPath: String
     ) {
-        Output.debug(
+        Output.info(
             "deadcode: periphery xcode scan project=\(project) schemes=\(schemes.count)")
         let configPath = Env.get("SWIFT_MK_PERIPHERY_CONFIG", ".make/periphery.yml")
         var arguments = [
@@ -259,6 +263,7 @@ enum DeadcodeScan {
         }
         let result = Shell.run(
             Env.get("PERIPHERY", "periphery"), arguments, environment: Lint.lintEnvironment())
+        Output.info("deadcode: periphery scan finished status=\(result.status)")
         appendCombined(result.combined, to: rawPath)
         if result.status >= hardFailStatus {
             GateStatus.last = result.status
