@@ -66,8 +66,10 @@ public enum Output {
     }
 
     /// Errors always surface on standard error regardless of the log level, so a
-    /// failed boundary or cleanup step is never silently swallowed.
+    /// failed boundary or cleanup step is never silently swallowed. The record
+    /// also lands in the per-concern JSONL under the run's trace.
     public static func error(_ message: String) {
+        Logging.record(message, level: "error")
         emit(message + "\n", to: .standardError)
     }
 
@@ -92,10 +94,31 @@ public enum Output {
     }
 
     private static func diagnose(_ message: String, at level: Level) {
+        // Info and above land in the per-concern JSONL on every run, carrying the
+        // run's trace, so the file holds the full record even when the stderr
+        // threshold keeps the stream quiet. Debug stays out of the file as noise.
+        if level != .debug {
+            Logging.record(message, level: levelName(level))
+        }
         guard let threshold = thresholdLevel(), level.rawValue >= threshold.rawValue else {
             return
         }
         emit(message + "\n", to: .standardError)
+    }
+
+    private static func levelName(_ level: Level) -> String {
+        switch level {
+        case .debug:
+            return "debug"
+        case .info:
+            return "info"
+        case .notice:
+            return "notice"
+        case .warning:
+            return "warning"
+        case .error:
+            return "error"
+        }
     }
 
     private enum Stream {
@@ -104,6 +127,9 @@ public enum Output {
     }
 
     private static func emit(_ text: String, to stream: Stream) {
+        // Resolve the run's trace and print the header before the first output, so
+        // the header is the first line a run produces.
+        Logging.ensureStarted()
         let handle: FileHandle
         switch stream {
         case .standardError:

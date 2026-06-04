@@ -148,8 +148,11 @@ extension Lint {
             Output.log("LINT FINDINGS NON-BLOCKING via BYPASS_LINT")
             return true
         }
-        Output.log("\nlint: FAILED")
-        Output.log("  Failed gates: \(failed.joined(separator: " "))")
+        // One verdict line names the failing gates once. Each gate already printed
+        // its own status row and findings, so there is no separate failed-gates
+        // block to repeat them.
+        let noun = failed.count == 1 ? "check" : "checks"
+        Output.log("\n\(failed.count) \(noun) failed: \(failed.joined(separator: ", "))")
         return false
     }
 
@@ -166,20 +169,21 @@ extension Lint {
     }
 
     /// Run the full non-test quality gate: the lint chain, then the dependency
-    /// audit, then the log audit when SWIFT_LOG_AUDIT_CMD is set. A valid bypass
-    /// skips the whole phase. Returns true when every step passed.
+    /// audit, then the log audit when SWIFT_LOG_AUDIT_CMD is set. Every step runs
+    /// and prints. A valid bypass does not skip any step; it only makes a failed
+    /// run non-blocking by returning success at the end. Returns true when every
+    /// step passed, or when a valid bypass is active.
     @discardableResult
     public static func runBuildCheck(context: PathContext) -> Bool {
-        if bypassActive() {
-            Output.log("build-check skipped via BYPASS_LINT")
+        var passed = runLint(context: context)
+        passed = runAudit(context: context) && passed
+        if !Env.get("SWIFT_LOG_AUDIT_CMD").isEmpty {
+            passed = runLogAudit(context: context) && passed
+        }
+        if !passed, bypassActive() {
             return true
         }
-        var ok = runLint(context: context)
-        ok = runAudit(context: context) && ok
-        if !Env.get("SWIFT_LOG_AUDIT_CMD").isEmpty {
-            ok = runLogAudit(context: context) && ok
-        }
-        return ok
+        return passed
     }
 
     // MARK: scoped iteration
