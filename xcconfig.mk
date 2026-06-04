@@ -39,12 +39,9 @@ XCCONFIG_ENV_PAIRS := $(foreach v,$(XCCONFIG_EXPORTED_VARS),$(v)="$($(v))")
 
 .PHONY: xcconfig-generate-config xcconfig-generate-project xcconfig-print-env
 
-xcconfig-generate-config:
+xcconfig-generate-config: swift-mk-bin
 	@if [ -z "$(XCCONFIG_RENDER_PLANS)" ]; then \
 		echo "xcconfig.mk: XCCONFIG_RENDER_PLANS is empty" >&2; exit 1; \
-	fi
-	@if [ ! -x "$(SWIFT_MK_BIN)" ]; then \
-		echo "xcconfig.mk: $(SWIFT_MK_BIN) is not executable; run 'make swift-mk-bin' first" >&2; exit 1; \
 	fi
 	@for plan in $(XCCONFIG_RENDER_PLANS); do \
 		templates_dir=$$(echo "$$plan" | cut -d: -f1); \
