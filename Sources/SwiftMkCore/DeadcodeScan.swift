@@ -152,6 +152,8 @@ enum DeadcodeScan {
 
     // MARK: Scan
 
+    private static let buildLockPath = ".make/deadcode-build.lock"
+
     private static func scanProject(path: String, isWorkspace: Bool, rawPath: String) {
         let schemes = discoverSchemes(project: path, isWorkspace: isWorkspace)
         let packageTargets = packageTargetNames()
@@ -162,7 +164,28 @@ enum DeadcodeScan {
                 message: "lint-deadcode: no Xcode schemes to scan in \(path)")
             return
         }
+        // Serialize the coverage build so two gate runs never build at the same
+        // time and corrupt each other's index store. `.make` already exists.
+        let lock = FileLock(path: buildLockPath)
+        lock?.acquire { Output.info("deadcode: waiting for the build lock") }
+        defer { lock?.release() }
+
         guard let indexStore = ensureIndexStore(rawPath: rawPath) else {
+            return
+        }
+        // A partial index is never scanned: periphery would read a missing
+        // reference as a false unused finding. The exact missing list goes to a
+        // trace-scoped log, so a failure is debuggable from the run's trace id.
+        let outcome = IndexCompleteness.verify(
+            indexStorePath: indexStore,
+            projectPath: path,
+            isWorkspace: isWorkspace,
+            excludeTargets: packageTargets)
+        switch outcome {
+        case let .complete(message):
+            Output.info(message)
+        case let .incomplete(message):
+            failHard(rawPath: rawPath, message: message)
             return
         }
         runPeriphery(

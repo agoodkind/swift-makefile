@@ -20,19 +20,25 @@ import Foundation
 enum BuildFailureLog {
     private static let keepCount = 5
 
-    /// Write `output` to `<logDirectory>/deadcode-build.<traceID>.log`, prune old
-    /// build logs, and return the path. Returns nil when the write fails.
-    static func write(output: String, logDirectory: String, traceID: String) -> String? {
-        let path = "\(logDirectory)/deadcode-build.\(traceID).log"
+    /// Write `output` to `<logDirectory>/<name>.<traceID>.log`, prune old logs with
+    /// that name, and return the path. Returns nil when the write fails. `name`
+    /// defaults to the build-failure log; the completeness check passes its own.
+    static func write(
+        output: String,
+        logDirectory: String,
+        traceID: String,
+        name: String = "deadcode-build"
+    ) -> String? {
+        let path = "\(logDirectory)/\(name).\(traceID).log"
         do {
             try FileManager.default.createDirectory(
                 atPath: logDirectory, withIntermediateDirectories: true)
             try output.write(toFile: path, atomically: true, encoding: .utf8)
         } catch {
-            Output.error("deadcode: could not write build log: \(error)")
+            Output.error("deadcode: could not write log: \(error)")
             return nil
         }
-        prune(in: logDirectory)
+        prune(in: logDirectory, name: name)
         return path
     }
 
@@ -54,7 +60,7 @@ enum BuildFailureLog {
 
     /// Keep the most recent build logs and remove older ones so the log directory
     /// does not grow without bound.
-    private static func prune(in directory: String) {
+    private static func prune(in directory: String, name: String) {
         let fileManager = FileManager.default
         let entries: [String]
         do {
@@ -63,18 +69,18 @@ enum BuildFailureLog {
             Output.error("deadcode: could not list build logs to prune: \(error)")
             return
         }
-        let logs = entries.filter { name in
-            name.hasPrefix("deadcode-build.") && name.hasSuffix(".log")
+        let logs = entries.filter { entry in
+            entry.hasPrefix("\(name).") && entry.hasSuffix(".log")
         }
         let newestFirst = logs.sorted { first, second in
             modificationDate(of: "\(directory)/\(first)")
                 > modificationDate(of: "\(directory)/\(second)")
         }
-        for name in newestFirst.dropFirst(keepCount) {
+        for oldLog in newestFirst.dropFirst(keepCount) {
             do {
-                try fileManager.removeItem(atPath: "\(directory)/\(name)")
+                try fileManager.removeItem(atPath: "\(directory)/\(oldLog)")
             } catch {
-                Output.error("deadcode: could not prune build log \(name): \(error)")
+                Output.error("deadcode: could not prune build log \(oldLog): \(error)")
             }
         }
     }

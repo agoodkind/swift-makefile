@@ -28,6 +28,16 @@ let package = Package(
             url: "https://github.com/open-telemetry/opentelemetry-swift-core.git", from: "2.4.1"),
         .package(url: "https://github.com/open-telemetry/opentelemetry-swift.git", from: "2.4.1"),
         .package(url: "https://github.com/grpc/grpc-swift.git", exact: "1.27.5"),
+        // swift-index-store and XcodeProj are the libraries periphery uses. The
+        // dead-code gate reuses them to verify the index covers every target
+        // source before scanning. swift-index-store uses unsafeFlags to link
+        // libIndexStore, so it must be pinned by revision, the same way periphery
+        // pins it, not by a version range.
+        .package(
+            url: "https://github.com/ileitch/swift-index-store",
+            revision: "ed1f232d33b8e03956af0f4206fbd30171a43138"),
+        .package(url: "https://github.com/tuist/XcodeProj.git", from: "8.0.0"),
+        .package(url: "https://github.com/kylef/PathKit.git", from: "1.0.0"),
     ],
     targets: [
         .target(
@@ -49,6 +59,9 @@ let package = Package(
                 .product(name: "OpenTelemetrySdk", package: "opentelemetry-swift-core"),
                 .product(name: "OpenTelemetryProtocolExporter", package: "opentelemetry-swift"),
                 .product(name: "GRPC", package: "grpc-swift"),
+                .product(name: "IndexStore", package: "swift-index-store"),
+                .product(name: "XcodeProj", package: "XcodeProj"),
+                .product(name: "PathKit", package: "PathKit"),
             ]
         ),
         .executableTarget(
