@@ -108,7 +108,8 @@ public enum IndexCompleteness {
                 for buildFile in buildFiles {
                     guard let element = buildFile.file,
                         let fullPath = try element.fullPath(sourceRoot: sourceRoot),
-                        fullPath.hasSuffix(".swift")
+                        fullPath.hasSuffix(".swift"),
+                        !isVendoredDependencySource(fullPath)
                     else {
                         continue
                     }
@@ -117,6 +118,16 @@ public enum IndexCompleteness {
             }
         }
         return files
+    }
+
+    /// True when a target source path is a vendored SPM dependency, not the project's
+    /// own code. A tuist workspace that generates its dependencies as source projects
+    /// (rather than binary-cached frameworks) lists their checkout sources in target
+    /// build phases. periphery already excludes these from its scan, and the coverage
+    /// build need not compile them, so the completeness check must not expect them to
+    /// be indexed; otherwise the index reads as incomplete on every run.
+    static func isVendoredDependencySource(_ path: String) -> Bool {
+        path.contains("/.build/") || path.contains("/SourcePackages/")
     }
 
     static func isTestTarget(_ target: PBXNativeTarget) -> Bool {
