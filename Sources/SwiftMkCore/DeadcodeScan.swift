@@ -303,7 +303,8 @@ enum DeadcodeScan {
         let result = Shell.run(
             Env.get("PERIPHERY", "periphery"), arguments, environment: Lint.lintEnvironment())
         Output.info("deadcode: periphery scan finished status=\(result.status)")
-        appendCombined(result.combined, to: rawPath)
+        let filtered = filterWitnessFalsePositives(result.combined, indexStore: indexStore)
+        appendCombined(filtered, to: rawPath)
         if result.status >= hardFailStatus {
             GateStatus.last = result.status
         }
