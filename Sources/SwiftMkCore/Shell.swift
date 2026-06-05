@@ -60,9 +60,10 @@ public enum Shell {
         )
     }
 
-    /// Run a command string through `/bin/sh -c`.
+    /// Run a command string through `/bin/sh -c`. An empty `environment` inherits the
+    /// current process environment unchanged; a non-empty one is merged over it.
     @discardableResult
-    public static func sh(_ command: String) -> Result {
-        run("/bin/sh", ["-c", command])
+    public static func sh(_ command: String, environment: [String: String] = [:]) -> Result {
+        run("/bin/sh", ["-c", command], environment: environment)
     }
 }

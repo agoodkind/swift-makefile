@@ -232,7 +232,12 @@ enum DeadcodeScan {
             return nil
         }
         Output.info("deadcode: building via SWIFT_BUILD_CMD to refresh the index store")
-        let result = Shell.sh(buildCommand)
+        // Disable code signing for the coverage build only: it produces the index,
+        // not a signed product, and a signed build can fail on provisioning and leave
+        // a partial index. swift-mk owns this, so consumers need no configuration.
+        let result = Shell.sh(
+            buildCommand,
+            environment: DeadcodeBuildConfig.buildEnvironment(derivedData: derivedData))
         if result.status != 0 {
             // A failed build leaves a partial index whose missing references read as
             // false "unused" findings, so the scan must not run. Save the output
