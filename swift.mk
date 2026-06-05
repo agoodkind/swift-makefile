@@ -112,6 +112,13 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/BaselineRunner.swift \
 	Sources/SwiftMkCore/Notice.swift \
 	Sources/SwiftMkCore/Output.swift \
+	Sources/SwiftMkCore/Logging.swift \
+	Sources/SwiftMkCore/Correlation.swift \
+	Sources/SwiftMkCore/OTelExport.swift \
+	Sources/SwiftMkCore/BuildFailureLog.swift \
+	Sources/SwiftMkCore/IndexStoreSettle.swift \
+	Sources/SwiftMkCore/IndexCompleteness.swift \
+	Sources/SwiftMkCore/FileLock.swift \
 	Tests/SwiftMkRenderCoreTests/TemplateRendererTests.swift \
 	Tests/SwiftMkCoreTests/SwiftMkCoreTests.swift \
 	notices.txt \
