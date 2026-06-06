@@ -25,6 +25,7 @@ struct SwiftMk: ParsableCommand {
             Fmt.self, TestCommand.self, Audit.self, LogAudit.self,
             BaselineCommand.self, NoticeCommand.self, Render.self, RenderBatch.self,
             XcodeFileHeader.self, BuildCheck.self, GateToken.self,
+            SigningXcconfig.self,
         ]
     )
 }
@@ -179,6 +180,26 @@ struct GateToken: ParsableCommand {
             throw ExitCode(1)
         }
         Output.log(slug)
+    }
+}
+
+// MARK: - SigningXcconfig
+
+/// Write `.make/signing.xcconfig` from the signing inputs and print its absolute
+/// path on standard output. Prints nothing when no signing values are set, so
+/// `build`/`deploy` skip the override and an unsigned build still works.
+struct SigningXcconfig: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "signing-xcconfig",
+        abstract:
+            "Write the build-time code-signing xcconfig and print its path; "
+            + "print nothing when no signing values are set."
+    )
+
+    func run() {
+        if let path = SigningBuildConfig.write() {
+            Output.log(path)
+        }
     }
 }
 

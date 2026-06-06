@@ -24,7 +24,7 @@ public enum Logging {
 
     private static let sentinelPath = ".make/logs/.run"
     private static let fallbackConcern = "swift-mk"
-    private static let headerlessCommands: Set<String> = ["notice"]
+    private static let headerlessCommands: Set<String> = ["notice", "signing-xcconfig"]
 
     nonisolated(unsafe) private static var started = false
     nonisolated(unsafe) private static var recording = false
