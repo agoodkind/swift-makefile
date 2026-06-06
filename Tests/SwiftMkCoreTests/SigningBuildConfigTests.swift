@@ -93,3 +93,12 @@ func signingBuildConfigWriteWritesXcconfigAndReturnsAbsolutePath() throws {
     let written = try String(contentsOfFile: path, encoding: .utf8)
     #expect(written == SigningBuildConfig.contents(identity: "", team: "H3BMXM4W7H", style: ""))
 }
+
+@Test
+func signingBuildConfigWriteDegradesSafelyOnFailure() {
+    // A makeDir under a non-directory cannot be created, so the write throws; the
+    // function must degrade to nil (build proceeds with existing signing) not crash.
+    let path = SigningBuildConfig.write(
+        identity: "-", team: "", style: "", makeDir: "/dev/null/swiftmk-cannot-create")
+    #expect(path == nil)
+}
