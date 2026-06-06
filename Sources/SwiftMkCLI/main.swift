@@ -25,7 +25,7 @@ struct SwiftMk: ParsableCommand {
             Fmt.self, TestCommand.self, Audit.self, LogAudit.self,
             BaselineCommand.self, NoticeCommand.self, Render.self, RenderBatch.self,
             XcodeFileHeader.self, BuildCheck.self, GateToken.self,
-            SigningXcconfig.self,
+            SigningXcconfig.self, SigningIdentity.self,
         ]
     )
 }
@@ -199,6 +199,28 @@ struct SigningXcconfig: ParsableCommand {
     func run() {
         if let path = SigningBuildConfig.write() {
             Output.log(path)
+        }
+    }
+}
+
+// MARK: - SigningIdentity
+
+/// Print the resolved code-signing identity on standard output, so a post-build
+/// `codesign` step (a SwiftPM product that has no xcodebuild signing phase) can
+/// sign with the same identity swift-mk resolves for xcodebuild. Prints nothing
+/// when no identity is set. Reads SWIFT_MK_SIGN_IDENTITY then CODE_SIGN_IDENTITY.
+struct SigningIdentity: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "signing-identity",
+        abstract:
+            "Print the resolved code-signing identity; print nothing when unset."
+    )
+
+    func run() {
+        let identity = SigningBuildConfig.environmentInputs().identity
+            .trimmingCharacters(in: .whitespaces)
+        if !identity.isEmpty {
+            Output.log(identity)
         }
     }
 }
