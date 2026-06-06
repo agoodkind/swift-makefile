@@ -53,7 +53,8 @@ func signingBuildConfigDeveloperIdFromIdentityAndTeam() throws {
 
 @Test
 func signingBuildConfigAutomaticFromTeamOnly() throws {
-    let text = try #require(SigningBuildConfig.contents(identity: "", team: "H3BMXM4W7H", style: ""))
+    let text = try #require(
+        SigningBuildConfig.contents(identity: "", team: "H3BMXM4W7H", style: ""))
     #expect(text.contains("CODE_SIGN_STYLE = Automatic"))
     #expect(text.contains("DEVELOPMENT_TEAM = H3BMXM4W7H"))
     // No identity setting line when the identity is empty; Automatic resolves the
