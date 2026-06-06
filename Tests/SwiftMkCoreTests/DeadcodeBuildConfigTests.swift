@@ -37,7 +37,8 @@ func deadcodeBuildConfigRedirectsObjrootButNotSymroot() {
     let text = DeadcodeBuildConfig.contents(derivedData: "/proj/build/DerivedData")
     #expect(text.contains("OBJROOT = /proj/build/DerivedData/DeadcodeBuild/Intermediates.noindex"))
     // SYMROOT must NOT be redirected: products stay where the consumer expects them.
-    #expect(!text.contains("SYMROOT"))
+    // Match a real setting assignment, not the word "SYMROOT" in the header comment.
+    #expect(!text.contains("SYMROOT ="))
 }
 
 @Test
