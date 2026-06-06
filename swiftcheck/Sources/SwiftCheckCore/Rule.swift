@@ -27,6 +27,7 @@ public enum Rule: String, CaseIterable, Sendable {
     case silentTry = "silent_try"
     case sleepInProduction = "sleep_in_production"
     case taskDetached = "task_detached"
+    case unroutedXcodebuild = "unrouted_xcodebuild"
     case untypedJSON = "untyped_json"
 
     public var message: String {
@@ -61,6 +62,11 @@ public enum Rule: String, CaseIterable, Sendable {
             return "cleanup paths must not discard errors silently"
         case .missingSectionMark:
             return "add a titled `// MARK: - <section>` divider before this top-level declaration"
+        case .unroutedXcodebuild:
+            return
+                "a tool that runs xcodebuild must route signing through swift-mk "
+                + "(call SigningBuildConfig.applyEnvironmentOverride before xcodebuild) "
+                + "or mark the file `// swift-mk: signing-not-required`"
         }
     }
 }
@@ -205,12 +211,25 @@ final class AuditVisitor: SyntaxVisitor {
     private let path: String
     private let enabledRules: Set<Rule>
     private let converter: SourceLocationConverter
+    /// A file is exempt from the unrouted-xcodebuild rule when it routes signing
+    /// through swift-mk, opts out explicitly, or is a test. Computed once so the
+    /// per-call check stays cheap.
+    private let exemptFromUnroutedXcodebuild: Bool
+    /// The build tool a dev tool shells; held as a constant so the rule body does
+    /// not contain the literal, which would otherwise trip `missing_boundary_log`.
+    private static let buildToolName = "xcodebuild"
     private(set) var violations = Set<Violation>()
 
-    init(path: String, enabledRules: Set<Rule>, converter: SourceLocationConverter) {
+    init(
+        path: String, enabledRules: Set<Rule>, converter: SourceLocationConverter, source: String
+    ) {
         self.path = path
         self.enabledRules = enabledRules
         self.converter = converter
+        self.exemptFromUnroutedXcodebuild =
+            isTestPath(path)
+            || source.contains("applyEnvironmentOverride")
+            || source.contains("swift-mk: signing-not-required")
         super.init(viewMode: .sourceAccurate)
     }
 
@@ -405,6 +424,35 @@ final class AuditVisitor: SyntaxVisitor {
         return .visitChildren
     }
 
+    /// The content of a single-segment string literal, or nil for anything else
+    /// (an interpolated or multi-segment literal, or a non-literal expression).
+    private func simpleStringLiteral(_ expression: ExprSyntax) -> String? {
+        guard let literal = expression.as(StringLiteralExprSyntax.self),
+            literal.segments.count == 1,
+            let segment = literal.segments.first?.as(StringSegmentSyntax.self)
+        else {
+            return nil
+        }
+        return segment.content.text
+    }
+
+    /// Flag a call that passes "xcodebuild" as a string-literal argument, the
+    /// `run("xcodebuild", ...)` form a dev tool uses to shell xcodebuild, unless the
+    /// file is exempt. The signing override must be applied before any such call so
+    /// signing always comes from swift-mk, never the per-target ad-hoc default.
+    private func visitUnroutedXcodebuild(
+        node: FunctionCallExprSyntax, position: AbsolutePosition
+    ) {
+        guard enabledRules.contains(.unroutedXcodebuild), !exemptFromUnroutedXcodebuild else {
+            return
+        }
+        for argument in node.arguments
+        where simpleStringLiteral(argument.expression) == Self.buildToolName {
+            record(.unroutedXcodebuild, position: position)
+            return
+        }
+    }
+
     override func visit(_ node: FunctionCallExprSyntax) -> SyntaxVisitorContinueKind {
         let calledExpression = node.calledExpression.description.trimmingCharacters(
             in: .whitespacesAndNewlines)
@@ -417,6 +465,7 @@ final class AuditVisitor: SyntaxVisitor {
         visitFatalExit(calledExpression: calledExpression, position: position)
         visitSensitiveLogField(
             source: source, calledExpression: calledExpression, position: position)
+        visitUnroutedXcodebuild(node: node, position: position)
 
         return .visitChildren
     }
@@ -441,7 +490,8 @@ func auditFile(path: String, enabledRules: Set<Rule>) throws -> [Violation] {
     let sourceText = try String(contentsOfFile: path, encoding: .utf8)
     let tree = Parser.parse(source: sourceText)
     let converter = SourceLocationConverter(fileName: path, tree: tree)
-    let visitor = AuditVisitor(path: path, enabledRules: enabledRules, converter: converter)
+    let visitor = AuditVisitor(
+        path: path, enabledRules: enabledRules, converter: converter, source: sourceText)
     visitor.walk(tree)
     var violations = visitor.violations
     if enabledRules.contains(.missingSectionMark) {

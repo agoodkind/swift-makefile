@@ -8,6 +8,12 @@
 
 import Foundation
 
+// swift-mk: signing-not-required
+// The dead-code coverage build runs xcodebuild with signing disabled on purpose,
+// so it must not route through SigningBuildConfig.applyEnvironmentOverride (that
+// would re-enable signing for this gate). The marker exempts this file from the
+// unrouted-xcodebuild rule.
+
 // MARK: - DeadcodeScan
 
 /// Extends the dead-code gate to Xcode targets. `periphery`'s package scan covers
