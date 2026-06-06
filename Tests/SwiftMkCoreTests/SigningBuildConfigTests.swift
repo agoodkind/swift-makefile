@@ -102,3 +102,73 @@ func signingBuildConfigWriteDegradesSafelyOnFailure() {
         identity: "-", team: "", style: "", makeDir: "/dev/null/swiftmk-cannot-create")
     #expect(path == nil)
 }
+
+@Test
+func signingXcconfigValuesParsesKeysIgnoringCommentsAndQuotes() throws {
+    let path = NSTemporaryDirectory() + "swiftmk-xcc-" + UUID().uuidString + ".xcconfig"
+    let text = """
+        // a leading comment
+        DEVELOPMENT_TEAM = H3BMXM4W7H
+        CODE_SIGN_IDENTITY = Apple Development // trailing comment
+        CODE_SIGN_STYLE = Automatic;
+        QUOTED = "Apple Development"
+        """
+    try text.write(toFile: path, atomically: true, encoding: .utf8)
+    let values = SigningBuildConfig.xcconfigValues(atPath: path)
+    #expect(values["DEVELOPMENT_TEAM"] == "H3BMXM4W7H")
+    #expect(values["CODE_SIGN_IDENTITY"] == "Apple Development")
+    #expect(values["CODE_SIGN_STYLE"] == "Automatic")
+    #expect(values["QUOTED"] == "Apple Development")
+}
+
+@Test
+func signingXcconfigValuesReturnsEmptyForMissingFile() {
+    let path = NSTemporaryDirectory() + "swiftmk-missing-" + UUID().uuidString + ".xcconfig"
+    #expect(SigningBuildConfig.xcconfigValues(atPath: path).isEmpty)
+}
+
+// MARK: - SigningEnvironmentOverrideTests
+
+/// The override mutates the process environment (`XCODE_XCCONFIG_FILE` and the
+/// signing inputs), so these run serialized to keep that global state from one
+/// test out of another.
+@Suite(.serialized)
+enum SigningEnvironmentOverrideTests {
+    private static let signingEnvironmentKeys = [
+        "CODE_SIGN_IDENTITY", "DEVELOPMENT_TEAM", "CODE_SIGN_STYLE",
+        "SWIFT_MK_SIGN_IDENTITY", "SWIFT_MK_SIGN_TEAM", "SWIFT_MK_SIGN_STYLE",
+    ]
+
+    @Test
+    static func noOpWhenXcodeXcconfigFileAlreadySet() {
+        setenv("XCODE_XCCONFIG_FILE", "/tmp/preexisting.xcconfig", 1)
+        let makeDir = NSTemporaryDirectory() + "swiftmk-noop-" + UUID().uuidString
+        let path = SigningBuildConfig.applyEnvironmentOverride(makeDir: makeDir)
+        unsetenv("XCODE_XCCONFIG_FILE")
+        #expect(path == nil)
+    }
+
+    @Test
+    static func writesAndSetsEnvFromXcconfigWhenUnset() throws {
+        unsetenv("XCODE_XCCONFIG_FILE")
+        for key in signingEnvironmentKeys {
+            setenv(key, "", 1)
+        }
+        let makeDir = NSTemporaryDirectory() + "swiftmk-apply-" + UUID().uuidString
+        let xcconfig = makeDir + ".xcconfig"
+        try "DEVELOPMENT_TEAM = H3BMXM4W7H\n".write(
+            toFile: xcconfig, atomically: true, encoding: .utf8)
+        let path = SigningBuildConfig.applyEnvironmentOverride(
+            localXcconfigPaths: [xcconfig], makeDir: makeDir)
+        let applied = ProcessInfo.processInfo.environment["XCODE_XCCONFIG_FILE"]
+        unsetenv("XCODE_XCCONFIG_FILE")
+        for key in signingEnvironmentKeys {
+            unsetenv(key)
+        }
+        let resolved = try #require(path)
+        #expect(applied == resolved)
+        let written = try String(contentsOfFile: resolved, encoding: .utf8)
+        #expect(written.contains("DEVELOPMENT_TEAM = H3BMXM4W7H"))
+        #expect(written.contains("CODE_SIGN_STYLE = Automatic"))
+    }
+}

@@ -100,6 +100,73 @@ public enum SigningBuildConfig {
             style: Env.get("SWIFT_MK_SIGN_STYLE", Env.get("CODE_SIGN_STYLE")))
     }
 
+    /// Read the signing inputs, the environment first and then the given xcconfig
+    /// files for any value the environment leaves blank. The `make` prelude
+    /// inline-passes these as make variables, but a tool that runs `xcodebuild`
+    /// without that prelude has no such variables, so it passes its gitignored
+    /// local xcconfig and the same values still reach the override.
+    public static func resolvedInputs(localXcconfigPaths: [String] = []) -> Inputs {
+        let environment = environmentInputs()
+        var identity = environment.identity.trimmingCharacters(in: .whitespaces)
+        var team = environment.team.trimmingCharacters(in: .whitespaces)
+        var style = environment.style.trimmingCharacters(in: .whitespaces)
+        for path in localXcconfigPaths {
+            let values = xcconfigValues(atPath: path)
+            if identity.isEmpty {
+                identity = values["CODE_SIGN_IDENTITY"] ?? ""
+            }
+            if team.isEmpty {
+                team = values["DEVELOPMENT_TEAM"] ?? ""
+            }
+            if style.isEmpty {
+                style = values["CODE_SIGN_STYLE"] ?? ""
+            }
+        }
+        return Inputs(identity: identity, team: team, style: style)
+    }
+
+    /// The number of components a parsed `KEY = value` line splits into.
+    private static let keyAndValueComponentCount = 2
+
+    /// Parse `KEY = value` lines from an xcconfig file into a dictionary, ignoring
+    /// blank lines, comments, and trailing `//` or `;` segments, and stripping
+    /// surrounding quotes. Returns an empty dictionary on any read failure, so a
+    /// missing or unreadable file simply contributes nothing.
+    static func xcconfigValues(atPath path: String) -> [String: String] {
+        let contents: String
+        do {
+            contents = try String(contentsOfFile: path, encoding: .utf8)
+        } catch {
+            return [:]
+        }
+        var values: [String: String] = [:]
+        for rawLine in contents.components(separatedBy: .newlines) {
+            var line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty || line.hasPrefix("//") || line.hasPrefix("#") {
+                continue
+            }
+            if let comment = line.range(of: "//") {
+                line = String(line[..<comment.lowerBound]).trimmingCharacters(in: .whitespaces)
+            }
+            if let semicolon = line.firstIndex(of: ";") {
+                line = String(line[..<semicolon]).trimmingCharacters(in: .whitespaces)
+            }
+            let parts = line.split(
+                separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == keyAndValueComponentCount else {
+                continue
+            }
+            let key = parts[0].trimmingCharacters(in: .whitespaces)
+            let value = parts[1]
+                .trimmingCharacters(in: .whitespaces)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            if !key.isEmpty {
+                values[key] = value
+            }
+        }
+        return values
+    }
+
     /// Write the xcconfig from the environment inputs and return its absolute path,
     /// or nil when no override applies.
     public static func write(makeDir: String = ".make") -> String? {
@@ -130,5 +197,34 @@ public enum SigningBuildConfig {
         let absolutePath = URL(fileURLWithPath: path).standardizedFileURL.path
         Output.info("signing: build signs via \(absolutePath)")
         return absolutePath
+    }
+
+    /// Apply the signing override to the current process environment so a tool that
+    /// runs `xcodebuild` itself, without the `make build`/`deploy` prelude, still
+    /// signs through swift-mk. It is a no-op when `XCODE_XCCONFIG_FILE` is already
+    /// set, so a value the make prelude exported always wins. `setenv` uses
+    /// `overwrite: 0` for the same reason. Best-effort: it returns nil and leaves
+    /// the build to its existing signing when no override applies or the write
+    /// fails, rather than blocking the build. Returns the override path on success.
+    @discardableResult
+    public static func applyEnvironmentOverride(
+        localXcconfigPaths: [String] = [], makeDir: String = ".make"
+    ) -> String? {
+        let existing = Env.get("XCODE_XCCONFIG_FILE").trimmingCharacters(in: .whitespaces)
+        if !existing.isEmpty {
+            return nil
+        }
+        let inputs = resolvedInputs(localXcconfigPaths: localXcconfigPaths)
+        guard
+            let path = write(
+                identity: inputs.identity,
+                team: inputs.team,
+                style: inputs.style,
+                makeDir: makeDir)
+        else {
+            return nil
+        }
+        setenv("XCODE_XCCONFIG_FILE", path, 0)
+        return path
     }
 }
