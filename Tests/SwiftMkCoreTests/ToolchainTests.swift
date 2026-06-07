@@ -62,6 +62,20 @@ func toolchainTuistTestUsesNativeTuistWithSelectiveTestingDisabled() {
 }
 
 @Test
+func toolchainPassesExtraArgumentsForAnalyze() {
+    let request = Toolchain.Request(
+        generator: .tuist,
+        scheme: "Agent",
+        configuration: "Debug",
+        workspace: "App.xcworkspace",
+        extraArguments: ["-allowProvisioningUpdates"]
+    )
+    let args = Toolchain.xcodebuildArguments(request, action: "analyze")
+    #expect(args.contains("-allowProvisioningUpdates"))
+    #expect(args.last == "analyze")
+}
+
+@Test
 func toolchainSigningEnvironmentRespectsExistingOverride() {
     setenv("XCODE_XCCONFIG_FILE", "/tmp/existing-signing.xcconfig", 1)
     defer { unsetenv("XCODE_XCCONFIG_FILE") }

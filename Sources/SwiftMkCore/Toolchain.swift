@@ -43,6 +43,11 @@ public enum Toolchain {
         public let destination: String?
         public let derivedDataPath: String?
         public let extraSettings: [String: String]
+        /// Passthrough xcodebuild flags that are not `KEY=value` settings, such as
+        /// `-allowProvisioningUpdates`, App Store Connect authentication options, or
+        /// build-cache flags. A dev tool that needs these passes them here rather
+        /// than naming xcodebuild itself.
+        public let extraArguments: [String]
 
         public init(
             generator: Generator,
@@ -52,7 +57,8 @@ public enum Toolchain {
             project: String? = nil,
             destination: String? = nil,
             derivedDataPath: String? = nil,
-            extraSettings: [String: String] = [:]
+            extraSettings: [String: String] = [:],
+            extraArguments: [String] = []
         ) {
             self.generator = generator
             self.scheme = scheme
@@ -62,6 +68,7 @@ public enum Toolchain {
             self.destination = destination
             self.derivedDataPath = derivedDataPath
             self.extraSettings = extraSettings
+            self.extraArguments = extraArguments
         }
     }
 
@@ -151,6 +158,16 @@ public enum Toolchain {
             "xcodebuild", xcodebuildArguments(request, action: "build-for-testing"))
     }
 
+    /// Static-analyze the scheme with xcodebuild against the explicit container,
+    /// applying the signing override like `build` so the analyze build signs the same
+    /// way a real build would.
+    @discardableResult
+    public static func analyze(_ request: Request) -> Int32 {
+        Shell.runForwardingOutput(
+            "xcodebuild", xcodebuildArguments(request, action: "analyze"),
+            environment: signingEnvironment())
+    }
+
     // MARK: Read-only toolchain queries
 
     public static func version() -> String {
@@ -215,6 +232,7 @@ public enum Toolchain {
         if let derivedDataPath = request.derivedDataPath {
             args.append(contentsOf: ["-derivedDataPath", derivedDataPath])
         }
+        args.append(contentsOf: request.extraArguments)
         args.append(contentsOf: settingArguments(request.extraSettings))
         args.append(action)
         return args
