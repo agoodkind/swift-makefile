@@ -83,10 +83,46 @@ extension Lint {
         return true
     }
 
+    // MARK: generate
+
+    /// Run the consumer's `SWIFT_GENERATE_CMD` once before a compile-based gate, the
+    /// same hook `build` runs before `SWIFT_BUILD_CMD`, so a fresh checkout or worktree
+    /// has its generated sources (a rendered config, an Xcode project) before deadcode,
+    /// log-audit, or test compile the package. Generation is a framework
+    /// responsibility, not something each consumer threads into each gate. Guarded by
+    /// `SWIFT_MK_GENERATED` so it runs at most once per `make lint`: the flag is set
+    /// after a successful run and inherited by the gate sub-makes. On failure the
+    /// command's own output is surfaced, so the real cause shows rather than being
+    /// masked as a later compile or index-incomplete error. A repo with no
+    /// `SWIFT_GENERATE_CMD` is unaffected.
+    @discardableResult
+    public static func ensureGenerated() -> Bool {
+        if Env.get("SWIFT_MK_GENERATED") == "1" {
+            return true
+        }
+        let command = Env.get("SWIFT_GENERATE_CMD")
+        guard !command.isEmpty else {
+            return true
+        }
+        Output.info("generate: running SWIFT_GENERATE_CMD before compile-based gate")
+        let result = Shell.sh(command)
+        Output.emitStandardOutput(result.combined)
+        if result.status != 0 {
+            Output.error("generate: SWIFT_GENERATE_CMD failed status=\(result.status)")
+            return false
+        }
+        setenv("SWIFT_MK_GENERATED", "1", 1)
+        return true
+    }
+
     // MARK: test, audit
 
     @discardableResult
     public static func runTest(context _: PathContext) -> Bool {
+        guard ensureGenerated() else {
+            Output.emitStandardError("test: SWIFT_GENERATE_CMD failed; not compiling\n")
+            return false
+        }
         let command = Env.get("SWIFT_TEST_CMD")
         guard !command.isEmpty else {
             Output.emitStandardError("test: SWIFT_TEST_CMD is not set\n")
@@ -101,6 +137,10 @@ extension Lint {
     public static func runLogAudit(context _: PathContext) -> Bool {
         let command = Env.get("SWIFT_LOG_AUDIT_CMD")
         guard !command.isEmpty else { return true }
+        guard ensureGenerated() else {
+            Output.emitStandardError("log-audit: SWIFT_GENERATE_CMD failed; not compiling\n")
+            return false
+        }
         let result = Shell.sh(command)
         Output.emitStandardOutput(result.combined)
         return result.status == 0
@@ -129,6 +169,13 @@ extension Lint {
     @discardableResult
     public static func runLint(context _: PathContext) -> Bool {
         Output.info("lint: running gate chain")
+        // Generate once before the gates. setenv marks SWIFT_MK_GENERATED so the gate
+        // sub-makes inherit it and skip regenerating; a failure here is surfaced and
+        // stops the chain rather than letting each compile gate fail on missing sources.
+        guard ensureGenerated() else {
+            Output.log("\n1 check failed: generate")
+            return false
+        }
         let gates = Env.words(
             Env.get(
                 "LINT_GATES",

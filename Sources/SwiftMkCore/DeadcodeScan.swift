@@ -70,14 +70,12 @@ enum DeadcodeScan {
         if onDiskProject() != nil {
             return
         }
-        let generateCommand = Env.get("SWIFT_GENERATE_CMD")
-        if !generateCommand.isEmpty {
-            Output.info("deadcode: generating Xcode project via SWIFT_GENERATE_CMD")
-            let result = Shell.sh(generateCommand)
-            if result.status != 0 {
-                Output.error(
-                    "deadcode: SWIFT_GENERATE_CMD failed status=\(result.status)")
-            }
+        if !Env.get("SWIFT_GENERATE_CMD").isEmpty {
+            // Shared with the other compile-based gates: runs SWIFT_GENERATE_CMD once
+            // per `make lint` (guarded by SWIFT_MK_GENERATED) and surfaces its output on
+            // failure, so a generation error is not masked by the later "no project
+            // generated" message.
+            Lint.ensureGenerated()
             return
         }
         guard let manifest = firstManifest() else {
