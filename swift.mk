@@ -93,7 +93,8 @@ SWIFT_MK_SCRIPT_FILES := \
 	Package.swift \
 	Sources/SwiftMkRenderCore/TemplateRenderer.swift \
 	Sources/SwiftMkRenderCLI/main.swift \
-	Sources/SwiftMkCLI/main.swift \
+	Sources/SwiftMkCLI/SwiftMk.swift \
+	Sources/SwiftMkCLI/ToolchainCommand.swift \
 	Sources/SwiftMkCore/Findings.swift \
 	Sources/SwiftMkCore/Text.swift \
 	Sources/SwiftMkCore/Env.swift \
@@ -111,6 +112,8 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/DeadcodeBuildConfig.swift \
 	Sources/SwiftMkCore/WitnessFilter.swift \
 	Sources/SwiftMkCore/SigningBuildConfig.swift \
+	Sources/SwiftMkCore/Toolchain.swift \
+	Sources/SwiftMkCore/BuildToolingAudit.swift \
 	Sources/SwiftMkCore/Lint.swift \
 	Sources/SwiftMkCore/Lint+Run.swift \
 	Sources/SwiftMkCore/BaselineRunner.swift \
@@ -129,6 +132,8 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/IndexCompletenessTests.swift \
 	Tests/SwiftMkCoreTests/WitnessFilterTests.swift \
 	Tests/SwiftMkCoreTests/SigningBuildConfigTests.swift \
+	Tests/SwiftMkCoreTests/ToolchainTests.swift \
+	Tests/SwiftMkCoreTests/BuildToolingAuditTests.swift \
 	notices.txt \
 	templates/xcode/IDETemplateMacros.plist.template
 
@@ -230,6 +235,32 @@ BASELINE_TOKEN ?=
 BASELINE_TOKEN_CMD ?= $(SWIFT_MK_GATE_TOKEN_CMD)
 BASELINE_UPDATE_MODE ?= sync
 
+# Canonical Xcode-app build path. A consumer that builds an Xcode app declares only
+# its generator, container, scheme, and configuration; swift-mk derives the build,
+# test, generate, and coverage commands, all routed through the `swift-mk toolchain`
+# chokepoint so no consumer Makefile names tuist/xcodegen/xcodebuild. Set
+# SWIFT_XCODE_SCHEME to opt in; leave it empty for a plain SwiftPM package (the
+# `swift build`/`swift test` defaults below apply).
+SWIFT_XCODE_SCHEME ?=
+SWIFT_XCODE_GENERATOR ?= tuist
+SWIFT_XCODE_CONFIGURATION ?= Debug
+# The dead-code coverage build runs in Debug so ONLY_ACTIVE_ARCH defaults to YES.
+# A single-arch build avoids the cross-arch module race that a universal
+# (Release) build-for-testing hits on a multi-module test target.
+SWIFT_XCODE_COVERAGE_CONFIGURATION ?= Debug
+SWIFT_XCODE_WORKSPACE ?=
+SWIFT_XCODE_PROJECT ?=
+SWIFT_XCODE_BUILD_SETTINGS ?=
+ifneq ($(strip $(SWIFT_XCODE_SCHEME)),)
+SWIFT_XCODE_CONTAINER_ARG := $(if $(filter xcodegen,$(SWIFT_XCODE_GENERATOR)),--project $(SWIFT_XCODE_PROJECT),--workspace $(SWIFT_XCODE_WORKSPACE))
+# Generate installs external dependencies first; Tuist cannot generate a project
+# whose external SPM packages are unresolved, and xcodegen install is a no-op.
+SWIFT_GENERATE_CMD ?= "$(SWIFT_MK_BIN)" toolchain install --generator $(SWIFT_XCODE_GENERATOR) && "$(SWIFT_MK_BIN)" toolchain generate --generator $(SWIFT_XCODE_GENERATOR)
+SWIFT_BUILD_CMD ?= "$(SWIFT_MK_BIN)" toolchain build --generator $(SWIFT_XCODE_GENERATOR) $(SWIFT_XCODE_CONTAINER_ARG) --scheme $(SWIFT_XCODE_SCHEME) --configuration $(SWIFT_XCODE_CONFIGURATION) --derived-data-path $(SWIFT_MK_DERIVED_DATA) $(SWIFT_XCODE_BUILD_SETTINGS)
+SWIFT_TEST_CMD ?= "$(SWIFT_MK_BIN)" toolchain test --generator $(SWIFT_XCODE_GENERATOR) --scheme $(SWIFT_XCODE_SCHEME) --configuration Debug
+SWIFT_DEADCODE_BUILD_CMD ?= rm -rf "$(SWIFT_MK_DERIVED_DATA)" && "$(SWIFT_MK_BIN)" toolchain install --generator $(SWIFT_XCODE_GENERATOR) && "$(SWIFT_MK_BIN)" toolchain generate --generator $(SWIFT_XCODE_GENERATOR) && "$(SWIFT_MK_BIN)" toolchain build-for-testing --generator $(SWIFT_XCODE_GENERATOR) $(SWIFT_XCODE_CONTAINER_ARG) --scheme $(SWIFT_XCODE_SCHEME) --configuration $(SWIFT_XCODE_COVERAGE_CONFIGURATION) --derived-data-path $(SWIFT_MK_DERIVED_DATA) COMPILER_INDEX_STORE_ENABLE=YES ONLY_ACTIVE_ARCH=YES $(SWIFT_XCODE_BUILD_SETTINGS)
+endif
+
 SWIFT_BUILD_CMD ?= swift build $(SWIFT_MK_SWIFTPM_CACHE_ARGS)
 # The build the dead-code gate runs to refresh the index store. Defaults to
 # SWIFT_BUILD_CMD; set it when SWIFT_BUILD_CMD needs a target argument or builds a
@@ -247,7 +278,7 @@ SWIFT_LOG_AUDIT_CMD ?=
 SWIFTCHECK_EXTRA_BIN ?=
 SWIFTCHECK_EXTRA_BUILD_REPO ?= $(if $(and $(SWIFT_MK_DEV_DIR),$(wildcard $(SWIFT_MK_DEV_DIR)/swiftcheck/Package.swift)),$(SWIFT_MK_DEV_DIR)/swiftcheck,$(CURDIR)/.make/swiftcheck)
 SWIFTCHECK_EXTRA_BUILD_PRODUCT ?= swiftcheck-extra
-SWIFTCHECK_EXTRA_FLAGS ?= -no_any -no_anyobject -untyped_json -force_unwrap -force_try -silent_try -silent_catch -banned_direct_output -task_detached -sleep_in_production -fatal_exit -sensitive_log_field -missing_boundary_log -ignored_cleanup_error -missing_section_mark
+SWIFTCHECK_EXTRA_FLAGS ?= -no_any -no_anyobject -untyped_json -force_unwrap -force_try -silent_try -silent_catch -banned_direct_output -task_detached -sleep_in_production -fatal_exit -sensitive_log_field -missing_boundary_log -ignored_cleanup_error -missing_section_mark -unrouted_build_tooling
 SWIFTCHECK_EXTRA_TARGETS ?= $(SWIFTLINT_TARGETS)
 SWIFTCHECK_EXTRA_BASELINE ?= .swiftcheck-extra-baseline.txt
 SWIFTCHECK_EXTRA_DEFAULT_EXCLUDE_PATHS ?=
