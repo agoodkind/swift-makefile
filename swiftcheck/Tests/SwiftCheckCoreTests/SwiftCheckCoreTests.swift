@@ -105,6 +105,39 @@ func scanAllowsRobustSymlinkPackagePath() throws {
     #expect(violations.isEmpty)
 }
 
+// MARK: - Boundary log fixtures
+
+// A function that spawns a process without a structured log. Held at file scope so
+// the rule sees it through a written fixture file, where the file name alone decides
+// whether the production-only rule applies.
+private let boundaryWithoutLogFixture =
+    "func openConfig() { let result = Shell.run(\"cat\", [\"config\"]) }\n"
+
+@Test
+func scanFlagsBoundaryFunctionMissingLogInProductionFile() throws {
+    let temporaryDirectory = try createTemporaryDirectory()
+    let filePath = temporaryDirectory.appendingPathComponent("Boundary.swift").path
+    try boundaryWithoutLogFixture.write(toFile: filePath, atomically: true, encoding: .utf8)
+
+    let violations = try scan(paths: [filePath], enabledRules: [.missingBoundaryLog])
+
+    #expect(violations.count == 1)
+    #expect(violations.first?.rule == .missingBoundaryLog)
+}
+
+@Test
+func scanSkipsBoundaryLogInTestFile() throws {
+    // Boundary logging is a production concern, so a test that calls a boundary to
+    // exercise it is out of scope, the same way `sleep_in_production` skips tests.
+    let temporaryDirectory = try createTemporaryDirectory()
+    let filePath = temporaryDirectory.appendingPathComponent("SampleTests.swift").path
+    try boundaryWithoutLogFixture.write(toFile: filePath, atomically: true, encoding: .utf8)
+
+    let violations = try scan(paths: [filePath], enabledRules: [.missingBoundaryLog])
+
+    #expect(violations.isEmpty)
+}
+
 private func createTemporaryDirectory() throws -> URL {
     let directoryURL = FileManager.default.temporaryDirectory.appendingPathComponent(
         UUID().uuidString)

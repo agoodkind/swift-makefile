@@ -432,7 +432,11 @@ final class AuditVisitor: SyntaxVisitor {
     }
 
     override func visit(_ node: FunctionDeclSyntax) -> SyntaxVisitorContinueKind {
-        guard enabledRules.contains(.missingBoundaryLog), let body = node.body else {
+        // Boundary logging is a production-observability concern, so a test that
+        // calls a boundary to exercise it is out of scope, the same way
+        // `sleep_in_production` skips test paths.
+        guard enabledRules.contains(.missingBoundaryLog), !isTestPath(path), let body = node.body
+        else {
             return .visitChildren
         }
         let bodySource = body.description
