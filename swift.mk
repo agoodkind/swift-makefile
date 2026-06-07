@@ -21,6 +21,20 @@ endif
 
 SWIFT_MK_SELF := $(lastword $(MAKEFILE_LIST))
 SWIFT_MK_SELF_DIR := $(patsubst %/,%,$(dir $(abspath $(SWIFT_MK_SELF))))
+
+# A local swift-makefile checkout is consumed through SWIFT_MK_DEV_DIR. SwiftPM
+# derives a path dependency's identity from its directory basename, and a consumer's
+# Tools manifest names `package: "swift-makefile"`, so a checkout in a worktree named
+# anything else (for example canonical-tuist-build) fails to resolve. Normalize the
+# override to a symlink literally named swift-makefile under .make/dev so any checkout
+# resolves. Skip when the basename is already swift-makefile (the main checkout, or an
+# already-normalized re-entry), which also avoids linking the symlink to itself.
+ifneq ($(strip $(SWIFT_MK_DEV_DIR)),)
+ifneq ($(notdir $(patsubst %/,%,$(SWIFT_MK_DEV_DIR))),swift-makefile)
+override SWIFT_MK_DEV_DIR := $(shell mkdir -p "$(CURDIR)/.make/dev" && ln -sfn "$(abspath $(SWIFT_MK_DEV_DIR))" "$(CURDIR)/.make/dev/swift-makefile" && printf '%s' "$(CURDIR)/.make/dev/swift-makefile")
+endif
+endif
+
 SWIFT_MK_LOCAL_SCRIPT_DIR := $(if $(strip $(SWIFT_MK_DEV_DIR)),$(SWIFT_MK_DEV_DIR)/scripts,$(SWIFT_MK_SELF_DIR)/scripts)
 SWIFT_MK_FETCHED_SCRIPT_DIR := $(CURDIR)/.make/scripts
 SWIFT_MK_HELPER_DIR := $(if $(wildcard $(SWIFT_MK_LOCAL_SCRIPT_DIR)/swift-mk-build.sh),$(SWIFT_MK_LOCAL_SCRIPT_DIR),$(SWIFT_MK_FETCHED_SCRIPT_DIR))
