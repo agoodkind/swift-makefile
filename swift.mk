@@ -296,7 +296,19 @@ SWIFT_XCODE_CONTAINER_ARG := $(if $(filter xcodegen,$(SWIFT_XCODE_GENERATOR)),--
 # whose external SPM packages are unresolved, and xcodegen install is a no-op.
 SWIFT_GENERATE_CMD ?= "$(SWIFT_MK_BIN)" toolchain install --generator $(SWIFT_XCODE_GENERATOR) && "$(SWIFT_MK_BIN)" toolchain generate --generator $(SWIFT_XCODE_GENERATOR)
 SWIFT_BUILD_CMD ?= "$(SWIFT_MK_BIN)" toolchain build --generator $(SWIFT_XCODE_GENERATOR) $(SWIFT_XCODE_CONTAINER_ARG) --scheme $(SWIFT_XCODE_SCHEME) --configuration $(SWIFT_XCODE_CONFIGURATION) --derived-data-path $(SWIFT_MK_DERIVED_DATA) $(SWIFT_XCODE_BUILD_SETTINGS)
+# Test runner is decoupled from the generator. An Xcode consumer defaults to the
+# scheme-driven `toolchain test` path, but a hybrid consumer whose tests run as a
+# SwiftPM package (a Tuist overlay used only for generate and a metallib, with the
+# real targets in Package.swift) sets SWIFT_TEST_MODE=spm to test via `swift test`.
+# That sidesteps the Tuist static-framework SPM integration's failure to propagate
+# internal C-target module maps (the EventSource/NIO/_NumericsShims case), which
+# only affects the static-framework test build, never the SwiftPM executable build.
+SWIFT_TEST_MODE ?= xcode
+ifeq ($(strip $(SWIFT_TEST_MODE)),spm)
+SWIFT_TEST_CMD ?= swift test $(SWIFT_MK_SWIFTPM_CACHE_ARGS)
+else
 SWIFT_TEST_CMD ?= "$(SWIFT_MK_BIN)" toolchain test --generator $(SWIFT_XCODE_GENERATOR) $(SWIFT_XCODE_CONTAINER_ARG) --scheme $(SWIFT_XCODE_SCHEME) --configuration Debug --derived-data-path $(SWIFT_MK_DERIVED_DATA)
+endif
 SWIFT_DEADCODE_BUILD_CMD ?= rm -rf "$(SWIFT_MK_DERIVED_DATA)" && "$(SWIFT_MK_BIN)" toolchain install --generator $(SWIFT_XCODE_GENERATOR) && "$(SWIFT_MK_BIN)" toolchain generate --generator $(SWIFT_XCODE_GENERATOR) && "$(SWIFT_MK_BIN)" toolchain build-for-testing --generator $(SWIFT_XCODE_GENERATOR) $(SWIFT_XCODE_CONTAINER_ARG) --scheme $(SWIFT_XCODE_SCHEME) --configuration $(SWIFT_XCODE_COVERAGE_CONFIGURATION) --derived-data-path $(SWIFT_MK_DERIVED_DATA) COMPILER_INDEX_STORE_ENABLE=YES ONLY_ACTIVE_ARCH=YES $(SWIFT_XCODE_BUILD_SETTINGS)
 endif
 
