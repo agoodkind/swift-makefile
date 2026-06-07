@@ -50,14 +50,40 @@ public enum Shell {
         } catch {
             return Result(status: launchFailureStatus, stdout: "", stderr: "\(error)\n")
         }
-        let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        // Drain stdout and stderr concurrently. A pipe's kernel buffer is bounded
+        // (about 64 KB on macOS), so reading one stream to EOF before the other
+        // deadlocks when the child fills the unread pipe before it closes the one
+        // being read: the child blocks in write() while this process blocks in
+        // read(). Reading both as bytes arrive keeps either stream from blocking.
+        let group = DispatchGroup()
+        let outBuffer = drainAsync(outPipe.fileHandleForReading, into: group)
+        let errBuffer = drainAsync(errPipe.fileHandleForReading, into: group)
+        group.wait()
         process.waitUntilExit()
         return Result(
             status: process.terminationStatus,
-            stdout: String(bytes: outData, encoding: .utf8) ?? "",
-            stderr: String(bytes: errData, encoding: .utf8) ?? ""
+            stdout: String(bytes: outBuffer.snapshot(), encoding: .utf8) ?? "",
+            stderr: String(bytes: errBuffer.snapshot(), encoding: .utf8) ?? ""
         )
+    }
+
+    /// Accumulate a file handle's bytes off the calling thread until the stream
+    /// closes, holding `group` until EOF so the buffer is complete once
+    /// `group.wait()` returns. Reading both of a process's streams this way keeps a
+    /// child that floods one pipe from blocking against a serial reader of the other.
+    private static func drainAsync(_ handle: FileHandle, into group: DispatchGroup) -> LockedData {
+        let buffer = LockedData()
+        group.enter()
+        handle.readabilityHandler = { source in
+            let chunk = source.availableData
+            if chunk.isEmpty {
+                source.readabilityHandler = nil
+                group.leave()
+            } else {
+                buffer.append(chunk)
+            }
+        }
+        return buffer
     }
 
     /// Run a command string through `/bin/sh -c`. An empty `environment` inherits the
@@ -146,5 +172,28 @@ public enum Shell {
         }
         process.waitUntilExit()
         return process.terminationStatus
+    }
+}
+
+// MARK: - LockedData
+
+/// A growable byte buffer one `readabilityHandler` appends to off the calling
+/// thread while `Shell.run` reads it back after the stream closes. A reference
+/// type so the handler and the caller share one buffer; an `NSLock` guards every
+/// access, which is why the unchecked `Sendable` conformance is sound.
+private final class LockedData: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+
+    func append(_ chunk: Data) {
+        lock.lock()
+        defer { lock.unlock() }
+        data.append(chunk)
+    }
+
+    func snapshot() -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return data
     }
 }
