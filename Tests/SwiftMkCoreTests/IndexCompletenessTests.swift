@@ -35,3 +35,26 @@ func indexCompletenessKeepsProjectOwnSources() {
         !IndexCompleteness.isVendoredDependencySource(
             "/proj/Apps/iOS/Services/RelayController.swift"))
 }
+
+@Test
+func indexCompletenessSkipsBuildVariableSourceReference() {
+    #expect(
+        IndexCompleteness.isUnresolvedSourceReference(
+            "/proj/${DERIVED_FILE_DIR}/Generated/Config.generated.swift"))
+    #expect(
+        IndexCompleteness.isUnresolvedSourceReference("/proj/$(SRCROOT)/Sources/Foo.swift"))
+}
+
+@Test
+func indexCompletenessSkipsStaleReferenceToMissingFile() {
+    let missing = FileManager.default.temporaryDirectory
+        .appendingPathComponent("\(UUID().uuidString)-Gone.swift").path
+    #expect(IndexCompleteness.isUnresolvedSourceReference(missing))
+}
+
+@Test
+func indexCompletenessKeepsRealOnDiskSource() {
+    // This test's own source file is a real `.swift` on disk, so the reference
+    // resolves and is kept; no temp file or cleanup is needed.
+    #expect(!IndexCompleteness.isUnresolvedSourceReference(#filePath))
+}

@@ -113,7 +113,11 @@ public enum IndexCompleteness {
                     else {
                         continue
                     }
-                    files.insert(standardize(fullPath))
+                    let resolved = standardize(fullPath)
+                    if isUnresolvedSourceReference(resolved) {
+                        continue
+                    }
+                    files.insert(resolved)
                 }
             }
         }
@@ -128,6 +132,22 @@ public enum IndexCompleteness {
     /// be indexed; otherwise the index reads as incomplete on every run.
     static func isVendoredDependencySource(_ path: String) -> Bool {
         path.contains("/.build/") || path.contains("/SourcePackages/")
+    }
+
+    /// True when a target lists a `.swift` reference that does not resolve to a real
+    /// source on disk, so the index can never be expected to hold it. An Xcode file
+    /// reference can carry a build-variable source tree such as `${DERIVED_FILE_DIR}`
+    /// or `$(SRCROOT)` for a source generated into the build directory; XcodeProj
+    /// returns that path literally, so it names no file on disk and matches no indexed
+    /// unit. A reference left behind for a deleted file fails the same way. Requiring
+    /// either reads the index as incomplete on every run and masks the real partial
+    /// index, so both are dropped. A genuine project source always exists on disk and
+    /// is kept, so a source the build compiled but failed to index is still caught.
+    static func isUnresolvedSourceReference(_ path: String) -> Bool {
+        if path.contains("$(") || path.contains("${") {
+            return true
+        }
+        return !FileManager.default.fileExists(atPath: path)
     }
 
     static func isTestTarget(_ target: PBXNativeTarget) -> Bool {
