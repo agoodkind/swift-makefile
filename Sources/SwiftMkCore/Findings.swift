@@ -16,92 +16,92 @@ import Foundation
 /// working directory and the project root, and a finding "key" blanks the
 /// `:line:column:` coordinate to `:::` so a finding matches across line shifts.
 public enum Findings {
-    private static var locationPattern: Regex<Substring> { /:[0-9]+:[0-9]+:/ }
-    private static let parentDirectoryPrefix = "../"
+  private static var locationPattern: Regex<Substring> { /:[0-9]+:[0-9]+:/ }
+  private static let parentDirectoryPrefix = "../"
 
-    /// Strip a leading `pwd/` prefix, then a leading `cwd/` prefix, then any
-    /// leading `../` segments.
-    public static func normalizePath(_ line: String, pwd: String, cwd: String) -> String {
-        var output = line
-        if !pwd.isEmpty, output.hasPrefix(pwd) {
-            output = String(output.dropFirst(pwd.count))
-        }
-        if !cwd.isEmpty, output.hasPrefix(cwd) {
-            output = String(output.dropFirst(cwd.count))
-        }
-        while output.hasPrefix(parentDirectoryPrefix) {
-            output = String(output.dropFirst(parentDirectoryPrefix.count))
-        }
-        return output
+  /// Strip a leading `pwd/` prefix, then a leading `cwd/` prefix, then any
+  /// leading `../` segments.
+  public static func normalizePath(_ line: String, pwd: String, cwd: String) -> String {
+    var output = line
+    if !pwd.isEmpty, output.hasPrefix(pwd) {
+      output = String(output.dropFirst(pwd.count))
     }
-
-    /// The file path of a finding line, the text before its first
-    /// `:line:column:` coordinate. Returns nil when the line carries no
-    /// coordinate, so the caller keeps lines it cannot attribute to a file.
-    public static func filePath(_ line: String) -> String? {
-        guard let range = line.firstRange(of: locationPattern) else {
-            return nil
-        }
-        return String(line[line.startIndex..<range.lowerBound])
+    if !cwd.isEmpty, output.hasPrefix(cwd) {
+      output = String(output.dropFirst(cwd.count))
     }
-
-    /// Replace the first `:line:column:` with `:::` after path normalization.
-    public static func key(_ line: String, pwd: String, cwd: String) -> String {
-        let normalized = normalizePath(line, pwd: pwd, cwd: cwd)
-        guard let range = normalized.firstRange(of: locationPattern) else {
-            return normalized
-        }
-        return normalized.replacingCharacters(in: range, with: ":::")
+    while output.hasPrefix(parentDirectoryPrefix) {
+      output = String(output.dropFirst(parentDirectoryPrefix.count))
     }
+    return output
+  }
 
-    /// Extract the finding text from a baseline line, dropping the metadata
-    /// suffix `\t# <label>:...`. Returns nil for blank or comment lines.
-    public static func baselineFinding(
-        _ line: String, label: String, pwd: String, cwd: String
-    ) -> String? {
-        if line.trimmingCharacters(in: .whitespaces).isEmpty || line.hasPrefix("#") {
-            return nil
-        }
-        let marker = "\t# \(label):"
-        var finding = line
-        if let markerRange = line.range(of: marker) {
-            finding = String(line[line.startIndex..<markerRange.lowerBound])
-        }
-        return normalizePath(finding, pwd: pwd, cwd: cwd)
+  /// The file path of a finding line, the text before its first
+  /// `:line:column:` coordinate. Returns nil when the line carries no
+  /// coordinate, so the caller keeps lines it cannot attribute to a file.
+  public static func filePath(_ line: String) -> String? {
+    guard let range = line.firstRange(of: locationPattern) else {
+      return nil
     }
+    return String(line[line.startIndex..<range.lowerBound])
+  }
 
-    /// Human display form: a location line and an indented message line.
-    public static func rendered(_ line: String, pwd: String, cwd: String) -> String {
-        let normalized = normalizePath(line, pwd: pwd, cwd: cwd)
-        guard let range = normalized.firstRange(of: locationPattern) else {
-            return "  \(normalized)"
-        }
-        let location = String(
-            normalized[normalized.startIndex..<normalized.index(before: range.upperBound)])
-        var message = String(normalized[range.upperBound...])
-        message = message.drop { $0 == " " || $0 == "\t" }.description
-        return "  \(location)\n    \(message)"
+  /// Replace the first `:line:column:` with `:::` after path normalization.
+  public static func key(_ line: String, pwd: String, cwd: String) -> String {
+    let normalized = normalizePath(line, pwd: pwd, cwd: cwd)
+    guard let range = normalized.firstRange(of: locationPattern) else {
+      return normalized
     }
+    return normalized.replacingCharacters(in: range, with: ":::")
+  }
 
-    // MARK: PathContext convenience
-
-    public static func normalizePath(_ line: String, _ context: PathContext) -> String {
-        normalizePath(line, pwd: context.pwd, cwd: context.cwd)
+  /// Extract the finding text from a baseline line, dropping the metadata
+  /// suffix `\t# <label>:...`. Returns nil for blank or comment lines.
+  public static func baselineFinding(
+    _ line: String, label: String, pwd: String, cwd: String
+  ) -> String? {
+    if line.trimmingCharacters(in: .whitespaces).isEmpty || line.hasPrefix("#") {
+      return nil
     }
-
-    public static func key(_ line: String, _ context: PathContext) -> String {
-        key(line, pwd: context.pwd, cwd: context.cwd)
+    let marker = "\t# \(label):"
+    var finding = line
+    if let markerRange = line.range(of: marker) {
+      finding = String(line[line.startIndex..<markerRange.lowerBound])
     }
+    return normalizePath(finding, pwd: pwd, cwd: cwd)
+  }
 
-    public static func baselineFinding(
-        _ line: String,
-        label: String,
-        _ context: PathContext
-    ) -> String? {
-        baselineFinding(line, label: label, pwd: context.pwd, cwd: context.cwd)
+  /// Human display form: a location line and an indented message line.
+  public static func rendered(_ line: String, pwd: String, cwd: String) -> String {
+    let normalized = normalizePath(line, pwd: pwd, cwd: cwd)
+    guard let range = normalized.firstRange(of: locationPattern) else {
+      return "  \(normalized)"
     }
+    let location = String(
+      normalized[normalized.startIndex..<normalized.index(before: range.upperBound)])
+    var message = String(normalized[range.upperBound...])
+    message = message.drop { $0 == " " || $0 == "\t" }.description
+    return "  \(location)\n    \(message)"
+  }
 
-    public static func rendered(_ line: String, _ context: PathContext) -> String {
-        rendered(line, pwd: context.pwd, cwd: context.cwd)
-    }
+  // MARK: PathContext convenience
+
+  public static func normalizePath(_ line: String, _ context: PathContext) -> String {
+    normalizePath(line, pwd: context.pwd, cwd: context.cwd)
+  }
+
+  public static func key(_ line: String, _ context: PathContext) -> String {
+    key(line, pwd: context.pwd, cwd: context.cwd)
+  }
+
+  public static func baselineFinding(
+    _ line: String,
+    label: String,
+    _ context: PathContext
+  ) -> String? {
+    baselineFinding(line, label: label, pwd: context.pwd, cwd: context.cwd)
+  }
+
+  public static func rendered(_ line: String, _ context: PathContext) -> String {
+    rendered(line, pwd: context.pwd, cwd: context.cwd)
+  }
 }

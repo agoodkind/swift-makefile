@@ -18,79 +18,79 @@ import Foundation
 /// from the run's printed trace id, and pulls the compiler-error lines so the
 /// cause is visible without opening the file.
 enum BuildFailureLog {
-    private static let keepCount = 5
+  private static let keepCount = 5
 
-    /// Write `output` to `<logDirectory>/<name>.<traceID>.log`, prune old logs with
-    /// that name, and return the path. Returns nil when the write fails. `name`
-    /// defaults to the build-failure log; the completeness check passes its own.
-    static func write(
-        output: String,
-        logDirectory: String,
-        traceID: String,
-        name: String = "deadcode-build"
-    ) -> String? {
-        let path = "\(logDirectory)/\(name).\(traceID).log"
-        do {
-            try FileManager.default.createDirectory(
-                atPath: logDirectory, withIntermediateDirectories: true)
-            try output.write(toFile: path, atomically: true, encoding: .utf8)
-        } catch {
-            Output.error("deadcode: could not write log: \(error)")
-            return nil
-        }
-        prune(in: logDirectory, name: name)
-        return path
+  /// Write `output` to `<logDirectory>/<name>.<traceID>.log`, prune old logs with
+  /// that name, and return the path. Returns nil when the write fails. `name`
+  /// defaults to the build-failure log; the completeness check passes its own.
+  static func write(
+    output: String,
+    logDirectory: String,
+    traceID: String,
+    name: String = "deadcode-build"
+  ) -> String? {
+    let path = "\(logDirectory)/\(name).\(traceID).log"
+    do {
+      try FileManager.default.createDirectory(
+        atPath: logDirectory, withIntermediateDirectories: true)
+      try output.write(toFile: path, atomically: true, encoding: .utf8)
+    } catch {
+      Output.error("deadcode: could not write log: \(error)")
+      return nil
     }
+    prune(in: logDirectory, name: name)
+    return path
+  }
 
-    /// The lines that name the failure: compiler errors and the build-failed
-    /// banner, in source order.
-    static func errorLines(in output: String) -> [String] {
-        var lines: [String] = []
-        for rawLine in output.split(separator: "\n", omittingEmptySubsequences: false) {
-            let line = String(rawLine)
-            let isError = line.contains("error:")
-            let isBanner = line.contains("** BUILD FAILED **")
-            let isSummary = line.contains("The following build commands failed")
-            if isError || isBanner || isSummary {
-                lines.append(line)
-            }
-        }
-        return lines
+  /// The lines that name the failure: compiler errors and the build-failed
+  /// banner, in source order.
+  static func errorLines(in output: String) -> [String] {
+    var lines: [String] = []
+    for rawLine in output.split(separator: "\n", omittingEmptySubsequences: false) {
+      let line = String(rawLine)
+      let isError = line.contains("error:")
+      let isBanner = line.contains("** BUILD FAILED **")
+      let isSummary = line.contains("The following build commands failed")
+      if isError || isBanner || isSummary {
+        lines.append(line)
+      }
     }
+    return lines
+  }
 
-    /// Keep the most recent build logs and remove older ones so the log directory
-    /// does not grow without bound.
-    private static func prune(in directory: String, name: String) {
-        let fileManager = FileManager.default
-        let entries: [String]
-        do {
-            entries = try fileManager.contentsOfDirectory(atPath: directory)
-        } catch {
-            Output.error("deadcode: could not list build logs to prune: \(error)")
-            return
-        }
-        let logs = entries.filter { entry in
-            entry.hasPrefix("\(name).") && entry.hasSuffix(".log")
-        }
-        let newestFirst = logs.sorted { first, second in
-            modificationDate(of: "\(directory)/\(first)")
-                > modificationDate(of: "\(directory)/\(second)")
-        }
-        for oldLog in newestFirst.dropFirst(keepCount) {
-            do {
-                try fileManager.removeItem(atPath: "\(directory)/\(oldLog)")
-            } catch {
-                Output.error("deadcode: could not prune build log \(oldLog): \(error)")
-            }
-        }
+  /// Keep the most recent build logs and remove older ones so the log directory
+  /// does not grow without bound.
+  private static func prune(in directory: String, name: String) {
+    let fileManager = FileManager.default
+    let entries: [String]
+    do {
+      entries = try fileManager.contentsOfDirectory(atPath: directory)
+    } catch {
+      Output.error("deadcode: could not list build logs to prune: \(error)")
+      return
     }
+    let logs = entries.filter { entry in
+      entry.hasPrefix("\(name).") && entry.hasSuffix(".log")
+    }
+    let newestFirst = logs.sorted { first, second in
+      modificationDate(of: "\(directory)/\(first)")
+        > modificationDate(of: "\(directory)/\(second)")
+    }
+    for oldLog in newestFirst.dropFirst(keepCount) {
+      do {
+        try fileManager.removeItem(atPath: "\(directory)/\(oldLog)")
+      } catch {
+        Output.error("deadcode: could not prune build log \(oldLog): \(error)")
+      }
+    }
+  }
 
-    private static func modificationDate(of path: String) -> Date {
-        do {
-            let attributes = try FileManager.default.attributesOfItem(atPath: path)
-            return attributes[.modificationDate] as? Date ?? Date.distantPast
-        } catch {
-            return Date.distantPast
-        }
+  private static func modificationDate(of path: String) -> Date {
+    do {
+      let attributes = try FileManager.default.attributesOfItem(atPath: path)
+      return attributes[.modificationDate] as? Date ?? Date.distantPast
+    } catch {
+      return Date.distantPast
     }
+  }
 }

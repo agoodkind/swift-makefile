@@ -19,225 +19,225 @@ enum ToolchainTests {}
 
 @Test
 func toolchainTuistBuildNamesWorkspaceNeverAutoDiscovers() {
-    let request = Toolchain.Request(
-        generator: .tuist,
-        scheme: "App",
-        configuration: "Debug",
-        workspace: "App.xcworkspace"
-    )
-    let args = Toolchain.buildArguments(request)
-    // The explicit -workspace is the Automerge-break fix: xcodebuild must not
-    // auto-discover the bare app project.
-    #expect(args.contains("-workspace"))
-    #expect(args.contains("App.xcworkspace"))
-    #expect(!args.contains("-project"))
-    #expect(args.contains("-scheme"))
-    #expect(args.contains("App"))
-    #expect(args.last == "build")
+  let request = Toolchain.Request(
+    generator: .tuist,
+    scheme: "App",
+    configuration: "Debug",
+    workspace: "App.xcworkspace"
+  )
+  let args = Toolchain.buildArguments(request)
+  // The explicit -workspace is the Automerge-break fix: xcodebuild must not
+  // auto-discover the bare app project.
+  #expect(args.contains("-workspace"))
+  #expect(args.contains("App.xcworkspace"))
+  #expect(!args.contains("-project"))
+  #expect(args.contains("-scheme"))
+  #expect(args.contains("App"))
+  #expect(args.last == "build")
 }
 
 @Test
 func toolchainTuistBuildPassesDerivedDataAndSettingsForPackaging() {
-    let request = Toolchain.Request(
-        generator: .tuist,
-        scheme: "FanCurve",
-        configuration: "Debug",
-        workspace: "FanCurveApp.xcworkspace",
-        derivedDataPath: "build",
-        extraSettings: ["SMC_FAN_HELPER_APP": "/tmp/Helper.app"]
-    )
-    let args = Toolchain.buildArguments(request)
-    // A consumer that packages its product needs a known -derivedDataPath, which
-    // `tuist build` cannot provide; the xcodebuild -workspace form can.
-    #expect(args.contains("-derivedDataPath"))
-    #expect(args.contains("build"))
-    #expect(args.contains("SMC_FAN_HELPER_APP=/tmp/Helper.app"))
+  let request = Toolchain.Request(
+    generator: .tuist,
+    scheme: "FanCurve",
+    configuration: "Debug",
+    workspace: "FanCurveApp.xcworkspace",
+    derivedDataPath: "build",
+    extraSettings: ["SMC_FAN_HELPER_APP": "/tmp/Helper.app"]
+  )
+  let args = Toolchain.buildArguments(request)
+  // A consumer that packages its product needs a known -derivedDataPath, which
+  // `tuist build` cannot provide; the xcodebuild -workspace form can.
+  #expect(args.contains("-derivedDataPath"))
+  #expect(args.contains("build"))
+  #expect(args.contains("SMC_FAN_HELPER_APP=/tmp/Helper.app"))
 }
 
 @Test
 func toolchainTuistTestUsesNativeTuistWithSelectiveTestingDisabled() {
-    let request = Toolchain.Request(generator: .tuist, scheme: "App", configuration: "Debug")
-    let args = Toolchain.tuistTestArguments(request)
-    #expect(args == ["test", "App", "--configuration", "Debug", "--no-selective-testing"])
+  let request = Toolchain.Request(generator: .tuist, scheme: "App", configuration: "Debug")
+  let args = Toolchain.tuistTestArguments(request)
+  #expect(args == ["test", "App", "--configuration", "Debug", "--no-selective-testing"])
 }
 
 @Test
 func toolchainTuistTestPinsDerivedDataPathWhenSet() {
-    // The test path pins DerivedData to the same place build/coverage use, so
-    // `tuist test` no longer falls back to system DerivedData and desyncs.
-    let request = Toolchain.Request(
-        generator: .tuist,
-        scheme: "App",
-        configuration: "Debug",
-        derivedDataPath: ".derived-data"
-    )
-    let args = Toolchain.tuistTestArguments(request)
-    #expect(
-        args == [
-            "test", "App", "--configuration", "Debug", "--no-selective-testing",
-            "--derived-data-path", ".derived-data",
-        ])
+  // The test path pins DerivedData to the same place build/coverage use, so
+  // `tuist test` no longer falls back to system DerivedData and desyncs.
+  let request = Toolchain.Request(
+    generator: .tuist,
+    scheme: "App",
+    configuration: "Debug",
+    derivedDataPath: ".derived-data"
+  )
+  let args = Toolchain.tuistTestArguments(request)
+  #expect(
+    args == [
+      "test", "App", "--configuration", "Debug", "--no-selective-testing",
+      "--derived-data-path", ".derived-data",
+    ])
 }
 
 @Test
 func toolchainPassesExtraArgumentsForAnalyze() {
-    let request = Toolchain.Request(
-        generator: .tuist,
-        scheme: "Agent",
-        configuration: "Debug",
-        workspace: "App.xcworkspace",
-        extraArguments: ["-allowProvisioningUpdates"]
-    )
-    let args = Toolchain.xcodebuildArguments(request, action: "analyze")
-    #expect(args.contains("-allowProvisioningUpdates"))
-    #expect(args.last == "analyze")
+  let request = Toolchain.Request(
+    generator: .tuist,
+    scheme: "Agent",
+    configuration: "Debug",
+    workspace: "App.xcworkspace",
+    extraArguments: ["-allowProvisioningUpdates"]
+  )
+  let args = Toolchain.xcodebuildArguments(request, action: "analyze")
+  #expect(args.contains("-allowProvisioningUpdates"))
+  #expect(args.last == "analyze")
 }
 
 @Test
 func toolchainSigningEnvironmentRespectsExistingOverride() {
-    setenv("XCODE_XCCONFIG_FILE", "/tmp/existing-signing.xcconfig", 1)
-    defer { unsetenv("XCODE_XCCONFIG_FILE") }
-    #expect(Toolchain.signingEnvironment().isEmpty)
+  setenv("XCODE_XCCONFIG_FILE", "/tmp/existing-signing.xcconfig", 1)
+  defer { unsetenv("XCODE_XCCONFIG_FILE") }
+  #expect(Toolchain.signingEnvironment().isEmpty)
 }
 
 @Test
 func toolchainBuildForTestingNamesWorkspaceAndAction() {
-    let request = Toolchain.Request(
-        generator: .tuist,
-        scheme: "App",
-        configuration: "Debug",
-        workspace: "App.xcworkspace",
-        derivedDataPath: "build",
-        extraSettings: ["COMPILER_INDEX_STORE_ENABLE": "YES"]
-    )
-    let args = Toolchain.xcodebuildArguments(request, action: "build-for-testing")
-    #expect(args.contains("-workspace"))
-    #expect(args.contains("App.xcworkspace"))
-    #expect(args.contains("COMPILER_INDEX_STORE_ENABLE=YES"))
-    #expect(args.last == "build-for-testing")
+  let request = Toolchain.Request(
+    generator: .tuist,
+    scheme: "App",
+    configuration: "Debug",
+    workspace: "App.xcworkspace",
+    derivedDataPath: "build",
+    extraSettings: ["COMPILER_INDEX_STORE_ENABLE": "YES"]
+  )
+  let args = Toolchain.xcodebuildArguments(request, action: "build-for-testing")
+  #expect(args.contains("-workspace"))
+  #expect(args.contains("App.xcworkspace"))
+  #expect(args.contains("COMPILER_INDEX_STORE_ENABLE=YES"))
+  #expect(args.last == "build-for-testing")
 }
 
 @Test
 func toolchainXcodegenBuildNamesProjectNeverAutoDiscovers() {
-    let request = Toolchain.Request(
-        generator: .xcodegen,
-        scheme: "Helper",
-        configuration: "Release",
-        project: "App.xcodeproj"
-    )
-    let args = Toolchain.buildArguments(request)
-    #expect(args.contains("-project"))
-    #expect(args.contains("App.xcodeproj"))
-    #expect(!args.contains("-workspace"))
-    #expect(args.contains("-scheme"))
-    #expect(args.contains("Helper"))
-    #expect(args.last == "build")
+  let request = Toolchain.Request(
+    generator: .xcodegen,
+    scheme: "Helper",
+    configuration: "Release",
+    project: "App.xcodeproj"
+  )
+  let args = Toolchain.buildArguments(request)
+  #expect(args.contains("-project"))
+  #expect(args.contains("App.xcodeproj"))
+  #expect(!args.contains("-workspace"))
+  #expect(args.contains("-scheme"))
+  #expect(args.contains("Helper"))
+  #expect(args.last == "build")
 }
 
 @Test
 func toolchainXcodegenTestNamesProjectAndAction() {
-    let request = Toolchain.Request(
-        generator: .xcodegen,
-        scheme: "Helper",
-        configuration: "Debug",
-        project: "App.xcodeproj"
-    )
-    let args = Toolchain.xcodebuildArguments(request, action: "test")
-    #expect(args.contains("-project"))
-    #expect(args.contains("App.xcodeproj"))
-    #expect(args.last == "test")
+  let request = Toolchain.Request(
+    generator: .xcodegen,
+    scheme: "Helper",
+    configuration: "Debug",
+    project: "App.xcodeproj"
+  )
+  let args = Toolchain.xcodebuildArguments(request, action: "test")
+  #expect(args.contains("-project"))
+  #expect(args.contains("App.xcodeproj"))
+  #expect(args.last == "test")
 }
 
 @Test
 func toolchainCleanBuildAppendsBothActionsInOrder() {
-    let request = Toolchain.Request(
-        generator: .tuist,
-        scheme: "Agent",
-        configuration: "Debug",
-        workspace: "App.xcworkspace",
-        derivedDataPath: "build/Analyze/DerivedData"
-    )
-    let args = Toolchain.xcodebuildArguments(request, actions: ["clean", "build"])
-    // The swiftlint analyze compiler-log build runs clean then build in one
-    // invocation; both actions go last, in order, after the container and settings.
-    #expect(args.suffix(2) == ["clean", "build"])
-    #expect(args.contains("-workspace"))
-    #expect(args.contains("App.xcworkspace"))
-    #expect(args.contains("-derivedDataPath"))
+  let request = Toolchain.Request(
+    generator: .tuist,
+    scheme: "Agent",
+    configuration: "Debug",
+    workspace: "App.xcworkspace",
+    derivedDataPath: "build/Analyze/DerivedData"
+  )
+  let args = Toolchain.xcodebuildArguments(request, actions: ["clean", "build"])
+  // The swiftlint analyze compiler-log build runs clean then build in one
+  // invocation; both actions go last, in order, after the container and settings.
+  #expect(args.suffix(2) == ["clean", "build"])
+  #expect(args.contains("-workspace"))
+  #expect(args.contains("App.xcworkspace"))
+  #expect(args.contains("-derivedDataPath"))
 }
 
 @Test
 func toolchainTuistBuildWithoutWorkspaceDegradesNotAutoDiscovers() {
-    // A tuist build with no workspace is a programmer error; the assembler must
-    // never emit a bare `build` that lets xcodebuild auto-discover a container.
-    let request = Toolchain.Request(generator: .tuist, scheme: "App")
-    let args = Toolchain.buildArguments(request)
-    #expect(!args.contains("-scheme"))
-    #expect(args == ["-version"])
+  // A tuist build with no workspace is a programmer error; the assembler must
+  // never emit a bare `build` that lets xcodebuild auto-discover a container.
+  let request = Toolchain.Request(generator: .tuist, scheme: "App")
+  let args = Toolchain.buildArguments(request)
+  #expect(!args.contains("-scheme"))
+  #expect(args == ["-version"])
 }
 
 @Test
 func toolchainRejectsSigningSettingInExtraSettings() {
-    // swift-mk owns signing via the XCODE_XCCONFIG_FILE override; a command-line
-    // CODE_SIGN_IDENTITY would out-rank it, so the chokepoint rejects it.
-    let request = Toolchain.Request(
-        generator: .tuist,
-        scheme: "App",
-        workspace: "App.xcworkspace",
-        extraSettings: ["CODE_SIGN_IDENTITY": "Apple Development"]
-    )
-    #expect(Toolchain.forbiddenSigningSetting(in: request) == "CODE_SIGN_IDENTITY")
+  // swift-mk owns signing via the XCODE_XCCONFIG_FILE override; a command-line
+  // CODE_SIGN_IDENTITY would out-rank it, so the chokepoint rejects it.
+  let request = Toolchain.Request(
+    generator: .tuist,
+    scheme: "App",
+    workspace: "App.xcworkspace",
+    extraSettings: ["CODE_SIGN_IDENTITY": "Apple Development"]
+  )
+  #expect(Toolchain.forbiddenSigningSetting(in: request) == "CODE_SIGN_IDENTITY")
 }
 
 @Test
 func toolchainRejectsSigningSettingInExtraArguments() {
-    // A signing setting can also arrive as a bare KEY=value passthrough argument.
-    let request = Toolchain.Request(
-        generator: .tuist,
-        scheme: "App",
-        workspace: "App.xcworkspace",
-        extraArguments: ["-allowProvisioningUpdates", "DEVELOPMENT_TEAM=H3BMXM4W7H"]
-    )
-    #expect(Toolchain.forbiddenSigningSetting(in: request) == "DEVELOPMENT_TEAM")
+  // A signing setting can also arrive as a bare KEY=value passthrough argument.
+  let request = Toolchain.Request(
+    generator: .tuist,
+    scheme: "App",
+    workspace: "App.xcworkspace",
+    extraArguments: ["-allowProvisioningUpdates", "DEVELOPMENT_TEAM=H3BMXM4W7H"]
+  )
+  #expect(Toolchain.forbiddenSigningSetting(in: request) == "DEVELOPMENT_TEAM")
 }
 
 @Test
 func toolchainRejectsSigningSettingCaseInsensitively() {
-    // Matching uppercases the incoming key so an oddly-cased setting is still caught.
-    let request = Toolchain.Request(
-        generator: .tuist,
-        scheme: "App",
-        workspace: "App.xcworkspace",
-        extraSettings: ["Code_Sign_Style": "Manual"]
-    )
-    #expect(Toolchain.forbiddenSigningSetting(in: request) == "Code_Sign_Style")
+  // Matching uppercases the incoming key so an oddly-cased setting is still caught.
+  let request = Toolchain.Request(
+    generator: .tuist,
+    scheme: "App",
+    workspace: "App.xcworkspace",
+    extraSettings: ["Code_Sign_Style": "Manual"]
+  )
+  #expect(Toolchain.forbiddenSigningSetting(in: request) == "Code_Sign_Style")
 }
 
 @Test
 func toolchainAllowsNonSigningSettings() {
-    // Non-signing settings and flags pass through untouched: only signing keys are
-    // forbidden, so packaging and index-store settings still reach xcodebuild.
-    let request = Toolchain.Request(
-        generator: .tuist,
-        scheme: "App",
-        workspace: "App.xcworkspace",
-        extraSettings: [
-            "COMPILER_INDEX_STORE_ENABLE": "YES", "SMC_FAN_HELPER_APP": "/tmp/Helper.app",
-        ],
-        extraArguments: ["-allowProvisioningUpdates"]
-    )
-    #expect(Toolchain.forbiddenSigningSetting(in: request) == nil)
+  // Non-signing settings and flags pass through untouched: only signing keys are
+  // forbidden, so packaging and index-store settings still reach xcodebuild.
+  let request = Toolchain.Request(
+    generator: .tuist,
+    scheme: "App",
+    workspace: "App.xcworkspace",
+    extraSettings: [
+      "COMPILER_INDEX_STORE_ENABLE": "YES", "SMC_FAN_HELPER_APP": "/tmp/Helper.app",
+    ],
+    extraArguments: ["-allowProvisioningUpdates"]
+  )
+  #expect(Toolchain.forbiddenSigningSetting(in: request) == nil)
 }
 
 @Test
 func toolchainBuildReturnsRejectionStatusForSigningSetting() {
-    // The build entry point fails loudly with the rejection status rather than
-    // running xcodebuild when a signing setting is present.
-    let request = Toolchain.Request(
-        generator: .tuist,
-        scheme: "App",
-        workspace: "App.xcworkspace",
-        extraSettings: ["CODE_SIGN_IDENTITY": "Developer ID Application"]
-    )
-    #expect(Toolchain.build(request) == Toolchain.signingOverrideRejectionStatus)
+  // The build entry point fails loudly with the rejection status rather than
+  // running xcodebuild when a signing setting is present.
+  let request = Toolchain.Request(
+    generator: .tuist,
+    scheme: "App",
+    workspace: "App.xcworkspace",
+    extraSettings: ["CODE_SIGN_IDENTITY": "Developer ID Application"]
+  )
+  #expect(Toolchain.build(request) == Toolchain.signingOverrideRejectionStatus)
 }
