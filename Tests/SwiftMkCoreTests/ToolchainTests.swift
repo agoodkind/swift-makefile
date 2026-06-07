@@ -157,3 +157,69 @@ func toolchainTuistBuildWithoutWorkspaceDegradesNotAutoDiscovers() {
     #expect(!args.contains("-scheme"))
     #expect(args == ["-version"])
 }
+
+@Test
+func toolchainRejectsSigningSettingInExtraSettings() {
+    // swift-mk owns signing via the XCODE_XCCONFIG_FILE override; a command-line
+    // CODE_SIGN_IDENTITY would out-rank it, so the chokepoint rejects it.
+    let request = Toolchain.Request(
+        generator: .tuist,
+        scheme: "App",
+        workspace: "App.xcworkspace",
+        extraSettings: ["CODE_SIGN_IDENTITY": "Apple Development"]
+    )
+    #expect(Toolchain.forbiddenSigningSetting(in: request) == "CODE_SIGN_IDENTITY")
+}
+
+@Test
+func toolchainRejectsSigningSettingInExtraArguments() {
+    // A signing setting can also arrive as a bare KEY=value passthrough argument.
+    let request = Toolchain.Request(
+        generator: .tuist,
+        scheme: "App",
+        workspace: "App.xcworkspace",
+        extraArguments: ["-allowProvisioningUpdates", "DEVELOPMENT_TEAM=H3BMXM4W7H"]
+    )
+    #expect(Toolchain.forbiddenSigningSetting(in: request) == "DEVELOPMENT_TEAM")
+}
+
+@Test
+func toolchainRejectsSigningSettingCaseInsensitively() {
+    // Matching uppercases the incoming key so an oddly-cased setting is still caught.
+    let request = Toolchain.Request(
+        generator: .tuist,
+        scheme: "App",
+        workspace: "App.xcworkspace",
+        extraSettings: ["Code_Sign_Style": "Manual"]
+    )
+    #expect(Toolchain.forbiddenSigningSetting(in: request) == "Code_Sign_Style")
+}
+
+@Test
+func toolchainAllowsNonSigningSettings() {
+    // Non-signing settings and flags pass through untouched: only signing keys are
+    // forbidden, so packaging and index-store settings still reach xcodebuild.
+    let request = Toolchain.Request(
+        generator: .tuist,
+        scheme: "App",
+        workspace: "App.xcworkspace",
+        extraSettings: [
+            "COMPILER_INDEX_STORE_ENABLE": "YES", "SMC_FAN_HELPER_APP": "/tmp/Helper.app",
+        ],
+        extraArguments: ["-allowProvisioningUpdates"]
+    )
+    #expect(Toolchain.forbiddenSigningSetting(in: request) == nil)
+}
+
+@Test
+func toolchainBuildReturnsRejectionStatusForSigningSetting() {
+    // The build entry point fails loudly with the rejection status rather than
+    // running xcodebuild when a signing setting is present.
+    let request = Toolchain.Request(
+        generator: .tuist,
+        scheme: "App",
+        workspace: "App.xcworkspace",
+        extraSettings: ["CODE_SIGN_IDENTITY": "Developer ID Application"]
+    )
+    #expect(Toolchain.build(request) == Toolchain.signingOverrideRejectionStatus)
+}

@@ -78,7 +78,7 @@ struct ToolchainRequestOptions: ParsableArguments {
             }
             extra[String(pair[..<equals])] = String(pair[pair.index(after: equals)...])
         }
-        return Toolchain.Request(
+        let request = Toolchain.Request(
             generator: resolvedGenerator,
             scheme: scheme,
             configuration: configuration,
@@ -88,6 +88,13 @@ struct ToolchainRequestOptions: ParsableArguments {
             derivedDataPath: derivedDataPath,
             extraSettings: extra
         )
+        if let key = Toolchain.forbiddenSigningSetting(in: request) {
+            throw ValidationError(
+                "build setting '\(key)' is forbidden; swift-mk owns code signing via "
+                    + "XCODE_XCCONFIG_FILE and a command-line setting would beat it. Remove it "
+                    + "and set the identity and team through the swift-mk signing source.")
+        }
+        return request
     }
 }
 

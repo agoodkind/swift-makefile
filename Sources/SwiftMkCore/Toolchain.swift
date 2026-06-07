@@ -101,6 +101,71 @@ public enum Toolchain {
         }
     }
 
+    // MARK: Signing-setting rejection
+
+    /// The exit status a build returns when a request carries a forbidden signing
+    /// setting. `EX_USAGE` (64) marks a caller error rather than a build failure.
+    static let signingOverrideRejectionStatus: Int32 = 64
+
+    /// xcodebuild build settings that decide code signing. swift-mk owns signing
+    /// through an `XCODE_XCCONFIG_FILE` override, and a command-line `KEY=value`
+    /// out-ranks that override, so a consumer that passed one of these would silently
+    /// beat swift-mk's resolved identity. The chokepoint rejects them on every build
+    /// path instead, closing the override gap for signing the same way `override
+    /// LINT_GATES` closes it for gates. The dead-code coverage build is unaffected: it
+    /// disables signing through `DeadcodeBuildConfig`'s xcconfig, never these
+    /// per-invocation settings. Keys are listed in the canonical uppercase form
+    /// xcodebuild uses; the matcher uppercases the incoming key so an oddly-cased
+    /// setting is still caught.
+    static let forbiddenSigningSettingKeys: Set<String> = [
+        "CODE_SIGN_IDENTITY",
+        "EXPANDED_CODE_SIGN_IDENTITY",
+        "CODE_SIGNING_REQUIRED",
+        "CODE_SIGNING_ALLOWED",
+        "DEVELOPMENT_TEAM",
+        "CODE_SIGN_STYLE",
+        "PROVISIONING_PROFILE",
+        "PROVISIONING_PROFILE_SPECIFIER",
+        "CODE_SIGN_ENTITLEMENTS",
+        "CODE_SIGN_INJECT_BASE_ENTITLEMENTS",
+        "OTHER_CODE_SIGN_FLAGS",
+    ]
+
+    /// The first forbidden signing setting in a request, by its original spelling, or
+    /// nil when none is present. Scans both `extraSettings` keys and any `KEY=value`
+    /// token in `extraArguments`, since a setting can arrive either way. Public so the
+    /// CLI can reject a forbidden setting before it ever reaches a build.
+    public static func forbiddenSigningSetting(in request: Request) -> String? {
+        for key in request.extraSettings.keys.sorted()
+        where forbiddenSigningSettingKeys.contains(key.uppercased()) {
+            return key
+        }
+        for token in request.extraArguments {
+            guard let equals = token.firstIndex(of: "=") else {
+                continue
+            }
+            let key = String(token[..<equals])
+            if forbiddenSigningSettingKeys.contains(key.uppercased()) {
+                return key
+            }
+        }
+        return nil
+    }
+
+    /// Fail the build when a request carries a signing setting that would beat the
+    /// swift-mk override, returning a nonzero status so the build stops loudly. Returns
+    /// nil when the request is clean, so each entry point guards with one line.
+    private static func rejectionForSigningOverride(_ request: Request) -> Int32? {
+        guard let key = forbiddenSigningSetting(in: request) else {
+            return nil
+        }
+        Output.error(
+            "toolchain: build setting '\(key)' is forbidden; swift-mk owns code signing "
+                + "via XCODE_XCCONFIG_FILE and a command-line setting would beat it. Remove it "
+                + "and set the identity and team through the swift-mk signing source.")
+        return signingOverrideRejectionStatus
+    }
+
     // MARK: Build and test
 
     /// Build the scheme. Both generators build with xcodebuild against an explicit
@@ -111,7 +176,10 @@ public enum Toolchain {
     /// Tuist-integrated external SPM dependency (the Automerge-break fix).
     @discardableResult
     public static func build(_ request: Request) -> Int32 {
-        Shell.runForwardingOutput(
+        if let rejection = rejectionForSigningOverride(request) {
+            return rejection
+        }
+        return Shell.runForwardingOutput(
             "xcodebuild", buildArguments(request), environment: signingEnvironment())
     }
 
@@ -139,6 +207,9 @@ public enum Toolchain {
     /// xcodegen path tests the explicit project with xcodebuild.
     @discardableResult
     public static func test(_ request: Request) -> Int32 {
+        if let rejection = rejectionForSigningOverride(request) {
+            return rejection
+        }
         switch request.generator {
         case .tuist:
             return Shell.runForwardingOutput("tuist", tuistTestArguments(request))
@@ -154,7 +225,10 @@ public enum Toolchain {
     /// written under the consumer's `-derivedDataPath`.
     @discardableResult
     public static func buildForTesting(_ request: Request) -> Int32 {
-        Shell.runForwardingOutput(
+        if let rejection = rejectionForSigningOverride(request) {
+            return rejection
+        }
+        return Shell.runForwardingOutput(
             "xcodebuild", xcodebuildArguments(request, action: "build-for-testing"))
     }
 
@@ -163,7 +237,10 @@ public enum Toolchain {
     /// way a real build would.
     @discardableResult
     public static func analyze(_ request: Request) -> Int32 {
-        Shell.runForwardingOutput(
+        if let rejection = rejectionForSigningOverride(request) {
+            return rejection
+        }
+        return Shell.runForwardingOutput(
             "xcodebuild",
             xcodebuildArguments(request, action: "analyze"),
             environment: signingEnvironment()
