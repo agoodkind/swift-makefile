@@ -131,6 +131,24 @@ func toolchainXcodegenTestNamesProjectAndAction() {
 }
 
 @Test
+func toolchainCleanBuildAppendsBothActionsInOrder() {
+    let request = Toolchain.Request(
+        generator: .tuist,
+        scheme: "Agent",
+        configuration: "Debug",
+        workspace: "App.xcworkspace",
+        derivedDataPath: "build/Analyze/DerivedData"
+    )
+    let args = Toolchain.xcodebuildArguments(request, actions: ["clean", "build"])
+    // The swiftlint analyze compiler-log build runs clean then build in one
+    // invocation; both actions go last, in order, after the container and settings.
+    #expect(args.suffix(2) == ["clean", "build"])
+    #expect(args.contains("-workspace"))
+    #expect(args.contains("App.xcworkspace"))
+    #expect(args.contains("-derivedDataPath"))
+}
+
+@Test
 func toolchainTuistBuildWithoutWorkspaceDegradesNotAutoDiscovers() {
     // A tuist build with no workspace is a programmer error; the assembler must
     // never emit a bare `build` that lets xcodebuild auto-discover a container.

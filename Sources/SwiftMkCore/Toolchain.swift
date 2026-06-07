@@ -170,6 +170,24 @@ public enum Toolchain {
         )
     }
 
+    /// Build the scheme writing the full xcodebuild output to `logPath`, optionally
+    /// running `clean` before `build`. The swiftlint analyze flow feeds this compiler
+    /// log to `swiftlint analyze`, so the invocation is captured to disk rather than
+    /// streamed. Applies the signing override like `build`, so the analyze build signs
+    /// the same way a real build would.
+    @discardableResult
+    public static func buildWritingLog(
+        _ request: Request, logPath: String, clean: Bool = false
+    ) -> Int32 {
+        let actions = clean ? ["clean", "build"] : ["build"]
+        return Shell.runWritingOutput(
+            "xcodebuild",
+            xcodebuildArguments(request, actions: actions),
+            toFile: logPath,
+            environment: signingEnvironment()
+        )
+    }
+
     // MARK: Read-only toolchain queries
 
     public static func version() -> String {
@@ -221,20 +239,29 @@ public enum Toolchain {
         ]
     }
 
-    /// xcodebuild argument vector naming an explicit container. A Tuist request
-    /// names its `-workspace`; an xcodegen request names its `-project`.
+    /// xcodebuild argument vector naming an explicit container, for a single action.
     static func xcodebuildArguments(_ request: Request, action: String) -> [String] {
+        xcodebuildArguments(request, actions: [action])
+    }
+
+    /// xcodebuild argument vector naming an explicit container, for one or more
+    /// actions appended in order (for example `clean build`). A Tuist request names
+    /// its `-workspace`; an xcodegen request names its `-project`. A missing container
+    /// degrades to `-version` rather than letting xcodebuild auto-discover.
+    static func xcodebuildArguments(_ request: Request, actions: [String]) -> [String] {
         var args: [String] = []
         switch request.generator {
         case .tuist:
             guard let workspace = request.workspace else {
-                Output.error("toolchain: tuist \(action) requires a workspace path")
+                Output.error(
+                    "toolchain: tuist \(actions.joined(separator: " ")) requires a workspace path")
                 return ["-version"]
             }
             args.append(contentsOf: ["-workspace", workspace])
         case .xcodegen:
             guard let project = request.project else {
-                Output.error("toolchain: xcodegen \(action) requires a project path")
+                Output.error(
+                    "toolchain: xcodegen \(actions.joined(separator: " ")) requires a project path")
                 return ["-version"]
             }
             args.append(contentsOf: ["-project", project])
@@ -249,7 +276,7 @@ public enum Toolchain {
         }
         args.append(contentsOf: request.extraArguments)
         args.append(contentsOf: settingArguments(request.extraSettings))
-        args.append(action)
+        args.append(contentsOf: actions)
         return args
     }
 

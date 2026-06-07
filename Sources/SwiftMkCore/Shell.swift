@@ -95,4 +95,56 @@ public enum Shell {
         process.waitUntilExit()
         return process.terminationStatus
     }
+
+    /// Run a program writing its combined stdout and stderr to a file, returning the
+    /// exit status. Use when a later step reads the full output from disk, such as the
+    /// swiftlint analyze compiler-log build that feeds `swiftlint analyze`. An empty
+    /// `environment` inherits the current process environment unchanged; a non-empty
+    /// one is merged over it.
+    @discardableResult
+    public static func runWritingOutput(
+        _ executable: String,
+        _ arguments: [String],
+        toFile path: String,
+        environment: [String: String] = [:]
+    ) -> Int32 {
+        Output.debug("Shell.runWritingOutput \(executable) \(arguments.joined(separator: " "))")
+        guard FileManager.default.createFile(atPath: path, contents: nil) else {
+            FileHandle.standardError.write(
+                Data("Shell.runWritingOutput: cannot create \(path)\n".utf8))
+            return launchFailureStatus
+        }
+        let outputFile: FileHandle
+        do {
+            outputFile = try FileHandle(forWritingTo: URL(fileURLWithPath: path))
+        } catch {
+            FileHandle.standardError.write(Data("Shell.runWritingOutput: \(error)\n".utf8))
+            return launchFailureStatus
+        }
+        defer {
+            do {
+                try outputFile.close()
+            } catch {
+                Output.error("Shell.runWritingOutput: failed closing \(path): \(error)")
+            }
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = [executable] + arguments
+        if !environment.isEmpty {
+            var merged = ProcessInfo.processInfo.environment
+            for (key, value) in environment { merged[key] = value }
+            process.environment = merged
+        }
+        process.standardOutput = outputFile
+        process.standardError = outputFile
+        do {
+            try process.run()
+        } catch {
+            FileHandle.standardError.write(Data("Shell.runWritingOutput: \(error)\n".utf8))
+            return launchFailureStatus
+        }
+        process.waitUntilExit()
+        return process.terminationStatus
+    }
 }
