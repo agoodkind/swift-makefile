@@ -72,6 +72,39 @@ func scanAllowsBuildToolNameAsData() throws {
     #expect(violations.isEmpty)
 }
 
+// MARK: - Fragile package path fixtures
+
+// Fixtures hold the `.package(path: ...)` call inside a file-scope string, so the call
+// is parsed as string content and the test file itself does not trip the rule.
+private let fragileSelfPathFixture =
+    "let dependency: Package.Dependency = .package(path: \"..\")\n"
+private let robustSelfPathFixture =
+    "let dependency: Package.Dependency = .package(path: \"../.make/dev/iphone-cell-tunnel\")\n"
+
+@Test
+func scanFlagsFragileSelfPackagePath() throws {
+    let temporaryDirectory = try createTemporaryDirectory()
+    let filePath = temporaryDirectory.appendingPathComponent("Manifest.swift").path
+    try fragileSelfPathFixture.write(toFile: filePath, atomically: true, encoding: .utf8)
+
+    let violations = try scan(paths: [filePath], enabledRules: [.fragilePackagePath])
+
+    #expect(violations.count == 1)
+    #expect(violations.first?.rule == .fragilePackagePath)
+}
+
+@Test
+func scanAllowsRobustSymlinkPackagePath() throws {
+    // The worktree-robust form routes through `../.make/dev/<name>`, which is allowed.
+    let temporaryDirectory = try createTemporaryDirectory()
+    let filePath = temporaryDirectory.appendingPathComponent("Manifest.swift").path
+    try robustSelfPathFixture.write(toFile: filePath, atomically: true, encoding: .utf8)
+
+    let violations = try scan(paths: [filePath], enabledRules: [.fragilePackagePath])
+
+    #expect(violations.isEmpty)
+}
+
 private func createTemporaryDirectory() throws -> URL {
     let directoryURL = FileManager.default.temporaryDirectory.appendingPathComponent(
         UUID().uuidString)

@@ -17,6 +17,7 @@ public enum Rule: String, CaseIterable, Sendable {
     case fatalExit = "fatal_exit"
     case forceTry = "force_try"
     case forceUnwrap = "force_unwrap"
+    case fragilePackagePath = "fragile_package_path"
     case ignoredCleanupError = "ignored_cleanup_error"
     case missingBoundaryLog = "missing_boundary_log"
     case missingSectionMark = "missing_section_mark"
@@ -65,6 +66,11 @@ public enum Rule: String, CaseIterable, Sendable {
         case .unroutedBuildTooling:
             return
                 "run the build toolchain through swift-mk's Toolchain, not tuist/xcodegen/xcodebuild directly"
+        case .fragilePackagePath:
+            return
+                "reference the repo through swift-mk's worktree-robust symlink "
+                + "(.package(path: \"../.make/dev/<name>\")), not a bare relative path that "
+                + "breaks in a differently-named worktree"
         }
     }
 }
@@ -123,99 +129,6 @@ public func scan(paths: [String], enabledRules: Set<Rule>) throws -> [Violation]
     }
 
     return violations.sorted()
-}
-
-func isSwiftFile(_ path: String) -> Bool {
-    path.hasSuffix(".swift")
-}
-
-func collectSwiftFiles(paths: [String]) -> [String] {
-    let fileManager = FileManager.default
-    var collectedPaths = Set<String>()
-
-    for inputPath in paths {
-        var isDirectory = ObjCBool(false)
-        if fileManager.fileExists(atPath: inputPath, isDirectory: &isDirectory) {
-            if isDirectory.boolValue {
-                if let enumerator = fileManager.enumerator(atPath: inputPath) {
-                    for case let relativePath as String in enumerator
-                    where isSwiftFile(relativePath) {
-                        collectedPaths.insert("\(inputPath)/\(relativePath)")
-                    }
-                }
-            } else if isSwiftFile(inputPath) {
-                collectedPaths.insert(inputPath)
-            }
-        }
-    }
-
-    return collectedPaths.sorted()
-}
-
-func isTestPath(_ path: String) -> Bool {
-    path.contains("/Tests/") || path.hasSuffix("Tests.swift")
-}
-
-func isCLIEntryPointPath(_ path: String) -> Bool {
-    path.hasSuffix("/main.swift")
-}
-
-func logNeedlePresent(in source: String) -> Bool {
-    let needles = [
-        ".debug(",
-        ".error(",
-        ".info(",
-        ".notice(",
-        ".warning(",
-    ]
-    return needles.contains { needle in
-        source.contains(needle)
-    }
-}
-
-func boundaryNeedlePresent(in source: String) -> Bool {
-    let needles = [
-        "Process(",
-        ".run(",
-        "copyItem(",
-        "moveItem(",
-        "removeItem(",
-        "write(to:",
-        "read(from:",
-        "URLSession",
-        "NWConnection",
-        "NWListener",
-        "register(",
-        "unregister(",
-        "launchctl",
-        "xcodebuild",
-        "open(",
-    ]
-    return needles.contains { needle in
-        source.contains(needle)
-    }
-}
-
-/// Whether a string literal is the name of a build-toolchain executable, used as a
-/// command argument. The match is exact (trimmed): `"xcodebuild"`, `"tuist"`, or
-/// `"xcodegen"`, which is how a process spawn names the program (`Shell.run(
-/// "xcodebuild", ...)`, the `"tuist"` element of an argument array). Exact match,
-/// not prefix, so prose that merely starts with the word, such as an error string
-/// "xcodegen requires --project", does not match. Combined with an invocation-
-/// context check at the call site, this flags spawning the build toolchain, not
-/// mentioning it. The single sanctioned site is swift-mk's own `Toolchain`, which
-/// swift-mk excludes through its own lint config; a consumer has no such file, so
-/// any consumer invocation is a violation with no opt-out.
-func buildToolNeedlePresent(in literal: String) -> Bool {
-    let trimmed = literal.trimmingCharacters(in: .whitespacesAndNewlines)
-    return trimmed == "tuist" || trimmed == "xcodegen" || trimmed == "xcodebuild"
-}
-
-func location(for position: AbsolutePosition, converter: SourceLocationConverter) -> (
-    line: Int, column: Int
-) {
-    let resolved = converter.location(for: position)
-    return (resolved.line, resolved.column)
 }
 
 // MARK: - AuditVisitor
@@ -438,20 +351,44 @@ final class AuditVisitor: SyntaxVisitor {
         visitFatalExit(calledExpression: calledExpression, position: position)
         visitSensitiveLogField(
             source: source, calledExpression: calledExpression, position: position)
+        visitFragilePackagePath(node: node, calledExpression: calledExpression, position: position)
 
         return .visitChildren
+    }
+
+    /// Flag a SwiftPM path dependency that reaches out of its own directory with a bare
+    /// relative path (`.package(path: "..")` or `.package(path: "../../swift-makefile")`).
+    /// SwiftPM derives a path dependency's identity from the directory basename, so such
+    /// a reference breaks the moment the repo is checked out in a worktree not named
+    /// after it. The worktree-robust form routes through the swift-mk-created symlink
+    /// `../.make/dev/<name>`, whose basename is stable regardless of the worktree, so a
+    /// path literal that already contains `/.make/dev/` is allowed.
+    private func visitFragilePackagePath(
+        node: FunctionCallExprSyntax, calledExpression: String, position: AbsolutePosition
+    ) {
+        guard enabledRules.contains(.fragilePackagePath) else {
+            return
+        }
+        guard calledExpression == ".package" || calledExpression.hasSuffix(".package") else {
+            return
+        }
+        for argument in node.arguments where argument.label?.text == "path" {
+            guard let literalNode = argument.expression.as(StringLiteralExprSyntax.self) else {
+                continue
+            }
+            let trimmed = stringLiteralContent(literalNode).trimmingCharacters(
+                in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix(".."), !trimmed.contains("/.make/dev/") {
+                record(.fragilePackagePath, position: position)
+            }
+        }
     }
 
     override func visit(_ node: StringLiteralExprSyntax) -> SyntaxVisitorContinueKind {
         guard enabledRules.contains(.unroutedBuildTooling) else {
             return .visitChildren
         }
-        var literal = ""
-        for segment in node.segments {
-            if let stringSegment = segment.as(StringSegmentSyntax.self) {
-                literal += stringSegment.content.text
-            }
-        }
+        let literal = stringLiteralContent(node)
         if buildToolNeedlePresent(in: literal), isInvocationContext(node) {
             record(.unroutedBuildTooling, position: node.positionAfterSkippingLeadingTrivia)
         }

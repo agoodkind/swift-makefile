@@ -35,6 +35,28 @@ override SWIFT_MK_DEV_DIR := $(shell mkdir -p "$(CURDIR)/.make/dev" && ln -sfn "
 endif
 endif
 
+# Consumer self-reference robustness, the same basename fix as SWIFT_MK_DEV_DIR but for
+# a consumer pointing at its own repo. A nested SwiftPM package (a `Tools/` dev tool)
+# reaches its own root with a path dependency, whose SwiftPM identity is the directory
+# basename; in a worktree not named after the repo that identity is wrong and the
+# nested package fails to resolve. swift-mk derives the canonical repo name from git
+# (the common dir's parent, identical from the main checkout or any linked worktree)
+# and creates `.make/dev/<name>` as a symlink to the repo root. A consumer then writes
+# its self-reference as `.package(path: "../.make/dev/<name>")`, which resolves from any
+# worktree with no env var to set. The swiftcheck-extra `fragile_package_path` rule
+# enforces consumers use that symlink rather than a bare `..`.
+# Only at the repo toplevel: a recursive `make -C <subdir>` (swift-mk's own swiftcheck
+# build) has CURDIR set to the subdir while git still derives the repo name, which would
+# point the symlink at the subdir and clobber the SWIFT_MK_DEV_DIR symlink of the same
+# name. Gating on toplevel keeps the self-symlink a repo-root concern.
+SWIFT_MK_REPO_NAME := $(notdir $(patsubst %/,%,$(dir $(abspath $(shell git -C "$(CURDIR)" rev-parse --git-common-dir 2>/dev/null)))))
+SWIFT_MK_GIT_TOPLEVEL := $(shell git -C "$(CURDIR)" rev-parse --show-toplevel 2>/dev/null)
+ifneq ($(strip $(SWIFT_MK_REPO_NAME)),)
+ifeq ($(abspath $(CURDIR)),$(abspath $(SWIFT_MK_GIT_TOPLEVEL)))
+SWIFT_MK_SELF_LINK := $(shell mkdir -p "$(CURDIR)/.make/dev" && ln -sfn "$(CURDIR)" "$(CURDIR)/.make/dev/$(SWIFT_MK_REPO_NAME)" && printf '%s' "$(CURDIR)/.make/dev/$(SWIFT_MK_REPO_NAME)")
+endif
+endif
+
 SWIFT_MK_LOCAL_SCRIPT_DIR := $(if $(strip $(SWIFT_MK_DEV_DIR)),$(SWIFT_MK_DEV_DIR)/scripts,$(SWIFT_MK_SELF_DIR)/scripts)
 SWIFT_MK_FETCHED_SCRIPT_DIR := $(CURDIR)/.make/scripts
 SWIFT_MK_HELPER_DIR := $(if $(wildcard $(SWIFT_MK_LOCAL_SCRIPT_DIR)/swift-mk-build.sh),$(SWIFT_MK_LOCAL_SCRIPT_DIR),$(SWIFT_MK_FETCHED_SCRIPT_DIR))
@@ -101,6 +123,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	hooks/pre-commit \
 	swiftcheck/Package.swift \
 	swiftcheck/Sources/SwiftCheckCore/Rule.swift \
+	swiftcheck/Sources/SwiftCheckCore/RuleSupport.swift \
 	swiftcheck/Sources/SwiftCheckCore/TopLevelTypeDeclaration.swift \
 	swiftcheck/Sources/swiftcheck-extra/main.swift \
 	swiftcheck/Tests/SwiftCheckCoreTests/SwiftCheckCoreTests.swift \
@@ -294,7 +317,7 @@ SWIFT_LOG_AUDIT_CMD ?=
 SWIFTCHECK_EXTRA_BIN ?=
 SWIFTCHECK_EXTRA_BUILD_REPO ?= $(if $(and $(SWIFT_MK_DEV_DIR),$(wildcard $(SWIFT_MK_DEV_DIR)/swiftcheck/Package.swift)),$(SWIFT_MK_DEV_DIR)/swiftcheck,$(CURDIR)/.make/swiftcheck)
 SWIFTCHECK_EXTRA_BUILD_PRODUCT ?= swiftcheck-extra
-SWIFTCHECK_EXTRA_FLAGS ?= -no_any -no_anyobject -untyped_json -force_unwrap -force_try -silent_try -silent_catch -banned_direct_output -task_detached -sleep_in_production -fatal_exit -sensitive_log_field -missing_boundary_log -ignored_cleanup_error -missing_section_mark -unrouted_build_tooling
+SWIFTCHECK_EXTRA_FLAGS ?= -no_any -no_anyobject -untyped_json -force_unwrap -force_try -silent_try -silent_catch -banned_direct_output -task_detached -sleep_in_production -fatal_exit -sensitive_log_field -missing_boundary_log -ignored_cleanup_error -missing_section_mark -unrouted_build_tooling -fragile_package_path
 SWIFTCHECK_EXTRA_TARGETS ?= $(SWIFTLINT_TARGETS)
 SWIFTCHECK_EXTRA_BASELINE ?= .swiftcheck-extra-baseline.txt
 SWIFTCHECK_EXTRA_DEFAULT_EXCLUDE_PATHS ?=
@@ -303,6 +326,7 @@ SWIFTCHECK_EXTRA_EXCLUDE_PATHS ?=
 LINT_GATES ?= lint-swiftlint lint-format lint-complexity lint-deadcode swiftcheck-extra $(if $(strip $(SWIFT_LOG_AUDIT_CMD)),log-audit,)
 
 export SWIFT_MK_ROOT := $(CURDIR)
+export SWIFT_MK_DEV_DIR
 export SWIFT_MK_HELPER_DIR
 export SWIFT_MK_RECURSIVE_MAKE
 export SWIFT_MK_RECURSIVE_MAKE_ARGS
