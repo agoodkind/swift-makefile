@@ -66,4 +66,33 @@ public enum Shell {
     public static func sh(_ command: String, environment: [String: String] = [:]) -> Result {
         run("/bin/sh", ["-c", command], environment: environment)
     }
+
+    /// Run a program and forward its stdout and stderr to this process's streams,
+    /// returning only the exit status. Use this for long, streaming subprocesses
+    /// such as a build or test run, where the child's output must reach the user
+    /// live rather than being captured and discarded.
+    @discardableResult
+    public static func runForwardingOutput(
+        _ executable: String,
+        _ arguments: [String] = [],
+        environment: [String: String] = [:]
+    ) -> Int32 {
+        Output.debug("Shell.runForwardingOutput \(executable) \(arguments.joined(separator: " "))")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = [executable] + arguments
+        if !environment.isEmpty {
+            var merged = ProcessInfo.processInfo.environment
+            for (key, value) in environment { merged[key] = value }
+            process.environment = merged
+        }
+        do {
+            try process.run()
+        } catch {
+            FileHandle.standardError.write(Data("Shell.runForwardingOutput: \(error)\n".utf8))
+            return launchFailureStatus
+        }
+        process.waitUntilExit()
+        return process.terminationStatus
+    }
 }

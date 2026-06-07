@@ -1,5 +1,5 @@
 //
-//  main.swift
+//  SwiftMk.swift
 //  SwiftMkCLI
 //
 //  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-25.
@@ -26,6 +26,7 @@ struct SwiftMk: ParsableCommand {
             BaselineCommand.self, NoticeCommand.self, Render.self, RenderBatch.self,
             XcodeFileHeader.self, BuildCheck.self, GateToken.self,
             SigningXcconfig.self, SigningIdentity.self,
+            ToolchainCommand.self, BuildToolingAuditCommand.self,
         ]
     )
 }

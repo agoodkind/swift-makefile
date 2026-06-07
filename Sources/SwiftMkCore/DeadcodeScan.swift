@@ -320,8 +320,7 @@ enum DeadcodeScan {
     /// Scheme names from `xcodebuild -list -json`.
     static func discoverSchemes(project: String, isWorkspace: Bool) -> [String] {
         Output.debug("deadcode: listing schemes for \(project)")
-        let flag = isWorkspace ? "-workspace" : "-project"
-        let result = Shell.run("xcodebuild", ["-list", "-json", flag, project])
+        let result = Toolchain.listSchemes(container: project, isWorkspace: isWorkspace)
         if result.status != 0 {
             Output.error("deadcode: xcodebuild -list failed status=\(result.status)")
             return []
