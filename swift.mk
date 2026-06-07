@@ -323,7 +323,10 @@ SWIFTCHECK_EXTRA_BASELINE ?= .swiftcheck-extra-baseline.txt
 SWIFTCHECK_EXTRA_DEFAULT_EXCLUDE_PATHS ?=
 SWIFTCHECK_EXTRA_EXCLUDE_PATHS ?=
 
-LINT_GATES ?= lint-swiftlint lint-format lint-complexity lint-deadcode swiftcheck-extra $(if $(strip $(SWIFT_LOG_AUDIT_CMD)),log-audit,)
+# Framework-owned, not a consumer knob: swift-makefile enforces every gate, so this is
+# `:=` like go-makefile's LINT_GATES, not an overridable `?=`. A consumer cannot drop a
+# gate. log-audit is appended only when the consumer declares SWIFT_LOG_AUDIT_CMD.
+LINT_GATES := lint-swiftlint lint-format lint-complexity lint-deadcode swiftcheck-extra $(if $(strip $(SWIFT_LOG_AUDIT_CMD)),log-audit,)
 
 export SWIFT_MK_ROOT := $(CURDIR)
 export SWIFT_MK_DEV_DIR
