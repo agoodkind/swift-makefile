@@ -19,8 +19,17 @@ SWIFT_MK_SIGNING_PRELUDE = xcc=""; if [ -n "$(strip $(SWIFT_MK_BIN))" ] && [ -x 
 # settings check runs before the build (after generate) and the artifacts check
 # after, both chained with && so a failure fails the build. The artifacts command
 # defaults to `true` so the trailing `&&` always has a right-hand side.
-SWIFT_MK_VERIFY_SETTINGS_CMD = $(if $(and $(strip $(SWIFT_MK_VERIFY_WORKSPACE)),$(strip $(SWIFT_MK_VERIFY_SCHEME))),"$(SWIFT_MK_BIN)" verify-signing settings --workspace "$(SWIFT_MK_VERIFY_WORKSPACE)" --scheme "$(SWIFT_MK_VERIFY_SCHEME)" $(if $(strip $(SWIFT_MK_VERIFY_CONFIGURATION)),--configuration "$(SWIFT_MK_VERIFY_CONFIGURATION)") &&,)
-SWIFT_MK_VERIFY_ARTIFACTS_CMD = $(if $(strip $(SWIFT_MK_VERIFY_SIGNING_PATHS)),"$(SWIFT_MK_BIN)" verify-signing artifacts $(SWIFT_MK_VERIFY_SIGNING_PATHS),true)
+#
+# SWIFT_MK_VERIFY_XCCONFIG names the gitignored local xcconfig the team and
+# identity live in, so verify-signing resolves the same inputs the override uses
+# even when those values arrive as make variables rather than the environment.
+# Without it a -included local.xcconfig leaves the verifier with no team, so it
+# would skip the check instead of enforcing it. The --xcconfig flag parses up to
+# the next option, so for the artifacts check it must follow the positional paths;
+# leading it would swallow the bundle paths.
+SWIFT_MK_VERIFY_XCCONFIG_ARGS = $(if $(strip $(SWIFT_MK_VERIFY_XCCONFIG)),--xcconfig $(SWIFT_MK_VERIFY_XCCONFIG),)
+SWIFT_MK_VERIFY_SETTINGS_CMD = $(if $(and $(strip $(SWIFT_MK_VERIFY_WORKSPACE)),$(strip $(SWIFT_MK_VERIFY_SCHEME))),"$(SWIFT_MK_BIN)" verify-signing settings --workspace "$(SWIFT_MK_VERIFY_WORKSPACE)" --scheme "$(SWIFT_MK_VERIFY_SCHEME)" $(if $(strip $(SWIFT_MK_VERIFY_CONFIGURATION)),--configuration "$(SWIFT_MK_VERIFY_CONFIGURATION)") $(SWIFT_MK_VERIFY_XCCONFIG_ARGS) &&,)
+SWIFT_MK_VERIFY_ARTIFACTS_CMD = $(if $(strip $(SWIFT_MK_VERIFY_SIGNING_PATHS)),"$(SWIFT_MK_BIN)" verify-signing artifacts $(SWIFT_MK_VERIFY_SIGNING_PATHS) $(SWIFT_MK_VERIFY_XCCONFIG_ARGS),true)
 
 build: build-check
 	@$(SWIFT_MK_SIGNING_PRELUDE) \
