@@ -27,6 +27,7 @@ public enum Rule: String, CaseIterable, Sendable {
     case silentTry = "silent_try"
     case sleepInProduction = "sleep_in_production"
     case taskDetached = "task_detached"
+    case unroutedBuildTooling = "unrouted_build_tooling"
     case untypedJSON = "untyped_json"
 
     public var message: String {
@@ -61,6 +62,9 @@ public enum Rule: String, CaseIterable, Sendable {
             return "cleanup paths must not discard errors silently"
         case .missingSectionMark:
             return "add a titled `// MARK: - <section>` divider before this top-level declaration"
+        case .unroutedBuildTooling:
+            return
+                "run the build toolchain through swift-mk's Toolchain, not tuist/xcodegen/xcodebuild directly"
         }
     }
 }
@@ -190,6 +194,21 @@ func boundaryNeedlePresent(in source: String) -> Bool {
     return needles.contains { needle in
         source.contains(needle)
     }
+}
+
+/// Whether a string literal is the name of a build-toolchain executable, used as a
+/// command argument. The match is exact (trimmed): `"xcodebuild"`, `"tuist"`, or
+/// `"xcodegen"`, which is how a process spawn names the program (`Shell.run(
+/// "xcodebuild", ...)`, the `"tuist"` element of an argument array). Exact match,
+/// not prefix, so prose that merely starts with the word, such as an error string
+/// "xcodegen requires --project", does not match. Combined with an invocation-
+/// context check at the call site, this flags spawning the build toolchain, not
+/// mentioning it. The single sanctioned site is swift-mk's own `Toolchain`, which
+/// swift-mk excludes through its own lint config; a consumer has no such file, so
+/// any consumer invocation is a violation with no opt-out.
+func buildToolNeedlePresent(in literal: String) -> Bool {
+    let trimmed = literal.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed == "tuist" || trimmed == "xcodegen" || trimmed == "xcodebuild"
 }
 
 func location(for position: AbsolutePosition, converter: SourceLocationConverter) -> (
@@ -419,6 +438,58 @@ final class AuditVisitor: SyntaxVisitor {
             source: source, calledExpression: calledExpression, position: position)
 
         return .visitChildren
+    }
+
+    override func visit(_ node: StringLiteralExprSyntax) -> SyntaxVisitorContinueKind {
+        guard enabledRules.contains(.unroutedBuildTooling) else {
+            return .visitChildren
+        }
+        var literal = ""
+        for segment in node.segments {
+            if let stringSegment = segment.as(StringSegmentSyntax.self) {
+                literal += stringSegment.content.text
+            }
+        }
+        if buildToolNeedlePresent(in: literal), isInvocationContext(node) {
+            record(.unroutedBuildTooling, position: node.positionAfterSkippingLeadingTrivia)
+        }
+        return .visitChildren
+    }
+
+    /// Whether a string literal sits where a process is spawned: an argument to a
+    /// function call (`Shell.run("xcodebuild", ...)`) or an element of an array
+    /// (`["xcodebuild", "-version"]`, a `process.arguments` vector). This excludes a
+    /// literal used as data, such as a `var generator = "tuist"` default or an enum
+    /// raw value, so the rule flags invocations of the build toolchain, not mentions
+    /// of it.
+    private func isInvocationContext(_ node: StringLiteralExprSyntax) -> Bool {
+        // The wrapper nodes between a literal and its enclosing call are few; this
+        // bounds the climb so a deeply nested literal cannot loop unboundedly.
+        let maxAncestorHops = 8
+        var current: Syntax? = node.parent
+        var hops = 0
+        while let parent = current, hops < maxAncestorHops {
+            // A literal reaches an invocation only when its enclosing expression is a
+            // function call, either a direct argument or an element of an array passed
+            // as an argument. A bare array bound to a variable, such as a needle table,
+            // never reaches a call, so it is data, not an invocation.
+            if parent.is(FunctionCallExprSyntax.self) {
+                return true
+            }
+            // Climb through the wrapper nodes that sit between a literal and the call,
+            // including array nodes; stop at any other syntax (a binding, an
+            // assignment, an operator) so data literals are not treated as invocations.
+            let isWrapper =
+                parent.is(LabeledExprSyntax.self) || parent.is(LabeledExprListSyntax.self)
+                || parent.is(ArrayElementSyntax.self) || parent.is(ArrayElementListSyntax.self)
+                || parent.is(ArrayExprSyntax.self) || parent.is(TupleExprElementListSyntax.self)
+            if !isWrapper {
+                return false
+            }
+            current = parent.parent
+            hops += 1
+        }
+        return false
     }
 
     override func visit(_ node: FunctionDeclSyntax) -> SyntaxVisitorContinueKind {
