@@ -62,6 +62,24 @@ func toolchainTuistTestUsesNativeTuistWithSelectiveTestingDisabled() {
 }
 
 @Test
+func toolchainTuistTestPinsDerivedDataPathWhenSet() {
+    // The test path pins DerivedData to the same place build/coverage use, so
+    // `tuist test` no longer falls back to system DerivedData and desyncs.
+    let request = Toolchain.Request(
+        generator: .tuist,
+        scheme: "App",
+        configuration: "Debug",
+        derivedDataPath: ".derived-data"
+    )
+    let args = Toolchain.tuistTestArguments(request)
+    #expect(
+        args == [
+            "test", "App", "--configuration", "Debug", "--no-selective-testing",
+            "--derived-data-path", ".derived-data",
+        ])
+}
+
+@Test
 func toolchainPassesExtraArgumentsForAnalyze() {
     let request = Toolchain.Request(
         generator: .tuist,

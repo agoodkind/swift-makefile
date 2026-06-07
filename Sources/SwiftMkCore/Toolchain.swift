@@ -308,12 +308,20 @@ public enum Toolchain {
     }
 
     /// Tuist native test argument vector: `tuist test <scheme> --configuration <c>
-    /// --no-selective-testing`. Selective testing otherwise skips the whole suite.
+    /// --no-selective-testing [--derived-data-path <path>]`. Selective testing
+    /// otherwise skips the whole suite. The derived-data path is pinned to the same
+    /// `SWIFT_MK_DERIVED_DATA` the build and coverage paths use, so `tuist test` no
+    /// longer falls back to system DerivedData and desyncs from `build` (the
+    /// xcodegen test path already pins it through `xcodebuildArguments`).
     static func tuistTestArguments(_ request: Request) -> [String] {
-        [
+        var args = [
             "test", request.scheme, "--configuration", request.configuration,
             "--no-selective-testing",
         ]
+        if let derivedDataPath = request.derivedDataPath {
+            args.append(contentsOf: ["--derived-data-path", derivedDataPath])
+        }
+        return args
     }
 
     /// xcodebuild argument vector naming an explicit container, for a single action.
