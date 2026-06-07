@@ -164,8 +164,10 @@ public enum Toolchain {
     @discardableResult
     public static func analyze(_ request: Request) -> Int32 {
         Shell.runForwardingOutput(
-            "xcodebuild", xcodebuildArguments(request, action: "analyze"),
-            environment: signingEnvironment())
+            "xcodebuild",
+            xcodebuildArguments(request, action: "analyze"),
+            environment: signingEnvironment()
+        )
     }
 
     // MARK: Read-only toolchain queries
@@ -180,6 +182,19 @@ public enum Toolchain {
     public static func listSchemes(container: String, isWorkspace: Bool) -> Shell.Result {
         let flag = isWorkspace ? "-workspace" : "-project"
         return Shell.run("xcodebuild", ["-list", "-json", flag, container])
+    }
+
+    /// `xcodebuild -showBuildSettings` for a workspace scheme, captured. A read-only
+    /// query the signing verifier reads; routed here so the chokepoint stays the only
+    /// site that names xcodebuild.
+    public static func showBuildSettings(
+        workspace: String, scheme: String, configuration: String? = nil
+    ) -> Shell.Result {
+        var arguments = ["-showBuildSettings", "-workspace", workspace, "-scheme", scheme]
+        if let configuration {
+            arguments.append(contentsOf: ["-configuration", configuration])
+        }
+        return Shell.run("xcodebuild", arguments)
     }
 
     @discardableResult

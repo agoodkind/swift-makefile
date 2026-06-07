@@ -14,10 +14,20 @@
 # names from the real environment still win inside the binary.
 SWIFT_MK_SIGNING_PRELUDE = xcc=""; if [ -n "$(strip $(SWIFT_MK_BIN))" ] && [ -x "$(SWIFT_MK_BIN)" ]; then xcc="$$(DEVELOPMENT_TEAM="$(DEVELOPMENT_TEAM)" CODE_SIGN_IDENTITY="$(CODE_SIGN_IDENTITY)" CODE_SIGN_STYLE="$(CODE_SIGN_STYLE)" "$(SWIFT_MK_BIN)" signing-xcconfig 2>/dev/null || true)"; fi; if [ -n "$$xcc" ]; then if [ -n "$${XCODE_XCCONFIG_FILE:-}" ]; then echo "swift-build.mk: XCODE_XCCONFIG_FILE already set ($${XCODE_XCCONFIG_FILE}); leaving it, not applying swift-mk signing" >&2; else export XCODE_XCCONFIG_FILE="$$xcc"; fi; fi;
 
+# Optional signature verification. A consumer opts in by setting the variables.
+# Unset means no verification, so these never disturb an existing build. The
+# settings check runs before the build (after generate) and the artifacts check
+# after, both chained with && so a failure fails the build. The artifacts command
+# defaults to `true` so the trailing `&&` always has a right-hand side.
+SWIFT_MK_VERIFY_SETTINGS_CMD = $(if $(and $(strip $(SWIFT_MK_VERIFY_WORKSPACE)),$(strip $(SWIFT_MK_VERIFY_SCHEME))),"$(SWIFT_MK_BIN)" verify-signing settings --workspace "$(SWIFT_MK_VERIFY_WORKSPACE)" --scheme "$(SWIFT_MK_VERIFY_SCHEME)" $(if $(strip $(SWIFT_MK_VERIFY_CONFIGURATION)),--configuration "$(SWIFT_MK_VERIFY_CONFIGURATION)") &&,)
+SWIFT_MK_VERIFY_ARTIFACTS_CMD = $(if $(strip $(SWIFT_MK_VERIFY_SIGNING_PATHS)),"$(SWIFT_MK_BIN)" verify-signing artifacts $(SWIFT_MK_VERIFY_SIGNING_PATHS),true)
+
 build: build-check
 	@$(SWIFT_MK_SIGNING_PRELUDE) \
-		$(if $(strip $(SWIFT_GENERATE_CMD)),$(SWIFT_GENERATE_CMD);,) \
-		$(if $(strip $(SWIFT_BUILD_CMD)),$(SWIFT_BUILD_CMD),{ echo "swift-build.mk: SWIFT_BUILD_CMD is not set" >&2; exit 1; })
+		$(if $(strip $(SWIFT_GENERATE_CMD)),$(SWIFT_GENERATE_CMD) &&,) \
+		$(SWIFT_MK_VERIFY_SETTINGS_CMD) \
+		$(if $(strip $(SWIFT_BUILD_CMD)),$(SWIFT_BUILD_CMD),{ echo "swift-build.mk: SWIFT_BUILD_CMD is not set" >&2; exit 1; }) \
+		&& $(SWIFT_MK_VERIFY_ARTIFACTS_CMD)
 
 # Consumers that define their own `run` set SWIFT_MK_OWN_RUN := 1 before include,
 # so this default does not collide and Make does not warn about overriding it.
@@ -41,7 +51,7 @@ deploy: build
 ifeq ($(strip $(SWIFT_DEPLOY_CMD)),)
 	@echo "swift-build.mk: SWIFT_DEPLOY_CMD is not set"; exit 1
 else
-	@$(SWIFT_MK_SIGNING_PRELUDE) $(SWIFT_DEPLOY_CMD)
+	@$(SWIFT_MK_SIGNING_PRELUDE) $(SWIFT_DEPLOY_CMD) && $(SWIFT_MK_VERIFY_ARTIFACTS_CMD)
 endif
 
 install: deploy

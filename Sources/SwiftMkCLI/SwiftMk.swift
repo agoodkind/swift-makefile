@@ -25,7 +25,7 @@ struct SwiftMk: ParsableCommand {
             Fmt.self, TestCommand.self, Audit.self, LogAudit.self,
             BaselineCommand.self, NoticeCommand.self, Render.self, RenderBatch.self,
             XcodeFileHeader.self, BuildCheck.self, GateToken.self,
-            SigningXcconfig.self, SigningIdentity.self,
+            SigningXcconfig.self, SigningIdentity.self, VerifySigning.self,
             ToolchainCommand.self, BuildToolingAuditCommand.self,
         ]
     )
@@ -222,6 +222,71 @@ struct SigningIdentity: ParsableCommand {
             .trimmingCharacters(in: .whitespaces)
         if !identity.isEmpty {
             Output.log(identity)
+        }
+    }
+}
+
+// MARK: - VerifySigning
+
+/// Verify the build-time signature matches what swift-mk resolves. `settings`
+/// reads `xcodebuild -showBuildSettings` before a build; `artifacts` reads
+/// `codesign` on the produced bundles after.
+struct VerifySigning: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "verify-signing",
+        abstract: "Verify the build-time signature matches what swift-mk resolves.",
+        subcommands: [VerifySigningArtifacts.self, VerifySigningSettings.self]
+    )
+}
+
+// MARK: - VerifySigningArtifacts
+
+struct VerifySigningArtifacts: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "artifacts")
+
+    @Option(
+        name: .customLong("xcconfig"),
+        parsing: .upToNextOption,
+        help: "Local xcconfig paths to read signing values from when unset in the environment."
+    )
+    var xcconfigPaths: [String] = []
+
+    @Argument(help: "Built artifacts (.app bundles or binaries) to verify.")
+    var paths: [String]
+
+    func run() throws {
+        let passed = SigningVerification.verifyArtifacts(
+            paths: paths, localXcconfigPaths: xcconfigPaths)
+        if !passed {
+            throw ExitCode(1)
+        }
+    }
+}
+
+// MARK: - VerifySigningSettings
+
+struct VerifySigningSettings: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "settings")
+
+    @Option(name: .customLong("workspace")) var workspace: String
+    @Option(name: .customLong("scheme")) var scheme: String
+    @Option(name: .customLong("configuration")) var configuration: String?
+
+    @Option(
+        name: .customLong("xcconfig"),
+        parsing: .upToNextOption,
+        help: "Local xcconfig paths to read signing values from when unset in the environment."
+    )
+    var xcconfigPaths: [String] = []
+
+    func run() throws {
+        let passed = SigningVerification.verifySettings(
+            workspace: workspace,
+            scheme: scheme,
+            configuration: configuration,
+            localXcconfigPaths: xcconfigPaths)
+        if !passed {
+            throw ExitCode(1)
         }
     }
 }

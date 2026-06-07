@@ -226,7 +226,9 @@ final class AuditVisitor: SyntaxVisitor {
     private let converter: SourceLocationConverter
     private(set) var violations = Set<Violation>()
 
-    init(path: String, enabledRules: Set<Rule>, converter: SourceLocationConverter) {
+    init(
+        path: String, enabledRules: Set<Rule>, converter: SourceLocationConverter
+    ) {
         self.path = path
         self.enabledRules = enabledRules
         self.converter = converter
@@ -512,7 +514,8 @@ func auditFile(path: String, enabledRules: Set<Rule>) throws -> [Violation] {
     let sourceText = try String(contentsOfFile: path, encoding: .utf8)
     let tree = Parser.parse(source: sourceText)
     let converter = SourceLocationConverter(fileName: path, tree: tree)
-    let visitor = AuditVisitor(path: path, enabledRules: enabledRules, converter: converter)
+    let visitor = AuditVisitor(
+        path: path, enabledRules: enabledRules, converter: converter)
     visitor.walk(tree)
     var violations = visitor.violations
     if enabledRules.contains(.missingSectionMark) {

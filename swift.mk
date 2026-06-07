@@ -112,6 +112,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/DeadcodeBuildConfig.swift \
 	Sources/SwiftMkCore/WitnessFilter.swift \
 	Sources/SwiftMkCore/SigningBuildConfig.swift \
+	Sources/SwiftMkCore/SigningVerification.swift \
 	Sources/SwiftMkCore/Toolchain.swift \
 	Sources/SwiftMkCore/BuildToolingAudit.swift \
 	Sources/SwiftMkCore/Lint.swift \
@@ -132,6 +133,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/IndexCompletenessTests.swift \
 	Tests/SwiftMkCoreTests/WitnessFilterTests.swift \
 	Tests/SwiftMkCoreTests/SigningBuildConfigTests.swift \
+	Tests/SwiftMkCoreTests/SigningVerificationTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainTests.swift \
 	Tests/SwiftMkCoreTests/BuildToolingAuditTests.swift \
 	notices.txt \
