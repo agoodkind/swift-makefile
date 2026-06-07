@@ -208,8 +208,14 @@ struct SigningXcconfig: ParsableCommand {
 
 /// Print the resolved code-signing identity on standard output, so a post-build
 /// `codesign` step (a SwiftPM product that has no xcodebuild signing phase) can
-/// sign with the same identity swift-mk resolves for xcodebuild. Prints nothing
-/// when no identity is set. Reads SWIFT_MK_SIGN_IDENTITY then CODE_SIGN_IDENTITY.
+/// sign with the same identity swift-mk resolves for xcodebuild. Reads
+/// SWIFT_MK_SIGN_IDENTITY then CODE_SIGN_IDENTITY.
+///
+/// When no real identity is set it prints nothing, so a caller never silently signs
+/// ad-hoc, with one carve-out: a SwiftPM package on the compiled-in
+/// `AdHocSigningAllowlist` (an embedded helper the product re-signs) prints the ad-hoc
+/// identity `-` with a stderr audit line. There is no flag or knob; the allowlist is
+/// the only path to ad-hoc and it is gate-protected from mutation.
 struct SigningIdentity: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "signing-identity",
@@ -222,7 +228,15 @@ struct SigningIdentity: ParsableCommand {
             .trimmingCharacters(in: .whitespaces)
         if !identity.isEmpty {
             Output.log(identity)
+            return
         }
+        guard let allowed = AdHocSigningAllowlist.allowedPackageName() else {
+            return
+        }
+        Output.logError(
+            "signing-identity: package '\(allowed)' is on swift-mk's compiled-in ad-hoc "
+                + "allowlist and no real identity is set; using ad-hoc '-'.")
+        Output.log("-")
     }
 }
 
