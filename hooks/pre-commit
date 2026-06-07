@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 set -eu
 
+# swift-mk's ad-hoc signing carve-out is human-only. Refuse a commit that changes
+# AdHocSigningAllowlist.swift so the allowlist cannot be widened in an automated
+# flow. agent-gate already blocks an agent from editing or shell-mutating the file;
+# this is the commit-time backstop. A human making a deliberate change commits with
+# `git commit --no-verify`, which agent-gate forbids agents from using.
+if git diff --cached --name-only --diff-filter=ACM \
+    | grep -qE '(^|/)AdHocSigningAllowlist\.swift$'; then
+    printf '%s\n' \
+        "pre-commit: refusing to commit a change to swift-mk's ad-hoc signing carve-out (AdHocSigningAllowlist.swift)." \
+        "Widening the allowlist must be a deliberate human edit. If that is what this is, commit with: git commit --no-verify" >&2
+    exit 1
+fi
+
 staged=$(git diff --cached --name-only --diff-filter=ACM -- '*.swift' || true)
 [[ -z "${staged}" ]] && exit 0
 
