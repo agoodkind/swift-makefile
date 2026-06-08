@@ -36,7 +36,7 @@ let package = Package(
     .package(
       url: "https://github.com/ileitch/swift-index-store",
       revision: "ed1f232d33b8e03956af0f4206fbd30171a43138"),
-    .package(url: "https://github.com/tuist/XcodeProj.git", from: "8.0.0"),
+    .package(url: "https://github.com/tuist/XcodeProj.git", from: "9.13.0"),
     .package(url: "https://github.com/kylef/PathKit.git", from: "1.0.0"),
   ],
   targets: [
