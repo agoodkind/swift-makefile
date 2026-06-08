@@ -24,7 +24,7 @@ struct SwiftMk: ParsableCommand {
       LintSwiftlintScope.self, SwiftcheckExtra.self, SwiftcheckExtraBin.self,
       Fmt.self, TestCommand.self, Audit.self, LogAudit.self,
       BaselineCommand.self, NoticeCommand.self, Render.self, RenderBatch.self,
-      XcodeFileHeader.self, BuildCheck.self, GateToken.self,
+      XcodeFileHeader.self, BuildCheck.self, BuildCommand.self, GateToken.self,
       SigningXcconfig.self, SigningIdentity.self, VerifySigning.self,
       ToolchainCommand.self, BuildToolingAuditCommand.self,
     ]
@@ -166,6 +166,24 @@ struct BuildCheck: ParsableCommand {
   static let configuration = CommandConfiguration(commandName: "build-check")
 
   func run() throws { try gate(Lint.runBuildCheck) }
+}
+
+// MARK: - BuildCommand
+
+/// `swift-mk build`: the build chokepoint. It runs the lint gates in-process and
+/// then the consumer's configured build command, so a product build cannot run
+/// without the gates. The make `build` target routes here instead of running the
+/// build command on its own.
+struct BuildCommand: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "build",
+    abstract: "Run the lint gates, then the configured build command."
+  )
+
+  func run() throws {
+    let status = Build.gateAndBuild()
+    if status != 0 { throw ExitCode(status) }
+  }
 }
 
 // MARK: - GateToken

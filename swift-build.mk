@@ -31,11 +31,15 @@ SWIFT_MK_VERIFY_XCCONFIG_ARGS = $(if $(strip $(SWIFT_MK_VERIFY_XCCONFIG)),--xcco
 SWIFT_MK_VERIFY_SETTINGS_CMD = $(if $(and $(strip $(SWIFT_MK_VERIFY_WORKSPACE)),$(strip $(SWIFT_MK_VERIFY_SCHEME))),"$(SWIFT_MK_BIN)" verify-signing settings --workspace "$(SWIFT_MK_VERIFY_WORKSPACE)" --scheme "$(SWIFT_MK_VERIFY_SCHEME)" $(if $(strip $(SWIFT_MK_VERIFY_CONFIGURATION)),--configuration "$(SWIFT_MK_VERIFY_CONFIGURATION)") $(SWIFT_MK_VERIFY_XCCONFIG_ARGS) &&,)
 SWIFT_MK_VERIFY_ARTIFACTS_CMD = $(if $(strip $(SWIFT_MK_VERIFY_SIGNING_PATHS)),"$(SWIFT_MK_BIN)" verify-signing artifacts $(SWIFT_MK_VERIFY_SIGNING_PATHS) $(SWIFT_MK_VERIFY_XCCONFIG_ARGS),true)
 
-build: build-check
+# `swift-mk build` is the chokepoint: it runs the lint gates in-process and then
+# the configured SWIFT_BUILD_CMD, so there is no separate recipe step that compiles
+# without gating. It depends only on the binary; the gates run inside it, not as a
+# make prerequisite.
+build: swift-mk-bin
 	@$(SWIFT_MK_SIGNING_PRELUDE) \
 		$(if $(strip $(SWIFT_GENERATE_CMD)),$(SWIFT_GENERATE_CMD) &&,) \
 		$(SWIFT_MK_VERIFY_SETTINGS_CMD) \
-		$(if $(strip $(SWIFT_BUILD_CMD)),$(SWIFT_BUILD_CMD),{ echo "swift-build.mk: SWIFT_BUILD_CMD is not set" >&2; exit 1; }) \
+		"$(SWIFT_MK_BIN)" build \
 		&& $(SWIFT_MK_VERIFY_ARTIFACTS_CMD)
 
 # Consumers that define their own `run` set SWIFT_MK_OWN_RUN := 1 before include,

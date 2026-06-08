@@ -107,6 +107,11 @@ public enum Toolchain {
   /// setting. `EX_USAGE` (64) marks a caller error rather than a build failure.
   static let signingOverrideRejectionStatus: Int32 = 64
 
+  /// The exit status a product build returns when the lint gates fail at the
+  /// chokepoint, so a build that ran around the gates stops nonzero like `make
+  /// check` would.
+  static let gateFailureStatus: Int32 = 1
+
   /// xcodebuild build settings that decide code signing. swift-mk owns signing
   /// through an `XCODE_XCCONFIG_FILE` override, and a command-line `KEY=value`
   /// out-ranks that override, so a consumer that passed one of these would silently
@@ -174,9 +179,28 @@ public enum Toolchain {
   /// it from a known `-derivedDataPath`, and `tuist build` writes to Tuist's own
   /// DerivedData instead. The explicit `-workspace` is what resolves a
   /// Tuist-integrated external SPM dependency (the Automerge-break fix).
+  /// Run the lint gates in-process before a product build, so `swift-mk toolchain
+  /// build` is the single chokepoint that enforces them. A dev tool or a direct
+  /// `swift-mk toolchain build` gates the same as `make build`, because xcodebuild
+  /// is reachable only here, so there is no ungated product build to route around
+  /// the gates. Returns nil when the gates pass (or a bypass token is active) and
+  /// `gateFailureStatus` when they fail, so the caller stops before xcodebuild.
+  /// An Xcode consumer's `make build` routes through this, so it carries no
+  /// separate `build-check` prerequisite and the gates run once. build-for-testing
+  /// and test do not gate, so the dead-code coverage build does not recurse.
+  static func gateRejectionBeforeBuild() -> Int32? {
+    if Lint.runBuildCheck(context: PathContext.current()) {
+      return nil
+    }
+    return gateFailureStatus
+  }
+
   @discardableResult
   public static func build(_ request: Request) -> Int32 {
     if let rejection = rejectionForSigningOverride(request) {
+      return rejection
+    }
+    if let rejection = gateRejectionBeforeBuild() {
       return rejection
     }
     return Shell.runForwardingOutput(
