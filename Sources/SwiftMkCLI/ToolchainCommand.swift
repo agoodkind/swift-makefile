@@ -21,8 +21,8 @@ struct ToolchainCommand: ParsableCommand {
     abstract: "Drive the Xcode build toolchain (tuist/xcodegen/xcodebuild).",
     subcommands: [
       ToolchainGenerate.self, ToolchainInstall.self, ToolchainBuild.self,
-      ToolchainBuildForTesting.self, ToolchainTest.self, ToolchainVersion.self,
-      ToolchainDownloadMetal.self,
+      ToolchainBuildForTesting.self, ToolchainTest.self, ToolchainAnalyze.self,
+      ToolchainVersion.self, ToolchainDownloadMetal.self,
     ]
   )
 }
@@ -132,7 +132,25 @@ struct ToolchainBuild: ParsableCommand {
   static let configuration = CommandConfiguration(commandName: "build")
   @OptionGroup var options: ToolchainRequestOptions
 
-  func run() throws { try toolchainExit(Toolchain.build(options.request())) }
+  @Flag(name: .long, help: "Run `clean` before `build`. Requires --log-path.")
+  var clean = false
+
+  @Option(
+    name: .customLong("log-path"),
+    help: "Write the full xcodebuild output to this file for `swiftlint analyze` to read.")
+  var logPath: String?
+
+  func run() throws {
+    let request = try options.request()
+    if let logPath {
+      try toolchainExit(Toolchain.buildWritingLog(request, logPath: logPath, clean: clean))
+      return
+    }
+    if clean {
+      throw ValidationError("--clean requires --log-path")
+    }
+    try toolchainExit(Toolchain.build(request))
+  }
 }
 
 // MARK: - ToolchainBuildForTesting
@@ -151,6 +169,15 @@ struct ToolchainTest: ParsableCommand {
   @OptionGroup var options: ToolchainRequestOptions
 
   func run() throws { try toolchainExit(Toolchain.test(options.request())) }
+}
+
+// MARK: - ToolchainAnalyze
+
+struct ToolchainAnalyze: ParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "analyze")
+  @OptionGroup var options: ToolchainRequestOptions
+
+  func run() throws { try toolchainExit(Toolchain.analyze(options.request())) }
 }
 
 // MARK: - ToolchainVersion

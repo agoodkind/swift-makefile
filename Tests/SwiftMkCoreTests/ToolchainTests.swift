@@ -80,6 +80,40 @@ func toolchainTuistTestPinsDerivedDataPathWhenSet() {
 }
 
 @Test
+func toolchainTuistTestForwardsExtraSettingsAfterPassthroughSeparator() {
+  // A setting injected at test time (a helper-app path) must reach xcodebuild.
+  // `tuist test` documents `-- <xcodebuild args>` passthrough, so the setting
+  // goes after a single `--`, never before it.
+  let request = Toolchain.Request(
+    generator: .tuist,
+    scheme: "FanCurve",
+    configuration: "Debug",
+    workspace: "FanCurveApp.xcworkspace",
+    derivedDataPath: "build",
+    extraSettings: ["SMC_FAN_HELPER_APP": "/tmp/Helper.app"]
+  )
+  let args = Toolchain.tuistTestArguments(request)
+  #expect(
+    args == [
+      "test", "FanCurve", "--configuration", "Debug", "--no-selective-testing",
+      "--derived-data-path", "build", "--", "SMC_FAN_HELPER_APP=/tmp/Helper.app",
+    ])
+}
+
+@Test
+func toolchainTuistTestOmitsPassthroughSeparatorWithoutSettings() {
+  // No extra settings means no trailing `--`, so the existing zero-setting test
+  // path is unchanged.
+  let request = Toolchain.Request(
+    generator: .tuist,
+    scheme: "App",
+    configuration: "Debug",
+    workspace: "App.xcworkspace"
+  )
+  #expect(!Toolchain.tuistTestArguments(request).contains("--"))
+}
+
+@Test
 func toolchainPassesExtraArgumentsForAnalyze() {
   let request = Toolchain.Request(
     generator: .tuist,
