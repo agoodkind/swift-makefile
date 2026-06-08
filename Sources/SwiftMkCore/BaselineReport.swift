@@ -115,7 +115,8 @@ public enum BaselineReport {
     let totalRemaining = all.reduce(0) { $0 + $1.remaining }
     lines.append("")
     lines.append(
-      "  Done. \(totalRemaining) violation\(totalRemaining == 1 ? "" : "s") across \(count) baseline\(count == 1 ? "" : "s").")
+      "  Done. \(totalRemaining) violation\(totalRemaining == 1 ? "" : "s") across \(count) baseline\(count == 1 ? "" : "s")."
+    )
     return lines
   }
 
