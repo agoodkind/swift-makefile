@@ -396,6 +396,13 @@ export BYPASS_TOKEN_CMD
 export SWIFT_MK_GATE_TOKEN_CMD
 export SWIFT_BUILD_CMD
 export SWIFT_DEADCODE_BUILD_CMD
+# A consumer builds via Xcode when it declares a scheme or a dead-code coverage
+# build; a plain SwiftPM package declares neither. The dead-code gate and the build
+# chokepoint key off this one flag rather than guessing from on-disk project files,
+# so a stray generated .xcodeproj/.xcworkspace (a developer opening Xcode, a manual
+# tuist run) never changes behavior.
+SWIFT_MK_XCODE_BUILD := $(if $(strip $(SWIFT_XCODE_SCHEME))$(strip $(SWIFT_DEADCODE_BUILD_CMD)),1,)
+export SWIFT_MK_XCODE_BUILD
 export SWIFT_TEST_CMD
 export SWIFT_RUN_CMD
 export SWIFT_GENERATE_CMD

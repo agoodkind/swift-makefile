@@ -19,10 +19,10 @@ enum BuildTests {}
 
 @Test
 func buildGatesForSwiftPMConsumerOnly() {
-  // A SwiftPM consumer has no SWIFT_XCODE_SCHEME, so swift-mk build is the gating
-  // chokepoint. An Xcode consumer routes through `swift-mk toolchain build`, which
-  // gates itself, so swift-mk build must not gate again.
-  #expect(Build.shouldGate(xcodeScheme: ""))
-  #expect(Build.shouldGate(xcodeScheme: "   "))
-  #expect(!Build.shouldGate(xcodeScheme: "App"))
+  // A SwiftPM consumer has SWIFT_MK_XCODE_BUILD empty, so swift-mk build is the
+  // gating chokepoint. An Xcode consumer (flag "1") routes through `swift-mk
+  // toolchain build`, which gates itself, so swift-mk build must not gate again.
+  #expect(Build.shouldGate(xcodeBuild: ""))
+  #expect(Build.shouldGate(xcodeBuild: "0"))
+  #expect(!Build.shouldGate(xcodeBuild: "1"))
 }
