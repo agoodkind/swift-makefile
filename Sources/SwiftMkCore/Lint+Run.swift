@@ -167,10 +167,10 @@ extension Lint {
   // MARK: gate chain
 
   @discardableResult
-  public static func runLint(context _: PathContext) -> Bool {
+  public static func runLint(context: PathContext) -> Bool {
     Output.info("lint: running gate chain")
-    // Generate once before the gates. setenv marks SWIFT_MK_GENERATED so the gate
-    // sub-makes inherit it and skip regenerating; a failure here is surfaced and
+    // Generate once before the gates. setenv marks SWIFT_MK_GENERATED so a gate
+    // that still recurses through make inherits it; a failure here is surfaced and
     // stops the chain rather than letting each compile gate fail on missing sources.
     guard ensureGenerated() else {
       Output.log("\n1 check failed: generate")
@@ -180,14 +180,9 @@ extension Lint {
       Env.get(
         "LINT_GATES",
         "lint-swiftlint lint-format lint-complexity lint-deadcode swiftcheck-extra"))
-    let make = Env.get("SWIFT_MK_RECURSIVE_MAKE", Env.get("MAKE", "make"))
-    let makeArgs = Env.words(Env.get("SWIFT_MK_RECURSIVE_MAKE_ARGS"))
     var failed: [String] = []
-    for gate in gates {
-      let result = Shell.run(
-        make, makeArgs + [gate], environment: ["SWIFT_MK_SKIP_FETCH": "1"])
-      Output.emitStandardOutput(result.combined)
-      if result.status != 0 { failed.append(gate) }
+    for gate in gates where !runGate(named: gate, context: context) {
+      failed.append(gate)
     }
     if failed.isEmpty { return true }
 
@@ -201,6 +196,34 @@ extension Lint {
     let noun = failed.count == 1 ? "check" : "checks"
     Output.log("\n\(failed.count) \(noun) failed: \(failed.joined(separator: ", "))")
     return false
+  }
+
+  /// Run one named gate in-process, mapping each canonical gate name to its
+  /// in-process function so the whole chain runs in a single process with no
+  /// recursive make and no env hand-off, the way go-mk's build-check runs its
+  /// gates. A name outside the canonical set falls back to a recursive make
+  /// target, so a consumer can still register a custom gate through LINT_GATES.
+  static func runGate(named gate: String, context: PathContext) -> Bool {
+    Output.debug("lint: running gate \(gate)")
+    switch gate {
+    case "lint-swiftlint":
+      return runSwiftlint(context: context)
+    case "lint-format":
+      return runFormat(context: context)
+    case "lint-complexity":
+      return runComplexity(context: context)
+    case "lint-deadcode":
+      return runDeadcode(context: context)
+    case "swiftcheck-extra":
+      return Swiftcheck.runGate(context: context)
+    default:
+      let make = Env.get("SWIFT_MK_RECURSIVE_MAKE", Env.get("MAKE", "make"))
+      let makeArgs = Env.words(Env.get("SWIFT_MK_RECURSIVE_MAKE_ARGS"))
+      let result = Shell.run(
+        make, makeArgs + [gate], environment: ["SWIFT_MK_SKIP_FETCH": "1"])
+      Output.emitStandardOutput(result.combined)
+      return result.status == 0
+    }
   }
 
   /// Whether the lint bypass is active: BYPASS_LINT holds today's token and
