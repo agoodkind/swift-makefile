@@ -218,7 +218,7 @@ func reportIsNoopReflectsKeyChange() {
 func reportSingleLinesAreNeutral() {
   let lines = BaselineReport.singleLines(
     makeStats(label: "golangci-lint", removed: 2, remaining: 17))
-  #expect(lines == ["golangci-lint baseline", "  2 removed, 17 remaining."])
+  #expect(lines == ["golangci-lint baseline", "  2 removed, 17 violations."])
   assertNoForbiddenTokens(lines.joined(separator: "\n"))
 }
 
@@ -237,7 +237,7 @@ func reportRollupListsEachToolAndSummary() {
   #expect(text.contains("no change"))
   #expect(text.contains("no existing"))
   #expect(text.contains("4 -> 0"))
-  #expect(text.contains("Done. 31 remaining across 4 baselines."))
+  #expect(text.contains("Done. 31 violations across 4 baselines."))
   assertNoForbiddenTokens(text)
 }
 
