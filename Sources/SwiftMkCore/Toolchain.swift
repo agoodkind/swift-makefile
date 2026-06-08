@@ -179,28 +179,15 @@ public enum Toolchain {
   /// it from a known `-derivedDataPath`, and `tuist build` writes to Tuist's own
   /// DerivedData instead. The explicit `-workspace` is what resolves a
   /// Tuist-integrated external SPM dependency (the Automerge-break fix).
-  /// Run the lint gates in-process before a product build, so `swift-mk toolchain
-  /// build` is the single chokepoint that enforces them. A dev tool or a direct
-  /// `swift-mk toolchain build` gates the same as `make build`, because xcodebuild
-  /// is reachable only here, so there is no ungated product build to route around
-  /// the gates. Returns nil when the gates pass (or a bypass token is active) and
-  /// `gateFailureStatus` when they fail, so the caller stops before xcodebuild.
-  /// An Xcode consumer's `make build` routes through this, so it carries no
-  /// separate `build-check` prerequisite and the gates run once. build-for-testing
-  /// and test do not gate, so the dead-code coverage build does not recurse.
-  static func gateRejectionBeforeBuild() -> Int32? {
-    if Lint.runBuildCheck(context: PathContext.current()) {
-      return nil
-    }
-    return gateFailureStatus
-  }
-
+  ///
+  /// This is a pure compile primitive: it does not run the lint gates. The gates
+  /// run once in `swift-mk build` (the build chokepoint), so a `toolchain build`
+  /// invoked as a consumer's `SWIFT_BUILD_CMD`, or a second time for a Metal/helper
+  /// build, never double-gates. A direct `toolchain build` outside `make build` is
+  /// blocked for agents by agent-gate, the same backstop as a raw `swift build`.
   @discardableResult
   public static func build(_ request: Request) -> Int32 {
     if let rejection = rejectionForSigningOverride(request) {
-      return rejection
-    }
-    if let rejection = gateRejectionBeforeBuild() {
       return rejection
     }
     return Shell.runForwardingOutput(

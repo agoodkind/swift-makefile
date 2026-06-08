@@ -15,29 +15,17 @@ import Foundation
 /// gates: `make build` routes here, and there is no separate recipe step that
 /// compiles on its own.
 public enum Build {
-  /// Whether `swift-mk build` runs the gates itself before compiling. It gates for
-  /// a SwiftPM consumer, whose build command is a raw `swift build` with no gate of
-  /// its own. An Xcode consumer's build command routes through `swift-mk toolchain
-  /// build`, which gates in-process at that chokepoint, so gating here as well would
-  /// run the gates twice. `SWIFT_MK_XCODE_BUILD` is `1` for an Xcode consumer and
-  /// empty for a SwiftPM one, so this keys off that exported flag rather than
-  /// guessing from per-consumer build inputs.
-  static func shouldGate(xcodeBuild: String) -> Bool {
-    xcodeBuild != "1"
-  }
-
   /// The exit status returned when `SWIFT_BUILD_CMD` is unset, so a misconfigured
   /// consumer fails loudly rather than silently building nothing.
   static let missingBuildCommandStatus: Int32 = 1
 
-  /// Run the gates (when this is the gating chokepoint), then the configured build
-  /// command with its output forwarded live. Returns the build command's exit
-  /// status, the gate-failure status when the gates fail, or a nonzero status when
-  /// `SWIFT_BUILD_CMD` is unset.
+  /// Run the lint gates once, then the configured build command with its output
+  /// forwarded live. This is the single place every `make build` gates, so the
+  /// build command and any `toolchain build` it calls stay pure compilers and never
+  /// double-gate. Returns the gate-failure status when the gates fail, a nonzero
+  /// status when `SWIFT_BUILD_CMD` is unset, or the build command's exit status.
   public static func gateAndBuild() -> Int32 {
-    if shouldGate(xcodeBuild: Env.get("SWIFT_MK_XCODE_BUILD")),
-      !Lint.runBuildCheck(context: PathContext.current())
-    {
+    if !Lint.runBuildCheck(context: PathContext.current()) {
       return Toolchain.gateFailureStatus
     }
     let command = Env.get("SWIFT_BUILD_CMD")
