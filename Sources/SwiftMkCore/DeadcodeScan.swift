@@ -39,10 +39,25 @@ enum DeadcodeScan {
 
   // MARK: Entry point
 
-  /// Append Xcode dead-code findings to `rawPath`. Does nothing for a SwiftPM-only
-  /// repo. Escalates `GateStatus.last` to a hard-fail status when the repo declares
-  /// an Xcode project the gate cannot scan, so `runDeadcode` fails loudly.
+  /// Whether to run the Xcode dead-code scan. True only for a consumer that
+  /// configures an Xcode build (`SWIFT_MK_XCODE_BUILD == "1"`). A SwiftPM package is
+  /// covered by periphery's package scan, and a stray on-disk project (a developer
+  /// opening Xcode, a manual tuist run) must not force an Xcode scan that has no
+  /// index store to read.
+  static func xcodeScanEnabled(_ flag: String) -> Bool {
+    flag == "1"
+  }
+
+  /// Append Xcode dead-code findings to `rawPath`. Does nothing for a SwiftPM repo.
+  /// Escalates `GateStatus.last` to a hard-fail status when the repo declares an
+  /// Xcode project the gate cannot scan, so `runDeadcode` fails loudly.
   static func appendXcodeFindings(rawPath: String) {
+    guard xcodeScanEnabled(Env.get("SWIFT_MK_XCODE_BUILD")) else {
+      Output.debug(
+        "deadcode: SwiftPM build (SWIFT_MK_XCODE_BUILD unset), skipping Xcode scan; "
+          + "periphery's package scan covers the package")
+      return
+    }
     Output.debug("deadcode: resolving Xcode project shape")
     ensureProjectGenerated()
     switch projectShape() {
