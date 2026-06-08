@@ -22,6 +22,7 @@ struct ToolchainCommand: ParsableCommand {
     subcommands: [
       ToolchainGenerate.self, ToolchainInstall.self, ToolchainBuild.self,
       ToolchainBuildForTesting.self, ToolchainTest.self, ToolchainVersion.self,
+      ToolchainDownloadMetal.self,
     ]
   )
 }
@@ -104,7 +105,14 @@ struct ToolchainGenerate: ParsableCommand {
   static let configuration = CommandConfiguration(commandName: "generate")
   @Option(name: .long) var generator: String = "tuist"
 
-  func run() throws { try toolchainExit(Toolchain.generate(resolveGenerator(generator))) }
+  /// Extra generator flags forwarded verbatim, e.g. `-- --cache-profile none` for a
+  /// consumer whose `tuist generate` needs them. Pass them after `--`.
+  @Argument(help: "Extra generator arguments (after --), e.g. --cache-profile none.")
+  var passthrough: [String] = []
+
+  func run() throws {
+    try toolchainExit(Toolchain.generate(resolveGenerator(generator), extraArguments: passthrough))
+  }
 }
 
 // MARK: - ToolchainInstall
@@ -151,6 +159,14 @@ struct ToolchainVersion: ParsableCommand {
   static let configuration = CommandConfiguration(commandName: "version")
 
   func run() { Output.log(Toolchain.version()) }
+}
+
+// MARK: - ToolchainDownloadMetal
+
+struct ToolchainDownloadMetal: ParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "download-metal")
+
+  func run() throws { try toolchainExit(Toolchain.downloadMetalToolchain()) }
 }
 
 // MARK: - BuildToolingAuditCommand

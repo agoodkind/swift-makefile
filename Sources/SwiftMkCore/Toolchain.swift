@@ -90,14 +90,14 @@ public enum Toolchain {
 
   /// Generate the project (and, for Tuist, the workspace).
   @discardableResult
-  public static func generate(_ generator: Generator) -> Int32 {
+  public static func generate(_ generator: Generator, extraArguments: [String] = []) -> Int32 {
     switch generator {
     case .tuist:
       Output.info("toolchain: tuist generate")
-      return Shell.runForwardingOutput("tuist", ["generate", "--no-open"])
+      return Shell.runForwardingOutput("tuist", ["generate", "--no-open"] + extraArguments)
     case .xcodegen:
       Output.info("toolchain: xcodegen generate")
-      return Shell.runForwardingOutput("xcodegen", ["generate"])
+      return Shell.runForwardingOutput("xcodegen", ["generate"] + extraArguments)
     }
   }
 
@@ -279,7 +279,25 @@ public enum Toolchain {
   // MARK: Read-only toolchain queries
 
   public static func version() -> String {
-    Shell.run("xcodebuild", ["-version"]).stdout
+    func line(_ tool: String, _ arguments: [String]) -> String {
+      let result = Shell.run(tool, arguments)
+      return result.status == 0
+        ? result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        : "\(tool): unavailable"
+    }
+    return [
+      line("swift", ["--version"]),
+      line("xcodebuild", ["-version"]),
+      line("tuist", ["version"]),
+    ].joined(separator: "\n")
+  }
+
+  /// Download Apple's on-demand Metal toolchain via xcodebuild. A consumer that
+  /// compiles `.metal` shaders (which SwiftPM cannot) needs it on a fresh Xcode
+  /// install; routed here so the consumer does not name xcodebuild itself.
+  @discardableResult
+  public static func downloadMetalToolchain() -> Int32 {
+    Shell.runForwardingOutput("xcodebuild", ["-downloadComponent", "MetalToolchain"])
   }
 
   /// `xcodebuild -list -json` for a workspace or project, captured. A read-only
