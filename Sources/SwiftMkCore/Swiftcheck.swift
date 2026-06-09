@@ -15,6 +15,9 @@ import Foundation
 /// Port of `scripts/swift-mk-swiftcheck-extra.sh`.
 public enum Swiftcheck {
   private static let executablePermissions: Int16 = 0o755
+  private static let locationFieldCount = 2
+  private static let toolName = "swiftcheck-extra"
+  private static var locationPattern: Regex<Substring> { /:[0-9]+:[0-9]+:/ }
 
   static func outputPath() -> String {
     let root = Env.get("SWIFT_MK_ROOT", FileManager.default.currentDirectoryPath)
@@ -155,6 +158,8 @@ public enum Swiftcheck {
     context: PathContext
   ) {
     Output.debug("swiftcheck-extra: capturing analyzer findings")
+    Capture.write("", to: rawPath)
+    GateStatus.last = 0
     guard let binary = selectedBin(), FileManager.default.isExecutableFile(atPath: binary)
     else {
       Output.log("swiftcheck-extra: not configured")
@@ -175,6 +180,7 @@ public enum Swiftcheck {
       )
     )
     let result = Shell.run(binary, flags + targets)
+    GateStatus.last = result.status
     Capture.write(result.combined, to: rawPath)
     let normalized = Text.readLines(rawPath).map { Findings.normalizePath($0, context) }
     let excluded = Text.filterExclude(normalized, exclude)
@@ -183,6 +189,66 @@ public enum Swiftcheck {
     } catch {
       Output.error("swiftcheck-extra: could not write findings to \(findingsPath): \(error)")
     }
+  }
+
+  private static func parseFindingLine(_ line: String, context: PathContext) -> Finding? {
+    guard let locationRange = line.firstRange(of: locationPattern) else {
+      return nil
+    }
+
+    let file = String(line[line.startIndex..<locationRange.lowerBound])
+    let coordinateText = line[locationRange].split(separator: ":")
+    guard coordinateText.count == locationFieldCount,
+      let lineNumber = Int(coordinateText[0]),
+      let columnNumber = Int(coordinateText[1])
+    else {
+      return nil
+    }
+
+    var rest = String(line[locationRange.upperBound...])
+    if rest.hasPrefix(" ") {
+      rest.removeFirst()
+    }
+    guard let separatorRange = rest.range(of: ": ") else {
+      return nil
+    }
+
+    let ruleId = String(rest[..<separatorRange.lowerBound])
+    guard !ruleId.isEmpty else {
+      return nil
+    }
+    let message = String(rest[separatorRange.upperBound...])
+
+    return Finding(
+      tool: toolName,
+      ruleId: ruleId,
+      file: Findings.normalizePath(file, context),
+      line: lineNumber,
+      column: columnNumber,
+      severity: .warning,
+      message: message
+    )
+  }
+
+  private static func applyExclude(_ findings: [Finding], exclude: String) -> [Finding] {
+    let includedFiles = Set(Text.filterExclude(findings.map(\.file), exclude))
+    return findings.filter { includedFiles.contains($0.file) }
+  }
+
+  private static func dropGitIgnored(_ findings: [Finding]) -> [Finding] {
+    let files = Set(findings.map(\.file).filter { !$0.isEmpty })
+    let keptFiles = Set(Lint.dropGitIgnored(Array(files)))
+    return findings.filter { $0.file.isEmpty || keptFiles.contains($0.file) }
+  }
+
+  private static func structuredFindings(
+    rawPath: String,
+    exclude: String,
+    context: PathContext
+  ) -> [Finding] {
+    let parsed = Text.readLines(rawPath).compactMap { parseFindingLine($0, context: context) }
+    let excluded = applyExclude(parsed, exclude: exclude)
+    return dropGitIgnored(excluded)
   }
 
   @discardableResult
@@ -195,17 +261,24 @@ public enum Swiftcheck {
       Env.get("SWIFTCHECK_EXTRA_EXCLUDE_PATHS")
     )
     captureFindings(rawPath: raw, findingsPath: findings, context: context)
-    let spec = BaselineSpec(
-      findingsPath: findings,
-      baselinePath: Env.get("SWIFTCHECK_EXTRA_BASELINE", ".swiftcheck-extra-baseline.txt"),
-      label: "swiftcheck-extra",
-      excludePattern: exclude
-    )
-    return Baseline.runDiffGate(
+    let parsedFindings = structuredFindings(rawPath: raw, exclude: exclude, context: context)
+    let status = GateStatus.last
+    if !StructuredGate.run(
       gateName: "swiftcheck-extra",
-      spec: spec,
+      findings: parsedFindings,
+      baselinePath: Env.get("SWIFTCHECK_EXTRA_BASELINE", ".swiftcheck-extra-baseline.jsonl"),
       remediation: Lint.remediation,
-      context: context
-    )
+    ) {
+      return false
+    }
+    if status != 0, parsedFindings.isEmpty {
+      Output.log("swiftcheck-extra: FAILED")
+      Output.log("  Exit status: \(status)\n")
+      Output.log("Output:")
+      Output.log(Text.readLines(raw).joined(separator: "\n"))
+      Baseline.recordFailedGate("swiftcheck-extra")
+      return false
+    }
+    return true
   }
 }
