@@ -144,3 +144,81 @@ func preservesDuplicateKeyCounts() throws {
   #expect(records.dropFirst().first?.key == key)
   #expect(try #require(counts[key]) == 2)
 }
+
+@Test
+func recordsForMigrationKeepsCurrentOccurrencesForOldKeysOnly() throws {
+  let olderFinding = migrationFinding(
+    ruleId: "no_magic_numbers",
+    file: "Sources/App.swift",
+    line: 10
+  )
+  let fixedFinding = migrationFinding(
+    ruleId: "identifier_name",
+    file: "Sources/App.swift",
+    line: 20
+  )
+  let currentFirstFinding = migrationFinding(
+    ruleId: "no_magic_numbers",
+    file: "Sources/App.swift",
+    line: 30
+  )
+  let currentSecondFinding = migrationFinding(
+    ruleId: "no_magic_numbers",
+    file: "Sources/App.swift",
+    line: 40
+  )
+  let newFinding = migrationFinding(
+    ruleId: "line_length",
+    file: "Sources/App.swift",
+    line: 50
+  )
+  let oldRecords = [
+    BaselineRecord.from(
+      olderFinding,
+      firstAdded: "2026-06-08T10:00:00Z",
+      lastSeen: "2026-06-08T11:00:00Z"
+    ),
+    BaselineRecord.from(
+      olderFinding,
+      firstAdded: "2026-06-08T09:00:00Z",
+      lastSeen: "2026-06-08T11:00:00Z"
+    ),
+    BaselineRecord.from(
+      fixedFinding,
+      firstAdded: "2026-06-08T08:00:00Z",
+      lastSeen: "2026-06-08T11:00:00Z"
+    ),
+  ]
+
+  let records = BaselineMigrationRunner.recordsForMigration(
+    oldRecords: oldRecords,
+    current: [currentFirstFinding, newFinding, currentSecondFinding],
+    now: "2026-06-09T12:00:00Z"
+  )
+  let keptKey = BaselineKey.of(currentFirstFinding)
+  let counts = BaselineStore.keyCounts(records)
+
+  #expect(records.count == 2)
+  #expect(records.map(\.key) == [keptKey, keptKey])
+  #expect(try #require(counts[keptKey]) == 2)
+  #expect(records.allSatisfy { $0.firstAdded == "2026-06-08T09:00:00Z" })
+  #expect(records.allSatisfy { $0.lastSeen == "2026-06-09T12:00:00Z" })
+  #expect(!records.contains { $0.key == BaselineKey.of(newFinding) })
+  #expect(!records.contains { $0.key == BaselineKey.of(fixedFinding) })
+}
+
+private func migrationFinding(
+  ruleId: String,
+  file: String,
+  line: Int
+) -> Finding {
+  Finding(
+    tool: "swiftlint",
+    ruleId: ruleId,
+    file: file,
+    line: line,
+    column: 1,
+    severity: .warning,
+    message: "Example finding"
+  )
+}

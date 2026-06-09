@@ -21,13 +21,13 @@ extension BaselineRunner {
   @discardableResult
   static func writeFrom(
     _ component: Component,
-    capture: (String, String) -> [Finding],
+    capture: (String, String) throws -> [Finding],
     mode: BaselineMode
   ) throws -> BaselineUpdateStats {
     Capture.ensureMakeDir()
     let raw = ".make/\(component.label)-baseline.raw.out"
     let findings = ".make/\(component.label)-baseline.out"
-    let capturedFindings = capture(raw, findings)
+    let capturedFindings = try capture(raw, findings)
     let currentFindings = scopedFindings(capturedFindings, scopePattern: component.scope)
     let baselinePath = Env.get(component.baselineEnv, component.baselineDefault)
     let oldRecords = BaselineStore.read(baselinePath)

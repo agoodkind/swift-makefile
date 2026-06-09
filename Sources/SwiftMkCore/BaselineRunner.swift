@@ -31,6 +31,78 @@ public enum BaselineRunner {
     )
   }
 
+  static func captureStructuredFindings(
+    label: String,
+    rawPath: String,
+    findingsPath: String,
+    context: PathContext
+  ) throws -> [Finding] {
+    switch label {
+    case "swiftlint":
+      return captureSwiftlintFindings(rawPath: rawPath, context: context)
+    case "swiftlint-complexity":
+      return captureComplexityFindings(rawPath: rawPath, context: context)
+    case "periphery":
+      return captureDeadcodeFindings(
+        rawPath: rawPath,
+        findingsPath: findingsPath,
+        context: context
+      )
+    case "swiftcheck-extra":
+      return captureSwiftcheckFindings(
+        rawPath: rawPath,
+        findingsPath: findingsPath,
+        context: context
+      )
+    default:
+      throw BaselineMigration.MigrationError.unsupportedTool(label)
+    }
+  }
+
+  private static func captureSwiftlintFindings(
+    rawPath: String,
+    context: PathContext
+  ) -> [Finding] {
+    Lint.captureSwiftlintStructured(
+      rawPath: rawPath,
+      onlyRules: [],
+      context: context
+    )
+  }
+
+  private static func captureComplexityFindings(
+    rawPath: String,
+    context: PathContext
+  ) -> [Finding] {
+    Lint.captureSwiftlintStructured(
+      rawPath: rawPath,
+      onlyRules: Lint.complexityRules(),
+      context: context
+    )
+  }
+
+  private static func captureDeadcodeFindings(
+    rawPath: String,
+    findingsPath: String,
+    context: PathContext
+  ) -> [Finding] {
+    Lint.captureDeadcode(rawPath: rawPath, findingsPath: findingsPath, context: context)
+    return Lint.parseDeadcodeFindings(findingsPath: findingsPath, context: context)
+  }
+
+  private static func captureSwiftcheckFindings(
+    rawPath: String,
+    findingsPath: String,
+    context: PathContext
+  ) -> [Finding] {
+    Swiftcheck.captureFindings(rawPath: rawPath, findingsPath: findingsPath, context: context)
+    return Swiftcheck.structuredFindings(
+      rawPath: rawPath,
+      exclude: swiftcheckExclude(),
+      context: context
+    )
+  }
+
   @discardableResult
   public static func updateSwiftlint(
     mode: BaselineMode, context: PathContext
@@ -39,10 +111,11 @@ public enum BaselineRunner {
     _ = Lint.runTools(context: context)
     return try writeFrom(
       swiftlintComponent(),
-      capture: { raw, _ in
-        Lint.captureSwiftlintStructured(
+      capture: { raw, findings in
+        try captureStructuredFindings(
+          label: "swiftlint",
           rawPath: raw,
-          onlyRules: [],
+          findingsPath: findings,
           context: context
         )
       },
@@ -56,7 +129,6 @@ public enum BaselineRunner {
   ) throws -> BaselineUpdateStats? {
     guard tokenGatePasses() else { return nil }
     _ = Lint.runTools(context: context)
-    let rules = Lint.complexityRules()
     let component = Component(
       label: "swiftlint-complexity",
       baselineEnv: "SWIFTLINT_COMPLEXITY_BASELINE",
@@ -64,10 +136,11 @@ public enum BaselineRunner {
     )
     return try writeFrom(
       component,
-      capture: { raw, _ in
-        Lint.captureSwiftlintStructured(
+      capture: { raw, findings in
+        try captureStructuredFindings(
+          label: "swiftlint-complexity",
           rawPath: raw,
-          onlyRules: rules,
+          findingsPath: findings,
           context: context
         )
       },
@@ -89,8 +162,12 @@ public enum BaselineRunner {
     return try writeFrom(
       component,
       capture: { raw, findings in
-        Lint.captureDeadcode(rawPath: raw, findingsPath: findings, context: context)
-        return Lint.parseDeadcodeFindings(findingsPath: findings, context: context)
+        try captureStructuredFindings(
+          label: "periphery",
+          rawPath: raw,
+          findingsPath: findings,
+          context: context
+        )
       },
       mode: mode
     )
@@ -110,10 +187,10 @@ public enum BaselineRunner {
     return try writeFrom(
       component,
       capture: { raw, findings in
-        Swiftcheck.captureFindings(rawPath: raw, findingsPath: findings, context: context)
-        return Swiftcheck.structuredFindings(
+        try captureStructuredFindings(
+          label: "swiftcheck-extra",
           rawPath: raw,
-          exclude: swiftcheckExclude(),
+          findingsPath: findings,
           context: context
         )
       },
