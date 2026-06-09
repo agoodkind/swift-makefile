@@ -242,7 +242,7 @@ OSV_SCANNER_ARGS ?= --recursive --allow-no-lockfiles
 
 LINT_CONCURRENCY ?= auto
 
-SWIFT_MK_XCODE_VERSION_MAJOR := $(shell xcodebuild_path=$$(command -v xcodebuild || printf ''); if [ -n "$$xcodebuild_path" ]; then "$$xcodebuild_path" -version | awk '/^Xcode / { split($$2, version_parts, "."); print version_parts[1]; exit }'; else printf 0; fi)
+SWIFT_MK_XCODE_VERSION_MAJOR := $(shell xcodebuild_path=$$(command -v xcodebuild || printf ''); if [ -n "$$xcodebuild_path" ]; then version_output=$$("$$xcodebuild_path" -version 2>/dev/null); printf '%s\n' "$$version_output" | awk '/^Xcode / { split($$2, version_parts, "."); print version_parts[1]; exit }'; else printf 0; fi)
 SWIFT_MK_XCODE_CACHE ?= auto
 SWIFT_MK_XCODE_CACHE_DIAGNOSTICS ?= false
 SWIFT_MK_XCODE_CACHE_AUTO_ENABLED := $(shell awk 'BEGIN { version = "$(SWIFT_MK_XCODE_VERSION_MAJOR)" + 0; if (version >= 26) print "YES"; else print "NO"; }')
