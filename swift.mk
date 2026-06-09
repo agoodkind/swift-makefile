@@ -152,6 +152,8 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/SigningVerification.swift \
 	Sources/SwiftMkCore/Toolchain.swift \
 	Sources/SwiftMkCore/BuildToolingAudit.swift \
+	Sources/SwiftMkCore/Build.swift \
+	Sources/SwiftMkCore/AdHocSigningAllowlist.swift \
 	Sources/SwiftMkCore/Lint.swift \
 	Sources/SwiftMkCore/Lint+Run.swift \
 	Sources/SwiftMkCore/BaselineRunner.swift \
