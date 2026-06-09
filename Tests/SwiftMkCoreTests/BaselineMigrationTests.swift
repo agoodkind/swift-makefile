@@ -33,6 +33,11 @@ private let swiftcheckExtraLine =
   + "explicitly instead of try?\t# swiftcheck-extra:first_added=2026-06-06T23:28:46Z "
   + "last_seen=2026-06-06T23:28:46Z"
 
+private let peripheryLine =
+  "Sources/SMCFanKit/SMCFanKey.swift:10:1: warning: Unused imported module "
+  + "'SMCKit'\t# periphery:first_added=2026-06-06T23:28:45Z "
+  + "last_seen=2026-06-06T23:28:45Z"
+
 @Test
 func migratesSwiftlintComplexityLines() throws {
   let records = try BaselineMigration.recordsFromTextBaseline(
@@ -91,9 +96,26 @@ func skipsHeaderCommentsAndBlankLines() throws {
 }
 
 @Test
-func peripheryLabelIsUnsupported() {
-  #expect(throws: BaselineMigration.MigrationError.unsupportedTool("periphery")) {
-    try BaselineMigration.recordsFromTextBaseline(label: "periphery", lines: [])
+func migratesPeripheryLine() throws {
+  let records = try BaselineMigration.recordsFromTextBaseline(
+    label: "periphery",
+    lines: [peripheryLine]
+  )
+
+  #expect(records.count == 1)
+  let record = try #require(records.first)
+  #expect(record.tool == "periphery")
+  #expect(record.key == "Sources/SMCFanKit/SMCFanKey.swift\tSMCKit")
+  #expect(record.firstAdded == "2026-06-06T23:28:45Z")
+}
+
+@Test
+func rejectsPeripheryLineWithoutSingleQuotedToken() {
+  let line =
+    "Sources/SMCFanKit/SMCFanKey.swift:10:1: warning: Unused imported module SMCKit"
+
+  #expect(throws: BaselineMigration.MigrationError.unparsableLine(line)) {
+    try BaselineMigration.recordsFromTextBaseline(label: "periphery", lines: [line])
   }
 }
 

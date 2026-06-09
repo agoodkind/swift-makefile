@@ -17,6 +17,7 @@ public enum BaselineMigration {
   }
 
   private enum ToolShape {
+    case periphery
     case swiftcheckExtra
     case swiftlint
   }
@@ -37,6 +38,7 @@ public enum BaselineMigration {
   private static var locationPattern: Regex<Substring> { /:[0-9]+:[0-9]+:/ }
   private static let keyValueFieldCount = 2
   private static let locationFieldCount = 2
+  private static let peripheryTool = "periphery"
   private static let swiftlintTool = "swiftlint"
   private static let swiftcheckExtraTool = "swiftcheck-extra"
 
@@ -79,6 +81,8 @@ public enum BaselineMigration {
 
   private static func toolShape(for label: String) throws -> ToolShape {
     switch label {
+    case peripheryTool:
+      return .periphery
     case "swiftlint", "swiftlint-complexity":
       return .swiftlint
     case swiftcheckExtraTool:
@@ -151,6 +155,8 @@ public enum BaselineMigration {
     originalLine: String
   ) throws -> Finding {
     switch toolShape {
+    case .periphery:
+      return try peripheryFinding(from: locatedFinding, originalLine: originalLine)
     case .swiftlint:
       return try swiftlintFinding(from: locatedFinding, originalLine: originalLine)
     case .swiftcheckExtra:
@@ -183,6 +189,27 @@ public enum BaselineMigration {
     )
   }
 
+  private static func peripheryFinding(
+    from locatedFinding: LocatedFinding,
+    originalLine: String
+  ) throws -> Finding {
+    guard let symbol = firstSingleQuotedToken(in: locatedFinding.rest) else {
+      throw MigrationError.unparsableLine(originalLine)
+    }
+
+    return Finding(
+      tool: peripheryTool,
+      ruleId: "",
+      file: locatedFinding.file,
+      line: locatedFinding.line,
+      column: locatedFinding.column,
+      severity: .warning,
+      message: locatedFinding.rest,
+      usr: nil,
+      symbol: symbol
+    )
+  }
+
   private static func swiftcheckExtraFinding(
     from locatedFinding: LocatedFinding,
     originalLine: String
@@ -200,6 +227,19 @@ public enum BaselineMigration {
       severity: .warning,
       message: locatedFinding.rest
     )
+  }
+
+  private static func firstSingleQuotedToken(in text: String) -> String? {
+    guard let openIndex = text.firstIndex(of: "'") else {
+      return nil
+    }
+
+    let tokenStart = text.index(after: openIndex)
+    guard let closeIndex = text[tokenStart...].firstIndex(of: "'") else {
+      return nil
+    }
+
+    return String(text[tokenStart..<closeIndex])
   }
 
   private static func lastParenthesizedToken(in text: String) -> String? {

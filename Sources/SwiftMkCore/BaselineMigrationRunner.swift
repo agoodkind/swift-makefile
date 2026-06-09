@@ -31,6 +31,7 @@ public enum BaselineMigrationRunner {
     ".swiftlint-complexity-baseline.txt"
   private static let swiftcheckExtraDefaultTxtPath =
     ".swiftcheck-extra-baseline.txt"
+  private static let peripheryDefaultTxtPath = ".periphery-baseline.txt"
 
   private static let textTools = [
     Tool(
@@ -47,6 +48,11 @@ public enum BaselineMigrationRunner {
       label: "swiftcheck-extra",
       baselineEnv: "SWIFTCHECK_EXTRA_BASELINE",
       defaultTxtPath: swiftcheckExtraDefaultTxtPath
+    ),
+    Tool(
+      label: "periphery",
+      baselineEnv: "PERIPHERY_BASELINE",
+      defaultTxtPath: peripheryDefaultTxtPath
     ),
   ]
 
