@@ -60,13 +60,6 @@ public enum Lint {
     return concurrency > 0 ? ["SWIFTLINT_NUMBER_OF_THREADS": String(concurrency)] : [:]
   }
 
-  static func baselineEnabled() -> Bool {
-    // Mirror the shell `${BASELINE:-1}`: an unset or empty value becomes "1",
-    // so the baseline diff gate is the default and consults the baseline file.
-    let value = ProcessInfo.processInfo.environment["BASELINE"] ?? ""
-    return !(value.isEmpty ? "1" : value).isEmpty
-  }
-
   // MARK: line ranges
 
   private static let rangeFieldFile = 0
@@ -108,29 +101,6 @@ public enum Lint {
     } catch {
       Output.error("lint: could not write filtered findings to \(findingsPath): \(error)")
     }
-  }
-
-  // MARK: print or gate
-
-  @discardableResult
-  static func printOrGate(
-    gateName: String, spec: BaselineSpec, context: PathContext
-  ) -> Bool {
-    if !baselineEnabled() {
-      let findings = Text.readLines(spec.findingsPath)
-      if !findings.isEmpty {
-        Output.log("\(gateName) findings:")
-        for line in findings { Output.log(Findings.rendered(line, context)) }
-        Baseline.recordFailedGate(gateName)
-        return false
-      }
-      Output.log("\(gateName): OK")
-      Output.log("  Findings: 0")
-      return true
-    }
-    return Baseline.runDiffGate(
-      gateName: gateName, spec: spec, remediation: remediation, context: context
-    )
   }
 
   // MARK: swiftlint
@@ -299,14 +269,76 @@ public enum Lint {
       Baseline.recordFailedGate("lint-deadcode")
       return false
     }
-    let spec = BaselineSpec(
-      findingsPath: findings,
-      baselinePath: Env.get("PERIPHERY_BASELINE", ".periphery-baseline.txt"),
-      label: "periphery",
-      excludePattern: peripheryExclude()
+    let parsedFindings = Text.readLines(findings)
+      .compactMap(parsePeripheryFinding)
+      .map { normalizeFinding($0, context: context) }
+    return StructuredGate.run(
+      gateName: "lint-deadcode",
+      findings: parsedFindings,
+      baselinePath: Env.get("PERIPHERY_BASELINE", ".periphery-baseline.jsonl"),
+      remediation: remediation
     )
-    return printOrGate(gateName: "lint-deadcode", spec: spec, context: context)
   }
+}
+
+private func parsePeripheryFinding(_ line: String) -> Finding? {
+  let fileCaptureGroup = 1
+  let lineCaptureGroup = 2
+  let columnCaptureGroup = 3
+  let messageCaptureGroup = 4
+  let pattern = #"^(.*?):([0-9]+):([0-9]+): (?:warning|error): (.*)$"#
+  guard let expression = try? NSRegularExpression(pattern: pattern),
+    let match = expression.firstMatch(in: line, range: NSRange(line.startIndex..., in: line))
+  else {
+    return nil
+  }
+  guard let fileRange = Range(match.range(at: fileCaptureGroup), in: line),
+    let lineRange = Range(match.range(at: lineCaptureGroup), in: line),
+    let columnRange = Range(match.range(at: columnCaptureGroup), in: line),
+    let messageRange = Range(match.range(at: messageCaptureGroup), in: line),
+    let lineNumber = Int(line[lineRange]),
+    let columnNumber = Int(line[columnRange])
+  else {
+    return nil
+  }
+  let message = String(line[messageRange])
+  return Finding(
+    tool: "periphery",
+    ruleId: "",
+    file: String(line[fileRange]),
+    line: lineNumber,
+    column: columnNumber,
+    severity: .warning,
+    message: message,
+    usr: nil,
+    symbol: firstSingleQuotedToken(in: message)
+  )
+}
+
+private func firstSingleQuotedToken(in text: String) -> String {
+  guard let openIndex = text.firstIndex(of: "'") else {
+    return ""
+  }
+  let tokenStart = text.index(after: openIndex)
+  guard let closeIndex = text[tokenStart...].firstIndex(of: "'") else {
+    return ""
+  }
+  return String(text[tokenStart..<closeIndex])
+}
+
+private func normalizeFinding(_ finding: Finding, context: PathContext) -> Finding {
+  Finding(
+    tool: finding.tool,
+    ruleId: finding.ruleId,
+    file: Findings.normalizePath(finding.file, context),
+    line: finding.line,
+    column: finding.column,
+    severity: finding.severity,
+    message: finding.message,
+    usr: finding.usr,
+    symbol: finding.symbol,
+    hints: finding.hints
+  )
 }
 
 // MARK: - SwiftlintCapture
