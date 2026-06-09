@@ -1,5 +1,5 @@
 name: Setup Swift build env
-description: Select Xcode and install Tuist via mise, with shared Tuist/SwiftPM and build caches.
+description: Select Xcode, install Tuist/XcodeGen and the Swift lint and analysis tools, with shared Tuist/SwiftPM and build caches.
 
 inputs:
   xcode-version:
@@ -29,6 +29,14 @@ runs:
         restore-keys: |
           ${{ runner.os }}-tuist-
 
+    - name: Restore build cache
+      uses: actions/cache@v5
+      with:
+        path: build
+        key: ${{ runner.os }}-build-${{ hashFiles('Sources/**', 'Tests/**', 'Project.swift', 'Workspace.swift', 'Tuist.swift', 'Tuist/Package.swift', 'Tuist/Package.resolved', 'Config/**', 'Scripts/**', 'Templates/**', 'Makefile') }}
+        restore-keys: |
+          ${{ runner.os }}-build-
+
     - name: Install mise and Tuist
       shell: bash
       env:
@@ -45,3 +53,30 @@ runs:
         export PATH="$HOME/.local/share/mise/bin:$HOME/.local/share/mise/shims:$PATH"
         mise install
         tuist version
+
+    - name: Install XcodeGen
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+        fi
+
+        xcodegen --version
+
+    - name: Install Swift lint and analysis tools
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        for tool in swift-format swiftlint periphery osv-scanner; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+                brew install "$tool"
+            fi
+        done
+
+        swift-format --version
+        swiftlint version
+        periphery version
+        osv-scanner --version
