@@ -11,11 +11,7 @@
 public enum BaselineKey {
   public static func of(_ finding: Finding) -> String {
     if finding.tool == "periphery" {
-      if let usr = finding.usr, !usr.isEmpty {
-        return "\(finding.file)\t\(usr)"
-      }
-
-      return "\(finding.file)\t\(finding.ruleId)\t\(finding.symbol ?? "")"
+      return "\(finding.file)\t\(finding.symbol ?? finding.ruleId)"
     }
 
     return "\(finding.file)\t\(finding.ruleId)"

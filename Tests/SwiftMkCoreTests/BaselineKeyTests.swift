@@ -63,7 +63,7 @@ func swiftlintKeyIncludesRuleId() {
 }
 
 @Test
-func peripheryKeyUsesUsrWhenPresent() {
+func peripheryKeyUsesSymbolWhenPresent() {
   let firstFinding = Finding(
     tool: "periphery",
     ruleId: "class",
@@ -97,15 +97,27 @@ func peripheryKeyUsesUsrWhenPresent() {
     usr: "s:3App3FooC",
     symbol: "Foo"
   )
+  let differentUsrFinding = Finding(
+    tool: "periphery",
+    ruleId: "class",
+    file: "/repo/Sources/App/Foo.swift",
+    line: 10,
+    column: 1,
+    severity: .warning,
+    message: "Foo",
+    usr: "s:3App3RenamedFooC",
+    symbol: "Foo"
+  )
 
-  #expect(BaselineKey.of(firstFinding) == "/repo/Sources/App/Foo.swift\ts:3App3FooC")
+  #expect(BaselineKey.of(firstFinding) == "/repo/Sources/App/Foo.swift\tFoo")
   #expect(BaselineKey.of(firstFinding) != BaselineKey.of(secondFinding))
   #expect(BaselineKey.of(firstFinding) == BaselineKey.of(movedFinding))
+  #expect(BaselineKey.of(firstFinding) == BaselineKey.of(differentUsrFinding))
 }
 
 @Test
-func peripheryKeyFallsBackToRuleIdAndSymbolWithoutUsr() {
-  let firstFinding = Finding(
+func peripheryKeyUsesRuleIdWhenSymbolIsMissing() {
+  let symbolFinding = Finding(
     tool: "periphery",
     ruleId: "function",
     file: "/repo/Sources/App/Foo.swift",
@@ -115,17 +127,16 @@ func peripheryKeyFallsBackToRuleIdAndSymbolWithoutUsr() {
     message: "doWork()",
     symbol: "doWork()"
   )
-  let movedFinding = Finding(
+  let fallbackFinding = Finding(
     tool: "periphery",
     ruleId: "function",
     file: "/repo/Sources/App/Foo.swift",
-    line: 44,
-    column: 5,
+    line: 10,
+    column: 1,
     severity: .warning,
-    message: "doWork() moved",
-    symbol: "doWork()"
+    message: "Unnamed function"
   )
 
-  #expect(BaselineKey.of(firstFinding) == "/repo/Sources/App/Foo.swift\tfunction\tdoWork()")
-  #expect(BaselineKey.of(firstFinding) == BaselineKey.of(movedFinding))
+  #expect(BaselineKey.of(symbolFinding) == "/repo/Sources/App/Foo.swift\tdoWork()")
+  #expect(BaselineKey.of(fallbackFinding) == "/repo/Sources/App/Foo.swift\tfunction")
 }
