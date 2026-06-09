@@ -51,6 +51,26 @@ func auditAllowsSwiftBuild() {
 }
 
 @Test
+func runBuildToolingAuditGatesOnEntryMakefile() throws {
+  // The wired gate reads SWIFT_MK_ENTRY_MAKEFILE and fails on a direct invocation,
+  // passes on a clean one, so `make check` enforces the routing contract.
+  let dir = NSTemporaryDirectory() + "swiftmk-audit-gate-" + UUID().uuidString
+  try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+  let dirty = (dir as NSString).appendingPathComponent("Dirty.mk")
+  try "build:\n\txcodebuild -scheme App build\n".write(
+    toFile: dirty, atomically: true, encoding: .utf8)
+  let clean = (dir as NSString).appendingPathComponent("Clean.mk")
+  try "build:\n\t$(SWIFT_MK_BIN) toolchain build --scheme App\n".write(
+    toFile: clean, atomically: true, encoding: .utf8)
+
+  setenv("SWIFT_MK_ENTRY_MAKEFILE", dirty, 1)
+  #expect(!Lint.runBuildToolingAudit(context: PathContext.current()))
+  setenv("SWIFT_MK_ENTRY_MAKEFILE", clean, 1)
+  #expect(Lint.runBuildToolingAudit(context: PathContext.current()))
+  unsetenv("SWIFT_MK_ENTRY_MAKEFILE")
+}
+
+@Test
 func auditScanReportsFindingWithPathAndLine() throws {
   let dir = NSTemporaryDirectory() + "swiftmk-audit-" + UUID().uuidString
   try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)

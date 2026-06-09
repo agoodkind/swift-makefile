@@ -164,6 +164,31 @@ extension Lint {
     return ok
   }
 
+  // MARK: build-tooling audit
+
+  /// Make-side half of the build-tooling ban: fail when the consumer's entry
+  /// Makefile invokes `tuist`/`xcodegen`/`xcodebuild` directly instead of routing
+  /// through `$(SWIFT_MK_BIN) toolchain`. The swiftcheck `unrouted_build_tooling`
+  /// rule stops a Swift dev tool from doing the same; this closes the make side.
+  /// Framework-owned and run unconditionally in `lint`, so a consumer cannot drop
+  /// it through `LINT_GATES`. Scans the entry Makefile (`SWIFT_MK_ENTRY_MAKEFILE`,
+  /// default `Makefile`); a missing file contributes nothing.
+  @discardableResult
+  public static func runBuildToolingAudit(context _: PathContext) -> Bool {
+    let makefile = Env.get("SWIFT_MK_ENTRY_MAKEFILE", "Makefile")
+    let findings = BuildToolingAudit.scan(paths: [makefile])
+    if findings.isEmpty {
+      Output.log("build-tooling-audit: OK")
+      return true
+    }
+    Output.log("build-tooling-audit: FAILED")
+    for finding in findings {
+      Output.logError(finding.rendered)
+    }
+    Baseline.recordFailedGate("build-tooling-audit")
+    return false
+  }
+
   // MARK: gate chain
 
   @discardableResult
@@ -183,6 +208,10 @@ extension Lint {
     var failed: [String] = []
     for gate in gates where !runGate(named: gate, context: context) {
       failed.append(gate)
+    }
+    // Framework-owned, not part of LINT_GATES, so a consumer cannot drop it.
+    if !runBuildToolingAudit(context: context) {
+      failed.append("build-tooling-audit")
     }
     if failed.isEmpty { return true }
 
