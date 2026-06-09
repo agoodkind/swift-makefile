@@ -51,6 +51,17 @@ func auditAllowsSwiftBuild() {
 }
 
 @Test
+func auditAllowsAliasPassedAsEnvValue() {
+  // A variable assignment that threads `$(TUIST)` through as an env value is data,
+  // not an invocation, whether it sits at column 0 or inside a recipe command.
+  #expect(
+    !BuildToolingAudit.lineInvokesToolchain(
+      "LMD_DEV = SWIFT_MK_BIN=\"$(SWIFT_MK_BIN)\" TUIST=\"$(TUIST)\" swift run lmd-dev"))
+  #expect(
+    !BuildToolingAudit.lineInvokesToolchain("\t@FOO=\"$(TUIST)\" some-command --flag"))
+}
+
+@Test
 func runBuildToolingAuditGatesOnEntryMakefile() throws {
   // The wired gate reads SWIFT_MK_ENTRY_MAKEFILE and fails on a direct invocation,
   // passes on a clean one, so `make check` enforces the routing contract.

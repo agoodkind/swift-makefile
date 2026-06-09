@@ -75,13 +75,31 @@ public enum BuildToolingAudit {
   /// is data, not an invocation, so it is not flagged. The sanctioned
   /// `$(SWIFT_MK_BIN) toolchain build` recipe contains no such token.
   static func lineInvokesToolchain(_ line: String) -> Bool {
-    for alias in ["$(TUIST)", "$(XCODEGEN)", "$(XCODEBUILD)"] where line.contains(alias) {
-      return true
-    }
-    // Only a recipe command line (tab-indented) runs a bare executable; a make
-    // variable assignment that mentions the tool name is data.
+    // Only a recipe command line (tab-indented) runs a tool; a make variable
+    // assignment that mentions the tool name or a `$(TUIST)` alias is data, such
+    // as `LMD_DEV = ... TUIST="$(TUIST)" swift run ...`, which passes the alias
+    // through as an env value rather than invoking it.
     guard line.hasPrefix("\t") else {
       return false
+    }
+    // A `$(TUIST)`-style alias invokes the tool only when used as a command, not
+    // when passed as data such as an env value (`FOO="$(TUIST)" cmd`). Flag an
+    // occurrence only when it is not immediately preceded by `=`, `"`, or `'`.
+    for alias in ["$(TUIST)", "$(XCODEGEN)", "$(XCODEBUILD)"] {
+      var searchStart = line.startIndex
+      while let range = line.range(of: alias, range: searchStart..<line.endIndex) {
+        let precededByData: Bool
+        if range.lowerBound == line.startIndex {
+          precededByData = false
+        } else {
+          let before = line[line.index(before: range.lowerBound)]
+          precededByData = before == "=" || before == "\"" || before == "'"
+        }
+        if !precededByData {
+          return true
+        }
+        searchStart = range.upperBound
+      }
     }
     let separators = CharacterSet(charactersIn: " \t;&|()")
     let tokens = line.components(separatedBy: separators)
