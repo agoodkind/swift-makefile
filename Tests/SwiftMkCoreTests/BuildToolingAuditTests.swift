@@ -31,11 +31,13 @@ func auditFlagsTuistAliasInvocation() {
 func auditFlagsBareTuistAndXcodegen() {
   #expect(BuildToolingAudit.lineInvokesToolchain("\ttuist build App"))
   #expect(BuildToolingAudit.lineInvokesToolchain("\txcodegen generate"))
+  #expect(BuildToolingAudit.lineInvokesToolchain("\t\"xcodegen\" generate"))
 }
 
 @Test
 func auditFlagsToolAfterShellSeparator() {
   #expect(BuildToolingAudit.lineInvokesToolchain("\tcd foo && xcodebuild test"))
+  #expect(BuildToolingAudit.lineInvokesToolchain("\t\"$(SWIFT_MK_BIN)\" build; xcodegen generate"))
 }
 
 @Test
@@ -43,11 +45,19 @@ func auditAllowsSanctionedToolchainCall() {
   #expect(
     !BuildToolingAudit.lineInvokesToolchain(
       "\t$(SWIFT_MK_BIN) toolchain build --workspace App.xcworkspace --scheme App"))
+  #expect(
+    !BuildToolingAudit.lineInvokesToolchain(
+      "\t\"$(SWIFT_MK_BIN)\" toolchain generate --generator xcodegen"))
+  #expect(
+    !BuildToolingAudit.lineInvokesToolchain(
+      "\t\"$(SWIFT_MK_BIN)\" toolchain build --generator xcodegen --project X.xcodeproj"))
 }
 
 @Test
 func auditAllowsSwiftBuild() {
   #expect(!BuildToolingAudit.lineInvokesToolchain("\tswift build -c release"))
+  #expect(!BuildToolingAudit.lineInvokesToolchain("\tFOO=tuist swift run"))
+  #expect(!BuildToolingAudit.lineInvokesToolchain("xcodegen generate"))
 }
 
 @Test
@@ -59,6 +69,8 @@ func auditAllowsAliasPassedAsEnvValue() {
       "LMD_DEV = SWIFT_MK_BIN=\"$(SWIFT_MK_BIN)\" TUIST=\"$(TUIST)\" swift run lmd-dev"))
   #expect(
     !BuildToolingAudit.lineInvokesToolchain("\t@FOO=\"$(TUIST)\" some-command --flag"))
+  #expect(
+    !BuildToolingAudit.lineInvokesToolchain("\tFOO=\"$(XCODEGEN)\" cmd"))
 }
 
 @Test

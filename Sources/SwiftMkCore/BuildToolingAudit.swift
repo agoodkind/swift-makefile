@@ -17,11 +17,19 @@ import Foundation
 /// `xcodegen`, or `xcodebuild` only when it bypasses the chokepoint.
 ///
 /// It scans the given make files (the consumer's `Makefile` and any consumer
-/// `*.mk`, not swift-mk's own fetched modules) and reports any recipe or
-/// assignment line that invokes the toolchain directly, by the bare executable
-/// name or a `$(TUIST)`-style alias. There is no opt-out marker and no allowed
-/// form other than going through the binary.
+/// `*.mk`, not swift-mk's own fetched modules) and reports any recipe line that
+/// invokes the toolchain directly, by the bare executable name in command
+/// position or a `$(TUIST)`-style alias. There is no opt-out marker and no
+/// allowed form other than going through the binary.
 public enum BuildToolingAudit {
+  private static let minimumQuotedWordLength = 2
+  private static let uppercaseA: Unicode.Scalar = "A"
+  private static let uppercaseZ: Unicode.Scalar = "Z"
+  private static let lowercaseA: Unicode.Scalar = "a"
+  private static let lowercaseZ: Unicode.Scalar = "z"
+  private static let zeroDigit: Unicode.Scalar = "0"
+  private static let nineDigit: Unicode.Scalar = "9"
+
   /// A finding: the file, the 1-based line, and the offending line text.
   public struct Finding: Sendable, Equatable {
     public let path: String
@@ -67,13 +75,11 @@ public enum BuildToolingAudit {
     return findings
   }
 
-  /// Whether a make line invokes the toolchain, as opposed to naming it as data.
-  /// A line invokes the toolchain when it uses a `$(TUIST)`-style alias, or when
-  /// it is a recipe line (tab-indented) that runs a bare `tuist`/`xcodegen`/
-  /// `xcodebuild` command. A variable assignment whose value is the tool name,
-  /// such as the sanctioned `SWIFT_XCODE_GENERATOR := tuist` generator selector,
-  /// is data, not an invocation, so it is not flagged. The sanctioned
-  /// `$(SWIFT_MK_BIN) toolchain build` recipe contains no such token.
+  /// Whether a make recipe line invokes the toolchain, as opposed to naming it as
+  /// data. A recipe invokes the toolchain when it uses a `$(TUIST)`-style alias,
+  /// or when a shell command segment runs a bare `tuist`/`xcodegen`/`xcodebuild`
+  /// command. A tool name used as a variable value or flag argument, such as
+  /// `--generator xcodegen`, is data, not an invocation, so it is not flagged.
   static func lineInvokesToolchain(_ line: String) -> Bool {
     // Only a recipe command line (tab-indented) runs a tool; a make variable
     // assignment that mentions the tool name or a `$(TUIST)` alias is data, such
@@ -101,9 +107,103 @@ public enum BuildToolingAudit {
         searchStart = range.upperBound
       }
     }
-    let separators = CharacterSet(charactersIn: " \t;&|()")
-    let tokens = line.components(separatedBy: separators)
     let bareTools: Set<String> = ["tuist", "xcodegen", "xcodebuild"]
-    return tokens.contains { bareTools.contains($0) }
+    return commandSegments(in: line).contains { segment in
+      guard let commandWord = commandWord(in: segment) else {
+        return false
+      }
+      return bareTools.contains(commandWord)
+    }
+  }
+
+  private static func commandSegments(in line: String) -> [Substring] {
+    var segments: [Substring] = []
+    var segmentStart = line.startIndex
+    var index = line.startIndex
+    var activeQuote: Character?
+
+    while index < line.endIndex {
+      let character = line[index]
+      if let quote = activeQuote {
+        if character == quote {
+          activeQuote = nil
+        }
+        index = line.index(after: index)
+        continue
+      }
+      if character == "\"" || character == "'" {
+        activeQuote = character
+        index = line.index(after: index)
+        continue
+      }
+      if character == ";" || character == "|" || character == "&" {
+        segments.append(line[segmentStart..<index])
+        let nextIndex = line.index(after: index)
+        if nextIndex < line.endIndex, line[nextIndex] == character {
+          index = line.index(after: nextIndex)
+        } else {
+          index = nextIndex
+        }
+        segmentStart = index
+        continue
+      }
+      index = line.index(after: index)
+    }
+    segments.append(line[segmentStart..<line.endIndex])
+    return segments
+  }
+
+  private static func commandWord(in segment: Substring) -> String? {
+    for rawToken in segment.split(whereSeparator: { $0 == " " || $0 == "\t" }) {
+      let token = stripSurroundingQuotes(String(rawToken))
+      if isAssignmentPrefix(token) {
+        continue
+      }
+      return token
+    }
+    return nil
+  }
+
+  private static func stripSurroundingQuotes(_ word: String) -> String {
+    guard word.count >= minimumQuotedWordLength, let first = word.first, let last = word.last else {
+      return word
+    }
+    if first == "\"", last == "\"" {
+      return String(word.dropFirst().dropLast())
+    }
+    if first == "'", last == "'" {
+      return String(word.dropFirst().dropLast())
+    }
+    return word
+  }
+
+  private static func isAssignmentPrefix(_ word: String) -> Bool {
+    guard let equalsIndex = word.firstIndex(of: "="), equalsIndex != word.startIndex else {
+      return false
+    }
+    let name = word[..<equalsIndex]
+    guard let first = name.unicodeScalars.first, isShellNameStart(first) else {
+      return false
+    }
+    for scalar in name.unicodeScalars.dropFirst() where !isShellNameCharacter(scalar) {
+      return false
+    }
+    return true
+  }
+
+  private static func isShellNameStart(_ scalar: Unicode.Scalar) -> Bool {
+    scalar == "_" || isAsciiLetter(scalar)
+  }
+
+  private static func isShellNameCharacter(_ scalar: Unicode.Scalar) -> Bool {
+    isShellNameStart(scalar) || isAsciiDigit(scalar)
+  }
+
+  private static func isAsciiLetter(_ scalar: Unicode.Scalar) -> Bool {
+    (uppercaseA...uppercaseZ).contains(scalar) || (lowercaseA...lowercaseZ).contains(scalar)
+  }
+
+  private static func isAsciiDigit(_ scalar: Unicode.Scalar) -> Bool {
+    (zeroDigit...nineDigit).contains(scalar)
   }
 }
