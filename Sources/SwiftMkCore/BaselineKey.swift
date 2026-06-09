@@ -11,9 +11,9 @@
 public enum BaselineKey {
   public static func of(_ finding: Finding) -> String {
     if finding.tool == "periphery" {
-      return "\(finding.file)\t\(finding.symbol ?? finding.ruleId)"
+      return "\(finding.file.lowercased())\t\(finding.symbol ?? finding.ruleId)"
     }
 
-    return "\(finding.file)\t\(finding.ruleId)"
+    return "\(finding.file.lowercased())\t\(finding.ruleId)"
   }
 }

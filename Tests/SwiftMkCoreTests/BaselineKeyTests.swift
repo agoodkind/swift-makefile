@@ -63,6 +63,30 @@ func swiftlintKeyIncludesRuleId() {
 }
 
 @Test
+func swiftlintKeyCaseFoldsFilePath() {
+  let firstFinding = Finding(
+    tool: "swiftlint",
+    ruleId: "identifier_name",
+    file: "Sources/Installer/X.swift",
+    line: 12,
+    column: 3,
+    severity: .warning,
+    message: "Identifier name should be longer"
+  )
+  let secondFinding = Finding(
+    tool: "swiftlint",
+    ruleId: "identifier_name",
+    file: "Sources/installer/X.swift",
+    line: 12,
+    column: 3,
+    severity: .warning,
+    message: "Identifier name should be longer"
+  )
+
+  #expect(BaselineKey.of(firstFinding) == BaselineKey.of(secondFinding))
+}
+
+@Test
 func peripheryKeyUsesSymbolWhenPresent() {
   let firstFinding = Finding(
     tool: "periphery",
@@ -109,7 +133,7 @@ func peripheryKeyUsesSymbolWhenPresent() {
     symbol: "Foo"
   )
 
-  #expect(BaselineKey.of(firstFinding) == "/repo/Sources/App/Foo.swift\tFoo")
+  #expect(BaselineKey.of(firstFinding) == "/repo/sources/app/foo.swift\tFoo")
   #expect(BaselineKey.of(firstFinding) != BaselineKey.of(secondFinding))
   #expect(BaselineKey.of(firstFinding) == BaselineKey.of(movedFinding))
   #expect(BaselineKey.of(firstFinding) == BaselineKey.of(differentUsrFinding))
@@ -137,6 +161,6 @@ func peripheryKeyUsesRuleIdWhenSymbolIsMissing() {
     message: "Unnamed function"
   )
 
-  #expect(BaselineKey.of(symbolFinding) == "/repo/Sources/App/Foo.swift\tdoWork()")
-  #expect(BaselineKey.of(fallbackFinding) == "/repo/Sources/App/Foo.swift\tfunction")
+  #expect(BaselineKey.of(symbolFinding) == "/repo/sources/app/foo.swift\tdoWork()")
+  #expect(BaselineKey.of(fallbackFinding) == "/repo/sources/app/foo.swift\tfunction")
 }

@@ -52,7 +52,7 @@ func migratesSwiftlintComplexityLines() throws {
   #expect(firstRecord.rule == "cyclomatic_complexity")
   #expect(firstRecord.firstAdded == "2026-06-06T23:27:35Z")
   #expect(firstRecord.lastSeen == "2026-06-06T23:27:35Z")
-  #expect(firstRecord.key == "Sources/Helper/SMCFanHelper.swift\tcyclomatic_complexity")
+  #expect(firstRecord.key == "sources/helper/smcfanhelper.swift\tcyclomatic_complexity")
 
   let secondRecord = try #require(records.dropFirst().first)
   #expect(secondRecord.tool == "swiftlint")
@@ -60,7 +60,7 @@ func migratesSwiftlintComplexityLines() throws {
   #expect(secondRecord.rule == "function_body_length")
   #expect(secondRecord.firstAdded == "2026-06-06T23:27:35Z")
   #expect(secondRecord.lastSeen == "2026-06-06T23:27:35Z")
-  #expect(secondRecord.key == "Sources/Helper/SMCFanHelper.swift\tfunction_body_length")
+  #expect(secondRecord.key == "sources/helper/smcfanhelper.swift\tfunction_body_length")
 }
 
 @Test
@@ -75,7 +75,7 @@ func migratesSwiftcheckExtraLine() throws {
   #expect(record.tool == "swiftcheck-extra")
   #expect(record.file == "Sources/AppLog/BuildInfo.swift")
   #expect(record.rule == "silent_try")
-  #expect(record.key == "Sources/AppLog/BuildInfo.swift\tsilent_try")
+  #expect(record.key == "sources/applog/buildinfo.swift\tsilent_try")
   #expect(record.firstAdded == "2026-06-06T23:28:46Z")
 }
 
@@ -105,7 +105,7 @@ func migratesPeripheryLine() throws {
   #expect(records.count == 1)
   let record = try #require(records.first)
   #expect(record.tool == "periphery")
-  #expect(record.key == "Sources/SMCFanKit/SMCFanKey.swift\tSMCKit")
+  #expect(record.key == "sources/smcfankit/smcfankey.swift\tSMCKit")
   #expect(record.firstAdded == "2026-06-06T23:28:45Z")
 }
 
@@ -137,7 +137,7 @@ func preservesDuplicateKeyCounts() throws {
     lines: [firstLine, secondLine]
   )
   let counts = BaselineStore.keyCounts(records)
-  let key = "Sources/Helper/SMCFanHelper.swift\tcyclomatic_complexity"
+  let key = "sources/helper/smcfanhelper.swift\tcyclomatic_complexity"
 
   #expect(records.count == 2)
   #expect(records.first?.key == key)
