@@ -27,6 +27,7 @@ swift_mk_build_from_repo() {
     local package_path
     local config
     local bin_path
+    local scratch_path
 
     output_path=$(swift_mk_output_path)
     package_path=$(swift_mk_package_path)
@@ -36,8 +37,15 @@ swift_mk_build_from_repo() {
         return 1
     fi
     mkdir -p "$(dirname "${output_path}")"
-    swift build --package-path "${package_path}" -c "${config}" --product swift-mk
-    bin_path="$(swift build --package-path "${package_path}" -c "${config}" --show-bin-path | tr -d '\r' | tail -n 1)/swift-mk"
+    # Build into a per-consumer scratch directory under the consumer's .make, not
+    # the package's own .build. In dev-dir mode every consumer (and swift-makefile's
+    # own dev work) shares one swift-makefile checkout, so building into that
+    # checkout's .build serializes them all on a single SwiftPM lock and leaves the
+    # binary missing whenever another build holds it. A scratch path under the
+    # consumer isolates each consumer and each worktree.
+    scratch_path="$(dirname "${output_path}")/swift-mk-build"
+    swift build --package-path "${package_path}" --scratch-path "${scratch_path}" -c "${config}" --product swift-mk
+    bin_path="$(swift build --package-path "${package_path}" --scratch-path "${scratch_path}" -c "${config}" --show-bin-path | tr -d '\r' | tail -n 1)/swift-mk"
     cp "${bin_path}" "${output_path}"
     chmod +x "${output_path}"
     # A copied arm64 binary can carry a stale linker signature and a provenance
