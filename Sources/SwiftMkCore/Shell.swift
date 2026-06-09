@@ -16,6 +16,50 @@ public enum Shell {
   /// convention for "command not found".
   private static let launchFailureStatus: Int32 = 127
 
+  /// Number of launch attempts before a spawn failure is treated as terminal.
+  private static let maxLaunchAttempts = 5
+
+  /// Build and start a process, retrying a spurious launch failure with a fresh
+  /// `Process` each attempt. An `NSTask` cannot be relaunched (a second `run()`
+  /// raises an uncaught `NSException`), so each retry builds a new instance through
+  /// `makeProcess`. Foundation occasionally fails `run()` with a transient POSIX
+  /// error (ENOTDIR, EFAULT, or EAGAIN) when many launches race, which a parallel
+  /// test suite reproduces by issuing dozens of concurrent `Process.run()` calls at
+  /// once. Every executable here is a valid absolute path (`/usr/bin/env` or
+  /// `/bin/sh`), so a throw is never a wrong path, only a transient spawn-layer
+  /// race; a bounded retry clears it without masking a real failure. Returns the
+  /// started process, or nil with `launchError` set when every attempt failed.
+  private static func startWithRetry(
+    _ makeProcess: () -> Process, launchError: inout Error?
+  ) -> Process? {
+    for attempt in 1...maxLaunchAttempts {
+      let process = makeProcess()
+      do {
+        try process.run()
+        return process
+      } catch {
+        launchError = error
+        Output.debug(
+          "Shell: launch attempt \(attempt)/\(maxLaunchAttempts) failed, retrying: \(error)")
+        continue
+      }
+    }
+    return nil
+  }
+
+  /// The child environment for a spawned process: nil to inherit the parent
+  /// environment unchanged, or the parent merged with `overrides`.
+  private static func childEnvironment(_ overrides: [String: String]) -> [String: String]? {
+    guard !overrides.isEmpty else {
+      return nil
+    }
+    var merged = ProcessInfo.processInfo.environment
+    for (key, value) in overrides {
+      merged[key] = value
+    }
+    return merged
+  }
+
   public struct Result: Sendable {
     public let status: Int32
     public let stdout: String
@@ -33,22 +77,25 @@ public enum Shell {
     environment: [String: String] = [:]
   ) -> Result {
     Output.debug("Shell.run \(executable) \(arguments.joined(separator: " "))")
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = [executable] + arguments
-    if !environment.isEmpty {
-      var merged = ProcessInfo.processInfo.environment
-      for (key, value) in environment { merged[key] = value }
-      process.environment = merged
-    }
-    let outPipe = Pipe()
-    let errPipe = Pipe()
-    process.standardOutput = outPipe
-    process.standardError = errPipe
-    do {
-      try process.run()
-    } catch {
-      return Result(status: launchFailureStatus, stdout: "", stderr: "\(error)\n")
+    var launchError: Error?
+    let started = startWithRetry(
+      {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = [executable] + arguments
+        if let childEnv = childEnvironment(environment) {
+          process.environment = childEnv
+        }
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        return process
+      }, launchError: &launchError)
+    guard let process = started,
+      let outPipe = process.standardOutput as? Pipe,
+      let errPipe = process.standardError as? Pipe
+    else {
+      let message = launchError.map { "\($0)" } ?? "Shell.run: launch failed"
+      return Result(status: launchFailureStatus, stdout: "", stderr: "\(message)\n")
     }
     // Drain stdout and stderr concurrently. A pipe's kernel buffer is bounded
     // (about 64 KB on macOS), so reading one stream to EOF before the other
@@ -104,18 +151,20 @@ public enum Shell {
     environment: [String: String] = [:]
   ) -> Int32 {
     Output.debug("Shell.runForwardingOutput \(executable) \(arguments.joined(separator: " "))")
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = [executable] + arguments
-    if !environment.isEmpty {
-      var merged = ProcessInfo.processInfo.environment
-      for (key, value) in environment { merged[key] = value }
-      process.environment = merged
-    }
-    do {
-      try process.run()
-    } catch {
-      FileHandle.standardError.write(Data("Shell.runForwardingOutput: \(error)\n".utf8))
+    var launchError: Error?
+    let started = startWithRetry(
+      {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = [executable] + arguments
+        if let childEnv = childEnvironment(environment) {
+          process.environment = childEnv
+        }
+        return process
+      }, launchError: &launchError)
+    guard let process = started else {
+      let message = launchError.map { "\($0)" } ?? "launch failed"
+      FileHandle.standardError.write(Data("Shell.runForwardingOutput: \(message)\n".utf8))
       return launchFailureStatus
     }
     process.waitUntilExit()
@@ -154,20 +203,22 @@ public enum Shell {
         Output.error("Shell.runWritingOutput: failed closing \(path): \(error)")
       }
     }
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = [executable] + arguments
-    if !environment.isEmpty {
-      var merged = ProcessInfo.processInfo.environment
-      for (key, value) in environment { merged[key] = value }
-      process.environment = merged
-    }
-    process.standardOutput = outputFile
-    process.standardError = outputFile
-    do {
-      try process.run()
-    } catch {
-      FileHandle.standardError.write(Data("Shell.runWritingOutput: \(error)\n".utf8))
+    var launchError: Error?
+    let started = startWithRetry(
+      {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = [executable] + arguments
+        if let childEnv = childEnvironment(environment) {
+          process.environment = childEnv
+        }
+        process.standardOutput = outputFile
+        process.standardError = outputFile
+        return process
+      }, launchError: &launchError)
+    guard let process = started else {
+      let message = launchError.map { "\($0)" } ?? "launch failed"
+      FileHandle.standardError.write(Data("Shell.runWritingOutput: \(message)\n".utf8))
       return launchFailureStatus
     }
     process.waitUntilExit()
