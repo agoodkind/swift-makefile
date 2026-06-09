@@ -167,39 +167,12 @@ public enum Lint {
     Output.debug("swiftlint: capturing findings (only: \(onlyRules.joined(separator: ",")))")
     let flags = Env.words(
       Env.get("SWIFTLINT_FLAGS", "--config .make/swiftlint.yml --reporter xcode"))
-    let onlyArgs = onlyRules.flatMap { ["--only-rule", $0] }
-    let swiftlint = Env.get("SWIFTLINT", "swiftlint")
-    let lintFiles = Env.get("LINT_FILES")
-    var result: Shell.Result
-    if !lintFiles.isEmpty {
-      let files = Env.words(lintFiles)
-      var environment = lintEnvironment()
-      for (index, file) in files.enumerated() {
-        environment["SCRIPT_INPUT_FILE_\(index)"] = file
-      }
-      environment["SCRIPT_INPUT_FILE_COUNT"] = String(files.count)
-      result = Shell.run(
-        swiftlint,
-        ["lint", "--strict", "--use-script-input-files"] + onlyArgs + flags,
-        environment: environment
-      )
-    } else {
-      // Apply the exclude pattern and drop git-ignored paths from the target
-      // list so an excluded or untracked path (such as generated Swift) is
-      // never linted. Without this, an explicit file target would still fail
-      // the strict run even though its findings are excluded afterward.
-      let targets = dropGitIgnored(
-        Text.filterExclude(
-          Env.words(Env.get("SWIFTLINT_TARGETS", "Sources Tests Package.swift")),
-          swiftlintExclude()
-        )
-      )
-      result = Shell.run(
-        swiftlint,
-        ["lint", "--strict"] + onlyArgs + flags + targets,
-        environment: lintEnvironment()
-      )
-    }
+    let invocation = SwiftlintCapture.invocation(onlyRules: onlyRules, flags: flags)
+    let result = Shell.run(
+      invocation.executable,
+      invocation.arguments,
+      environment: invocation.environment
+    )
     GateStatus.last = result.status
     Capture.write(result.combined, to: rawPath)
     Capture.extractFindings(
@@ -215,19 +188,17 @@ public enum Lint {
   public static func runSwiftlint(context: PathContext) -> Bool {
     Capture.ensureMakeDir()
     let raw = ".make/swiftlint.raw.out"
-    let findings = ".make/swiftlint.out"
-    captureSwiftlint(rawPath: raw, findingsPath: findings, onlyRules: [], context: context)
+    let findings = SwiftlintCapture.capture(rawPath: raw, onlyRules: [], context: context)
     let status = GateStatus.last
-    let spec = BaselineSpec(
-      findingsPath: findings,
-      baselinePath: Env.get("SWIFTLINT_BASELINE", ".swiftlint-baseline.txt"),
-      label: "swiftlint",
-      excludePattern: swiftlintExclude()
-    )
-    if !printOrGate(gateName: "swiftlint", spec: spec, context: context) {
+    if !StructuredGate.run(
+      gateName: "swiftlint",
+      findings: findings,
+      baselinePath: Env.get("SWIFTLINT_BASELINE", ".swiftlint-baseline.jsonl"),
+      remediation: remediation
+    ) {
       return false
     }
-    if status != 0, Text.readLines(findings).isEmpty {
+    if status != 0, findings.isEmpty {
       Output.log("swiftlint: FAILED")
       Output.log("  Exit status: \(status)\n")
       Output.log("Output:")
@@ -244,21 +215,15 @@ public enum Lint {
   public static func runComplexity(context: PathContext) -> Bool {
     Capture.ensureMakeDir()
     let raw = ".make/lint-complexity.raw.out"
-    let findings = ".make/lint-complexity.out"
-    captureSwiftlint(
-      rawPath: raw,
-      findingsPath: findings,
-      onlyRules: complexityRules(),
-      context: context
-    )
-    let spec = BaselineSpec(
-      findingsPath: findings,
+    let findings = SwiftlintCapture.capture(
+      rawPath: raw, onlyRules: complexityRules(), context: context)
+    return StructuredGate.run(
+      gateName: "lint-complexity",
+      findings: findings,
       baselinePath: Env.get(
-        "SWIFTLINT_COMPLEXITY_BASELINE", ".swiftlint-complexity-baseline.txt"),
-      label: "swiftlint-complexity",
-      excludePattern: swiftlintExclude()
+        "SWIFTLINT_COMPLEXITY_BASELINE", ".swiftlint-complexity-baseline.jsonl"),
+      remediation: remediation
     )
-    return printOrGate(gateName: "lint-complexity", spec: spec, context: context)
   }
 
   // MARK: deadcode (periphery)
@@ -341,6 +306,130 @@ public enum Lint {
       excludePattern: peripheryExclude()
     )
     return printOrGate(gateName: "lint-deadcode", spec: spec, context: context)
+  }
+}
+
+// MARK: - SwiftlintCapture
+
+private enum SwiftlintCapture {
+  struct Invocation {
+    let executable: String
+    let arguments: [String]
+    let environment: [String: String]
+  }
+
+  static func invocation(onlyRules: [String], flags: [String]) -> Invocation {
+    let onlyArgs = onlyRules.flatMap { ["--only-rule", $0] }
+    let swiftlint = Env.get("SWIFTLINT", "swiftlint")
+    let lintFiles = Env.get("LINT_FILES")
+    if !lintFiles.isEmpty {
+      let files = Env.words(lintFiles)
+      var environment = Lint.lintEnvironment()
+      for (index, file) in files.enumerated() {
+        environment["SCRIPT_INPUT_FILE_\(index)"] = file
+      }
+      environment["SCRIPT_INPUT_FILE_COUNT"] = String(files.count)
+      return Invocation(
+        executable: swiftlint,
+        arguments: ["lint", "--strict", "--use-script-input-files"] + onlyArgs + flags,
+        environment: environment
+      )
+    }
+
+    // Keep excluded or git-ignored explicit targets out of swiftlint itself.
+    let targets = Lint.dropGitIgnored(
+      Text.filterExclude(
+        Env.words(Env.get("SWIFTLINT_TARGETS", "Sources Tests Package.swift")),
+        Lint.swiftlintExclude()
+      )
+    )
+    return Invocation(
+      executable: swiftlint,
+      arguments: ["lint", "--strict"] + onlyArgs + flags + targets,
+      environment: Lint.lintEnvironment()
+    )
+  }
+
+  static func capture(rawPath: String, onlyRules: [String], context: PathContext) -> [Finding] {
+    Output.debug(
+      "swiftlint: capturing structured findings (only: \(onlyRules.joined(separator: ",")))")
+    Capture.write("", to: rawPath)
+    let invocation = invocation(onlyRules: onlyRules, flags: structuredFlags())
+    let captured = FindingsSource.swiftlint(
+      executable: invocation.executable,
+      arguments: invocation.arguments,
+      environment: invocation.environment
+    )
+    let result = Shell.run(
+      invocation.executable,
+      invocation.arguments + ["--reporter", "json"],
+      environment: invocation.environment
+    )
+    GateStatus.last = result.status
+    Capture.write(result.combined, to: rawPath)
+
+    let normalized = captured.map { normalize($0, context: context) }
+    let excluded = applyExclude(normalized)
+    let notIgnored = dropGitIgnored(excluded)
+    return applyLineRanges(notIgnored)
+  }
+
+  private static func structuredFlags() -> [String] {
+    let flags = Env.words(Env.get("SWIFTLINT_FLAGS", "--config .make/swiftlint.yml"))
+    var filtered: [String] = []
+    var shouldSkipNext = false
+    for flag in flags {
+      if shouldSkipNext {
+        shouldSkipNext = false
+        continue
+      }
+      if flag == "--reporter" {
+        shouldSkipNext = true
+        continue
+      }
+      if flag.hasPrefix("--reporter=") {
+        continue
+      }
+      filtered.append(flag)
+    }
+    return filtered
+  }
+
+  private static func normalize(_ finding: Finding, context: PathContext) -> Finding {
+    Finding(
+      tool: finding.tool,
+      ruleId: finding.ruleId,
+      file: Findings.normalizePath(finding.file, context),
+      line: finding.line,
+      column: finding.column,
+      severity: finding.severity,
+      message: finding.message,
+      usr: finding.usr,
+      symbol: finding.symbol,
+      hints: finding.hints
+    )
+  }
+
+  private static func applyExclude(_ findings: [Finding]) -> [Finding] {
+    let includedFiles = Set(Text.filterExclude(findings.map(\.file), Lint.swiftlintExclude()))
+    return findings.filter { includedFiles.contains($0.file) }
+  }
+
+  private static func dropGitIgnored(_ findings: [Finding]) -> [Finding] {
+    let files = Set(findings.map(\.file).filter { !$0.isEmpty })
+    let keptFiles = Set(Lint.dropGitIgnored(Array(files)))
+    return findings.filter { $0.file.isEmpty || keptFiles.contains($0.file) }
+  }
+
+  private static func applyLineRanges(_ findings: [Finding]) -> [Finding] {
+    let rangesPath = Env.get("LINT_LINE_RANGES")
+    guard !rangesPath.isEmpty, FileManager.default.fileExists(atPath: rangesPath),
+      !Text.readLines(rangesPath).isEmpty
+    else { return findings }
+    let ranges = Lint.parseRangesFile(rangesPath)
+    return findings.filter { finding in
+      ranges.contains { $0.contains(file: finding.file, line: finding.line) }
+    }
   }
 }
 
