@@ -294,6 +294,14 @@ public enum Lint {
     applyLineRanges(findingsPath)
   }
 
+  /// Whether a build-output line is a Swift compiler error
+  /// (`<path>.swift:<line>:<col>: error: ...`), as opposed to a periphery finding,
+  /// which periphery emits as a `warning:`, or periphery's own `Error: Found N
+  /// issues` summary, which carries no `file:line:col`.
+  static func isSwiftCompileError(_ line: String) -> Bool {
+    line.range(of: #"\.swift:[0-9]+:[0-9]+: error:"#, options: .regularExpression) != nil
+  }
+
   @discardableResult
   public static func runDeadcode(context: PathContext) -> Bool {
     Capture.ensureMakeDir()
@@ -301,6 +309,23 @@ public enum Lint {
     let findings = ".make/periphery.out"
     captureDeadcode(rawPath: raw, findingsPath: findings, context: context)
     let status = GateStatus.last
+    // A compile error during periphery's own build leaves a partial index, and
+    // periphery then reports referenced declarations as unused. Periphery does not
+    // fail loudly on this (it builds what it can and analyzes the rest), so without
+    // this check the gate passes the resulting phantom findings to the baseline
+    // diff, where a real build break masquerades as dead code. Detect Swift compiler
+    // errors in the build output and fail on the real cause first.
+    let compileErrors = Text.readLines(raw).filter(isSwiftCompileError)
+    if !compileErrors.isEmpty {
+      Output.log("lint-deadcode: FAILED")
+      Output.log(
+        "  The dead-code build did not compile; fix the compile error before this gate can run.")
+      Output.log("  Periphery's findings are unreliable against a partial index.\n")
+      Output.log("Compile errors:")
+      Output.log(compileErrors.joined(separator: "\n"))
+      Baseline.recordFailedGate("lint-deadcode")
+      return false
+    }
     if status >= deadcodeHardFailStatus {
       Output.log("lint-deadcode: FAILED")
       Output.log("  Exit status: \(status)\n")

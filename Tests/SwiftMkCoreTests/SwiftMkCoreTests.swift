@@ -349,3 +349,20 @@ func deadcodeFindsIndexStoreUnderDerivedData() throws {
 func deadcodeHardFailThresholdIsTwo() {
   #expect(Lint.deadcodeHardFailStatus == 2)
 }
+
+@Test
+func deadcodeDetectsSwiftCompileErrorButNotPeripheryFindings() {
+  // A compile error during periphery's build must hard-fail the gate instead of
+  // letting the resulting phantom "unused" findings reach the baseline diff.
+  #expect(
+    Lint.isSwiftCompileError(
+      "Sources/SwiftLMRuntime/FanCoordinator.swift:500:103: error: consecutive statements"))
+  #expect(
+    Lint.isSwiftCompileError(
+      "/abs/path/File.swift:12:5: error: cannot use optional chaining on non-optional value"))
+  // Periphery emits its findings as warnings and its tally without a file location.
+  #expect(
+    !Lint.isSwiftCompileError(
+      "Sources/SwiftLMMonitor/Sensors/Battery.swift:12:13: warning: Unused property 'log'"))
+  #expect(!Lint.isSwiftCompileError("Error: Found 73 issues."))
+}
