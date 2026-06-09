@@ -215,7 +215,7 @@ endif
 SWIFTLINT ?= swiftlint
 SWIFTLINT_FLAGS ?= --config $(SWIFT_MK_SWIFTLINT_CONFIG) --reporter xcode
 SWIFTLINT_TARGETS ?= Sources Tests Package.swift
-SWIFTLINT_BASELINE ?= .swiftlint-baseline.txt
+SWIFTLINT_BASELINE ?= .swiftlint-baseline.jsonl
 # Untracked files (generated output, scratch files) are skipped by the git-ignore
 # filter in the lint runner, not by a path pattern: a path pattern would let a
 # tracked file in a matching directory silently escape linting. A repo can still
@@ -229,11 +229,11 @@ SWIFT_FORMAT ?= xcrun swift-format
 SWIFT_FORMAT_TARGETS ?= $(SWIFTLINT_TARGETS)
 
 COMPLEXITY_RULES ?= cyclomatic_complexity,function_body_length,closure_body_length,file_length,type_body_length,function_parameter_count,large_tuple,nesting,todo
-SWIFTLINT_COMPLEXITY_BASELINE ?= .swiftlint-complexity-baseline.txt
+SWIFTLINT_COMPLEXITY_BASELINE ?= .swiftlint-complexity-baseline.jsonl
 
 PERIPHERY ?= periphery
 PERIPHERY_ARGS ?= scan --config $(SWIFT_MK_PERIPHERY_CONFIG) --strict
-PERIPHERY_BASELINE ?= .periphery-baseline.txt
+PERIPHERY_BASELINE ?= .periphery-baseline.jsonl
 PERIPHERY_DEFAULT_EXCLUDE_PATHS ?=
 PERIPHERY_EXCLUDE_PATHS ?=
 
@@ -333,7 +333,7 @@ SWIFTCHECK_EXTRA_BUILD_REPO ?= $(if $(and $(SWIFT_MK_DEV_DIR),$(wildcard $(SWIFT
 SWIFTCHECK_EXTRA_BUILD_PRODUCT ?= swiftcheck-extra
 SWIFTCHECK_EXTRA_FLAGS ?= -no_any -no_anyobject -untyped_json -force_unwrap -force_try -silent_try -silent_catch -banned_direct_output -task_detached -sleep_in_production -fatal_exit -sensitive_log_field -missing_boundary_log -ignored_cleanup_error -missing_section_mark -unrouted_build_tooling -fragile_package_path
 SWIFTCHECK_EXTRA_TARGETS ?= $(SWIFTLINT_TARGETS)
-SWIFTCHECK_EXTRA_BASELINE ?= .swiftcheck-extra-baseline.txt
+SWIFTCHECK_EXTRA_BASELINE ?= .swiftcheck-extra-baseline.jsonl
 SWIFTCHECK_EXTRA_DEFAULT_EXCLUDE_PATHS ?=
 SWIFTCHECK_EXTRA_EXCLUDE_PATHS ?=
 
