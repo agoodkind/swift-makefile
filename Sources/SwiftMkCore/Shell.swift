@@ -68,6 +68,12 @@ public enum Shell {
     public var combined: String { stdout + stderr }
   }
 
+  public struct StreamingResult: Sendable {
+    public let status: Int32
+    public let stdout: String
+    public let timedOut: Bool
+  }
+
   /// Run a program found on PATH (or an absolute path) with arguments. An
   /// empty `environment` inherits the current process environment unchanged.
   @discardableResult
@@ -119,6 +125,14 @@ public enum Shell {
   /// `group.wait()` returns. Reading both of a process's streams this way keeps a
   /// child that floods one pipe from blocking against a serial reader of the other.
   private static func drainAsync(_ handle: FileHandle, into group: DispatchGroup) -> LockedData {
+    drainAsync(handle, into: group, onChunk: nil)
+  }
+
+  private static func drainAsync(
+    _ handle: FileHandle,
+    into group: DispatchGroup,
+    onChunk: (@Sendable (Data) -> Void)?
+  ) -> LockedData {
     let buffer = LockedData()
     group.enter()
     handle.readabilityHandler = { source in
@@ -128,9 +142,64 @@ public enum Shell {
         group.leave()
       } else {
         buffer.append(chunk)
+        onChunk?(chunk)
       }
     }
     return buffer
+  }
+
+  /// Run a program, capturing stdout in full while forwarding stderr live.
+  @discardableResult
+  public static func runStreamingStderr(
+    _ executable: String,
+    _ arguments: [String] = [],
+    environment: [String: String] = [:],
+    timeoutSeconds: Double = 0
+  ) -> StreamingResult {
+    Output.debug("Shell.runStreamingStderr \(executable) \(arguments.joined(separator: " "))")
+    var launchError: Error?
+    let started = startWithRetry(
+      {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = [executable] + arguments
+        if let childEnv = childEnvironment(environment) {
+          process.environment = childEnv
+        }
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        return process
+      }, launchError: &launchError)
+    guard let process = started,
+      let outPipe = process.standardOutput as? Pipe,
+      let errPipe = process.standardError as? Pipe
+    else {
+      return StreamingResult(status: launchFailureStatus, stdout: "", timedOut: false)
+    }
+
+    let group = DispatchGroup()
+    let outBuffer = drainAsync(outPipe.fileHandleForReading, into: group)
+    _ = drainAsync(errPipe.fileHandleForReading, into: group) { chunk in
+      FileHandle.standardError.write(chunk)
+    }
+    var timedOut = false
+    if timeoutSeconds > 0 {
+      let waitResult = group.wait(timeout: .now() + timeoutSeconds)
+      if waitResult == .timedOut {
+        timedOut = true
+        process.terminate()
+        group.wait()
+      }
+      process.waitUntilExit()
+    } else {
+      group.wait()
+      process.waitUntilExit()
+    }
+    return StreamingResult(
+      status: process.terminationStatus,
+      stdout: String(bytes: outBuffer.snapshot(), encoding: .utf8) ?? "",
+      timedOut: timedOut
+    )
   }
 
   /// Run a command string through `/bin/sh -c`. An empty `environment` inherits the
