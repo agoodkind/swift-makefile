@@ -154,11 +154,19 @@ public enum Lint {
     applyLineRanges(findingsPath)
   }
 
+  static func captureSwiftlintStructured(
+    rawPath: String,
+    onlyRules: [String],
+    context: PathContext
+  ) -> [Finding] {
+    SwiftlintCapture.capture(rawPath: rawPath, onlyRules: onlyRules, context: context)
+  }
+
   @discardableResult
   public static func runSwiftlint(context: PathContext) -> Bool {
     Capture.ensureMakeDir()
     let raw = ".make/swiftlint.raw.out"
-    let findings = SwiftlintCapture.capture(rawPath: raw, onlyRules: [], context: context)
+    let findings = captureSwiftlintStructured(rawPath: raw, onlyRules: [], context: context)
     let status = GateStatus.last
     if !StructuredGate.run(
       gateName: "swiftlint",
@@ -185,8 +193,11 @@ public enum Lint {
   public static func runComplexity(context: PathContext) -> Bool {
     Capture.ensureMakeDir()
     let raw = ".make/lint-complexity.raw.out"
-    let findings = SwiftlintCapture.capture(
-      rawPath: raw, onlyRules: complexityRules(), context: context)
+    let findings = captureSwiftlintStructured(
+      rawPath: raw,
+      onlyRules: complexityRules(),
+      context: context
+    )
     return StructuredGate.run(
       gateName: "lint-complexity",
       findings: findings,
@@ -237,6 +248,12 @@ public enum Lint {
     line.range(of: #"\.swift:[0-9]+:[0-9]+: error:"#, options: .regularExpression) != nil
   }
 
+  static func parseDeadcodeFindings(findingsPath: String, context: PathContext) -> [Finding] {
+    Text.readLines(findingsPath)
+      .compactMap(parsePeripheryFinding)
+      .map { normalizeFinding($0, context: context) }
+  }
+
   @discardableResult
   public static func runDeadcode(context: PathContext) -> Bool {
     Capture.ensureMakeDir()
@@ -269,9 +286,7 @@ public enum Lint {
       Baseline.recordFailedGate("lint-deadcode")
       return false
     }
-    let parsedFindings = Text.readLines(findings)
-      .compactMap(parsePeripheryFinding)
-      .map { normalizeFinding($0, context: context) }
+    let parsedFindings = parseDeadcodeFindings(findingsPath: findings, context: context)
     return StructuredGate.run(
       gateName: "lint-deadcode",
       findings: parsedFindings,

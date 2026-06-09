@@ -95,6 +95,9 @@ public enum BaselineStore {
         return nil
       }
     }
+    if lines.isEmpty {
+      return ""
+    }
     return lines.joined(separator: "\n") + "\n"
   }
 
@@ -121,6 +124,46 @@ public enum BaselineStore {
       counts[record.key, default: 0] += 1
     }
     return counts
+  }
+
+  public static func rewrite(
+    current: [Finding],
+    old: [BaselineRecord],
+    mode: BaselineMode,
+    now: String
+  ) -> [BaselineRecord] {
+    var firstAddedByKey: [String: String] = [:]
+    var oldKeys = Set<String>()
+    for record in old {
+      oldKeys.insert(record.key)
+      guard let existingFirstAdded = firstAddedByKey[record.key] else {
+        firstAddedByKey[record.key] = record.firstAdded
+        continue
+      }
+      if record.firstAdded < existingFirstAdded {
+        firstAddedByKey[record.key] = record.firstAdded
+      }
+    }
+
+    var currentKeys = Set<String>()
+    var records: [BaselineRecord] = []
+    for finding in current {
+      let key = BaselineKey.of(finding)
+      currentKeys.insert(key)
+      if mode == .pruneFixed, !oldKeys.contains(key) {
+        continue
+      }
+      let firstAdded = firstAddedByKey[key] ?? now
+      records.append(
+        BaselineRecord.from(finding, firstAdded: firstAdded, lastSeen: now)
+      )
+    }
+
+    if mode == .acceptNew {
+      records += old.filter { !currentKeys.contains($0.key) }
+    }
+
+    return records
   }
 
   private static func sorted(_ records: [BaselineRecord]) -> [BaselineRecord] {

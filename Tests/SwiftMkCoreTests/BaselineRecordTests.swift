@@ -100,6 +100,109 @@ func keyCountsReturnsMultiset() throws {
 }
 
 @Test
+func rewriteSyncPreservesExistingFirstAddedAndStampsNewFinding() throws {
+  let existingFinding = makeFinding(ruleId: "identifier_name", file: "Sources/App.swift")
+  let newFinding = makeFinding(ruleId: "line_length", file: "Sources/App.swift")
+  let olderRecord = BaselineRecord.from(
+    existingFinding,
+    firstAdded: "2026-06-08T09:00:00Z",
+    lastSeen: "2026-06-08T10:00:00Z"
+  )
+  let oldestRecord = BaselineRecord.from(
+    existingFinding,
+    firstAdded: "2026-06-08T08:00:00Z",
+    lastSeen: "2026-06-08T10:00:00Z"
+  )
+
+  let records = BaselineStore.rewrite(
+    current: [existingFinding, newFinding],
+    old: [olderRecord, oldestRecord],
+    mode: .sync,
+    now: "2026-06-08T11:00:00Z"
+  )
+
+  let existingRecord = try #require(
+    records.first { $0.key == BaselineKey.of(existingFinding) })
+  let newRecord = try #require(records.first { $0.key == BaselineKey.of(newFinding) })
+  #expect(existingRecord.firstAdded == "2026-06-08T08:00:00Z")
+  #expect(existingRecord.lastSeen == "2026-06-08T11:00:00Z")
+  #expect(newRecord.firstAdded == "2026-06-08T11:00:00Z")
+  #expect(newRecord.lastSeen == "2026-06-08T11:00:00Z")
+}
+
+@Test
+func rewriteAcceptNewKeepsFixedOldKey() {
+  let fixedFinding = makeFinding(ruleId: "identifier_name", file: "Sources/App.swift")
+  let currentFinding = makeFinding(ruleId: "line_length", file: "Sources/App.swift")
+  let fixedRecord = BaselineRecord.from(
+    fixedFinding,
+    firstAdded: "2026-06-08T09:00:00Z",
+    lastSeen: "2026-06-08T10:00:00Z"
+  )
+
+  let records = BaselineStore.rewrite(
+    current: [currentFinding],
+    old: [fixedRecord],
+    mode: .acceptNew,
+    now: "2026-06-08T11:00:00Z"
+  )
+
+  #expect(records.contains { $0.key == BaselineKey.of(fixedFinding) })
+  #expect(records.contains { $0.key == BaselineKey.of(currentFinding) })
+}
+
+@Test
+func rewritePruneFixedDropsCurrentFindingAbsentFromOldBaseline() {
+  let existingFinding = makeFinding(ruleId: "identifier_name", file: "Sources/App.swift")
+  let newFinding = makeFinding(ruleId: "line_length", file: "Sources/App.swift")
+  let existingRecord = BaselineRecord.from(
+    existingFinding,
+    firstAdded: "2026-06-08T09:00:00Z",
+    lastSeen: "2026-06-08T10:00:00Z"
+  )
+
+  let records = BaselineStore.rewrite(
+    current: [existingFinding, newFinding],
+    old: [existingRecord],
+    mode: .pruneFixed,
+    now: "2026-06-08T11:00:00Z"
+  )
+
+  #expect(records.map(\.key) == [BaselineKey.of(existingFinding)])
+}
+
+@Test
+func rewritePerKeyCountsFollowCurrentFindings() throws {
+  let firstFinding = makeFinding(
+    ruleId: "cyclomatic_complexity",
+    file: "Sources/App.swift",
+    line: 20
+  )
+  let secondFinding = makeFinding(
+    ruleId: "cyclomatic_complexity",
+    file: "Sources/App.swift",
+    line: 40
+  )
+  let oldRecord = BaselineRecord.from(
+    firstFinding,
+    firstAdded: "2026-06-08T09:00:00Z",
+    lastSeen: "2026-06-08T10:00:00Z"
+  )
+
+  let records = BaselineStore.rewrite(
+    current: [firstFinding, secondFinding],
+    old: [oldRecord],
+    mode: .sync,
+    now: "2026-06-08T11:00:00Z"
+  )
+  let key = BaselineKey.of(firstFinding)
+  let counts = BaselineStore.keyCounts(records)
+
+  #expect(try #require(counts[key]) == 2)
+  #expect(records.allSatisfy { $0.firstAdded == "2026-06-08T09:00:00Z" })
+}
+
+@Test
 func serializeIsDeterministicAcrossInputOrder() {
   let firstRecord = makeRecord(
     key: "b-key",
@@ -121,6 +224,24 @@ func serializeIsDeterministicAcrossInputOrder() {
   let secondSerialized = BaselineStore.serialize([thirdRecord, firstRecord, secondRecord])
 
   #expect(firstSerialized == secondSerialized)
+}
+
+private func makeFinding(
+  ruleId: String,
+  file: String,
+  line: Int = 12,
+  column: Int = 5,
+  message: String = "Identifier name should be longer"
+) -> Finding {
+  Finding(
+    tool: "swiftlint",
+    ruleId: ruleId,
+    file: file,
+    line: line,
+    column: column,
+    severity: .warning,
+    message: message
+  )
 }
 
 private func makeRecord(

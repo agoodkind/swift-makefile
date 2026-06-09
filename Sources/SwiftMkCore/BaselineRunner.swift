@@ -31,52 +31,6 @@ public enum BaselineRunner {
     )
   }
 
-  /// Static description of one component baseline: how it is titled and
-  /// labeled, where its baseline file lives, and how it filters findings.
-  private struct Component {
-    let title: String
-    let label: String
-    let baselineEnv: String
-    let baselineDefault: String
-    let exclude: String
-    var scope: String = ""
-  }
-
-  /// Capture findings for a component and rewrite its baseline, returning the
-  /// neutral counts describing what changed.
-  @discardableResult
-  private static func writeFrom(
-    _ component: Component,
-    capture: (String, String) -> Void,
-    mode: BaselineMode,
-    context: PathContext
-  ) throws -> BaselineUpdateStats {
-    Capture.ensureMakeDir()
-    let raw = ".make/\(component.label)-baseline.raw.out"
-    let findings = ".make/\(component.label)-baseline.out"
-    capture(raw, findings)
-    let spec = BaselineSpec(
-      findingsPath: findings,
-      baselinePath: Env.get(component.baselineEnv, component.baselineDefault),
-      label: component.label,
-      excludePattern: component.exclude,
-      scopePattern: component.scope
-    )
-    return try Baseline.writeComponent(
-      title: component.title, spec, mode: mode, context: context)
-  }
-
-  private static func swiftlintComponent(scope: String = "") -> Component {
-    Component(
-      title: "swiftlint",
-      label: "swiftlint",
-      baselineEnv: "SWIFTLINT_BASELINE",
-      baselineDefault: ".swiftlint-baseline.txt",
-      exclude: Lint.swiftlintExclude(),
-      scope: scope
-    )
-  }
-
   @discardableResult
   public static func updateSwiftlint(
     mode: BaselineMode, context: PathContext
@@ -85,16 +39,14 @@ public enum BaselineRunner {
     _ = Lint.runTools(context: context)
     return try writeFrom(
       swiftlintComponent(),
-      capture: { raw, findings in
-        Lint.captureSwiftlint(
+      capture: { raw, _ in
+        Lint.captureSwiftlintStructured(
           rawPath: raw,
-          findingsPath: findings,
           onlyRules: [],
           context: context
         )
       },
-      mode: mode,
-      context: context
+      mode: mode
     )
   }
 
@@ -106,24 +58,20 @@ public enum BaselineRunner {
     _ = Lint.runTools(context: context)
     let rules = Lint.complexityRules()
     let component = Component(
-      title: "swiftlint-complexity",
       label: "swiftlint-complexity",
       baselineEnv: "SWIFTLINT_COMPLEXITY_BASELINE",
-      baselineDefault: ".swiftlint-complexity-baseline.txt",
-      exclude: Lint.swiftlintExclude()
+      baselineDefault: ".swiftlint-complexity-baseline.jsonl"
     )
     return try writeFrom(
       component,
-      capture: { raw, findings in
-        Lint.captureSwiftlint(
+      capture: { raw, _ in
+        Lint.captureSwiftlintStructured(
           rawPath: raw,
-          findingsPath: findings,
           onlyRules: rules,
           context: context
         )
       },
-      mode: mode,
-      context: context
+      mode: mode
     )
   }
 
@@ -134,17 +82,17 @@ public enum BaselineRunner {
     guard tokenGatePasses() else { return nil }
     _ = Lint.runTools(context: context)
     let component = Component(
-      title: "periphery",
       label: "periphery",
       baselineEnv: "PERIPHERY_BASELINE",
-      baselineDefault: ".periphery-baseline.txt",
-      exclude: Lint.peripheryExclude()
+      baselineDefault: ".periphery-baseline.jsonl"
     )
     return try writeFrom(
       component,
-      capture: { Lint.captureDeadcode(rawPath: $0, findingsPath: $1, context: context) },
-      mode: mode,
-      context: context
+      capture: { raw, findings in
+        Lint.captureDeadcode(rawPath: raw, findingsPath: findings, context: context)
+        return Lint.parseDeadcodeFindings(findingsPath: findings, context: context)
+      },
+      mode: mode
     )
   }
 
@@ -155,19 +103,21 @@ public enum BaselineRunner {
     guard tokenGatePasses() else { return nil }
     _ = Swiftcheck.resolveBin()
     let component = Component(
-      title: "swiftcheck-extra",
       label: "swiftcheck-extra",
       baselineEnv: "SWIFTCHECK_EXTRA_BASELINE",
-      baselineDefault: ".swiftcheck-extra-baseline.txt",
-      exclude: swiftcheckExclude()
+      baselineDefault: ".swiftcheck-extra-baseline.jsonl"
     )
     return try writeFrom(
       component,
       capture: { raw, findings in
         Swiftcheck.captureFindings(rawPath: raw, findingsPath: findings, context: context)
+        return Swiftcheck.structuredFindings(
+          rawPath: raw,
+          exclude: swiftcheckExclude(),
+          context: context
+        )
       },
-      mode: mode,
-      context: context
+      mode: mode
     )
   }
 
@@ -184,13 +134,18 @@ public enum BaselineRunner {
     }
     guard tokenGatePasses() else { return nil }
     _ = Lint.runTools(context: context)
+    let rule = Env.get("RULE")
+    let onlyRules = rule.isEmpty ? [] : [rule]
     return try writeFrom(
       swiftlintComponent(scope: scope),
-      capture: { raw, findings in
-        Lint.captureSwiftlintScope(rawPath: raw, findingsPath: findings, context: context)
+      capture: { raw, _ in
+        Lint.captureSwiftlintStructured(
+          rawPath: raw,
+          onlyRules: onlyRules,
+          context: context
+        )
       },
-      mode: mode,
-      context: context
+      mode: mode
     )
   }
 
@@ -205,13 +160,18 @@ public enum BaselineRunner {
       return nil
     }
     _ = Lint.runTools(context: context)
+    let rule = Env.get("RULE")
+    let onlyRules = rule.isEmpty ? [] : [rule]
     return try writeFrom(
       swiftlintComponent(scope: scope),
-      capture: { raw, findings in
-        Lint.captureSwiftlintScope(rawPath: raw, findingsPath: findings, context: context)
+      capture: { raw, _ in
+        Lint.captureSwiftlintStructured(
+          rawPath: raw,
+          onlyRules: onlyRules,
+          context: context
+        )
       },
-      mode: .sync,
-      context: context
+      mode: .sync
     )
   }
 

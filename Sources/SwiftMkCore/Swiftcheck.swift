@@ -241,7 +241,7 @@ public enum Swiftcheck {
     return findings.filter { $0.file.isEmpty || keptFiles.contains($0.file) }
   }
 
-  private static func structuredFindings(
+  static func structuredFindings(
     rawPath: String,
     exclude: String,
     context: PathContext
