@@ -128,6 +128,70 @@ A macOS app consumer that ships a signed `.app` in a `.dmg` with Sparkle updates
 loads `swift-build.mk swift-app.mk`, sets `SWIFT_APP_*` config, and does not
 hand-roll its own `app`, `dmg`, or sparkle recipes.
 
+## CI for consumers
+
+All generic CI lives here as reusable workflows; a consumer's workflow files are thin callers that own only the triggers, a few inputs, and `secrets: inherit`.
+
+CI (`.github/workflows/ci.yml` in the consumer, name it `CI`):
+
+```yaml
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request:
+jobs:
+  ci:
+    uses: agoodkind/swift-makefile/.github/workflows/_ci.yml@main
+    with:
+      targets: '["lint","build","test"]'
+    secrets: inherit
+```
+
+Key `_ci.yml` inputs: `targets` (JSON array of make targets, one matrix job each), `setup-target` (make target run before each), `make-args`, `brew-packages`, `runner`, `import-signing-cert` + `signing-identity-name` + `apple-team-id` (real Developer ID builds), `extra-cache-paths`.
+
+Release (`.github/workflows/release.yml` in the consumer):
+
+```yaml
+name: Release
+on:
+  push: { branches: [main] }
+  workflow_dispatch:
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+jobs:
+  release:
+    uses: agoodkind/swift-makefile/.github/workflows/_release.yml@main
+    with:
+      signing-identity-name: "Developer ID Application: ... (TEAMID)"
+      apple-team-id: TEAMID
+      notarize-pattern: "*.dmg"
+      sbom-subject-path: "Products/My.app"
+    secrets: inherit
+```
+
+`_release.yml` runs meta, build, notarize, publish. The make layer owns the logic through `swift-release.mk`: set `SWIFT_MK_MODULES := swift-build.mk swift-release.mk` and define `SWIFT_MK_RELEASE_BUILD_CMD` to populate `dist/` (the workflow provides `RELEASE_TAG`, `MARKETING_VERSION`, `CURRENT_PROJECT_VERSION`, and signing variables). Signing, notarization, SBOM, and attestations all no-op silently when their secrets or inputs are absent.
+
+Secrets (set per repo; all optional): `APPLE_DEVELOPER_ID_P12_BASE64`, `APPLE_DEVELOPER_ID_P12_PASSWORD`, `APPLE_NOTARY_KEY_BASE64`, `APPLE_NOTARY_KEY_ID`, `APPLE_NOTARY_ISSUER_ID`.
+
+Dependabot automerge (gated on CI success):
+
+```yaml
+name: Dependabot Auto Merge
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+jobs:
+  automerge:
+    uses: agoodkind/swift-makefile/.github/workflows/_dependabot-automerge.yml@main
+    permissions:
+      contents: write
+      pull-requests: write
+    secrets: inherit
+```
+
 ## Local override
 
 Set `SWIFT_MK_DEV_DIR=$HOME/Sites/swift-makefile` (or your own checkout path) to force a consumer repo to fetch shared files from the local checkout.
