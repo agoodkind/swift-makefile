@@ -14,7 +14,10 @@ import Foundation
 /// for an unset or empty value.
 public enum Env {
   public static func get(_ name: String, _ fallback: String = "") -> String {
-    let value = ProcessInfo.processInfo.environment[name] ?? ""
+    // libc getenv, not ProcessInfo.environment: Foundation caches the
+    // environment snapshot at first access, so an in-process setenv (the run
+    // trace handoff, test setup) would read back stale through ProcessInfo.
+    let value = getenv(name).map { String(cString: $0) } ?? ""
     return value.isEmpty ? fallback : value
   }
 
