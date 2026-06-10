@@ -64,13 +64,20 @@ public enum Preflight {
 
   public static func trustMise(in directory: String) -> Bool {
     let directoryURL = URL(fileURLWithPath: directory, isDirectory: true)
-    let miseTomlPath = directoryURL.appendingPathComponent("mise.toml").path
-    let toolVersionsPath = directoryURL.appendingPathComponent(".tool-versions").path
     let fileManager = FileManager.default
-    guard
-      fileManager.fileExists(atPath: miseTomlPath)
-        || fileManager.fileExists(atPath: toolVersionsPath)
-    else {
+    // The shared fetched config under .config/mise/conf.d/ counts alongside
+    // the root pins: any present config needs trust before mise resolves tools.
+    let sharedConfigPath =
+      directoryURL
+      .appendingPathComponent(Env.get("SWIFT_MK_MISE_CONFIG", ".config/mise/conf.d/swift-mk.toml"))
+      .path
+    let configPaths = [
+      directoryURL.appendingPathComponent("mise.toml").path,
+      directoryURL.appendingPathComponent(".tool-versions").path,
+      sharedConfigPath,
+    ]
+    let presentConfigs = configPaths.filter { fileManager.fileExists(atPath: $0) }
+    guard !presentConfigs.isEmpty else {
       return true
     }
 
@@ -79,12 +86,13 @@ public enum Preflight {
       return true
     }
 
-    let result = Shell.run("mise", ["trust", directory])
-    if result.status == 0 {
-      return true
+    for configPath in presentConfigs {
+      let result = Shell.run("mise", ["trust", configPath])
+      guard result.status == 0 else {
+        Output.error("preflight: mise config is untrusted; run: mise trust \(configPath)")
+        return false
+      }
     }
-
-    Output.error("preflight: mise config is untrusted; run: mise trust \(directory)")
-    return false
+    return true
   }
 }

@@ -225,7 +225,11 @@ endif
 SWIFT_MK_SWIFTLINT_CONFIG ?= .make/swiftlint.yml
 SWIFT_MK_SWIFT_FORMAT_CONFIG ?= .make/swift-format.json
 SWIFT_MK_PERIPHERY_CONFIG ?= .make/periphery.yml
-SWIFT_MK_MISE_CONFIG ?= .make/mise.toml
+# mise loads every file under .config/mise/conf.d/ automatically and has no
+# env var for an arbitrary config path, so the shared tool pins fetch into
+# that documented additive location. Consumers gitignore the fetched file and
+# delete their root mise.toml / .tool-versions pins.
+SWIFT_MK_MISE_CONFIG ?= .config/mise/conf.d/swift-mk.toml
 
 # Default Xcode location for the rendered file-header macros. Override to a
 # project's xcshareddata for a per-project header. swift-mk reads the git
