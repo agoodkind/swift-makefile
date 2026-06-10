@@ -67,7 +67,9 @@ public struct Finding: Sendable, Equatable {
 // MARK: - SwiftlintPayload
 
 private struct SwiftlintPayload: Decodable {
-  let column: Int
+  // swiftlint emits `"character": null` for whole-file rules (file_name,
+  // file_header), so the column must decode as optional.
+  let column: Int?
   let file: String
   let line: Int
   let message: String
@@ -98,7 +100,7 @@ private struct SwiftlintPayload: Decodable {
       ruleId: ruleId,
       file: file,
       line: line,
-      column: column,
+      column: column ?? 0,
       severity: findingSeverity,
       message: message
     )

@@ -45,6 +45,31 @@ func decodesSwiftlintJSON() throws {
 }
 
 @Test
+func decodesSwiftlintJSONWithNullCharacter() throws {
+  let json = """
+    [
+      {
+        "character" : null,
+        "file" : "/tmp/x.swift",
+        "line" : 1,
+        "reason" : "File name should match a type or extension declared in the file (if any)",
+        "rule_id" : "file_name",
+        "severity" : "Error",
+        "type" : "File Name"
+      }
+    ]
+    """
+
+  let findings = try Finding.fromSwiftlintJSON(Data(json.utf8))
+
+  #expect(findings.count == 1)
+  let finding = try #require(findings.first)
+  #expect(finding.ruleId == "file_name")
+  #expect(finding.line == 1)
+  #expect(finding.column == 0)
+}
+
+@Test
 func decodesPeripheryJSON() throws {
   let json = """
     [
