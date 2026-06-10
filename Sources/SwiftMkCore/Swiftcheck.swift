@@ -254,6 +254,7 @@ public enum Swiftcheck {
   @discardableResult
   public static func runGate(context: PathContext) -> Bool {
     Capture.ensureMakeDir()
+    Output.debug("swiftcheck-extra: running gate")
     let raw = ".make/swiftcheck-extra.raw.out"
     let findings = ".make/swiftcheck-extra.out"
     let exclude = Text.excludePattern(

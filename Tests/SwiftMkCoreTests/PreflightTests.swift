@@ -56,7 +56,11 @@ enum PreflightTests {
   static func checkFilesReportsAbsentPathsAndPassesWhenAllArePresent() throws {
     let directory = try makeTemporaryDirectory()
     defer {
-      try? FileManager.default.removeItem(atPath: directory)
+      do {
+        try FileManager.default.removeItem(atPath: directory)
+      } catch {
+        Output.warning("cleanup failed: \(error.localizedDescription)")
+      }
     }
 
     let presentPath = (directory as NSString).appendingPathComponent("present.txt")

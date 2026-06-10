@@ -165,6 +165,7 @@ public enum Lint {
   @discardableResult
   public static func runSwiftlint(context: PathContext) -> Bool {
     Capture.ensureMakeDir()
+    Output.debug("swiftlint: running gate")
     let raw = ".make/swiftlint.raw.out"
     let findings = captureSwiftlintStructured(rawPath: raw, onlyRules: [], context: context)
     let status = GateStatus.last
@@ -192,6 +193,7 @@ public enum Lint {
   @discardableResult
   public static func runComplexity(context: PathContext) -> Bool {
     Capture.ensureMakeDir()
+    Output.debug("lint-complexity: running gate")
     let raw = ".make/lint-complexity.raw.out"
     let findings = captureSwiftlintStructured(
       rawPath: raw,
@@ -257,6 +259,7 @@ public enum Lint {
   @discardableResult
   public static func runDeadcode(context: PathContext) -> Bool {
     Capture.ensureMakeDir()
+    Output.debug("lint-deadcode: running gate")
     let raw = ".make/periphery.raw.out"
     let findings = ".make/periphery.out"
     captureDeadcode(rawPath: raw, findingsPath: findings, context: context)
@@ -302,7 +305,13 @@ private func parsePeripheryFinding(_ line: String) -> Finding? {
   let columnCaptureGroup = 3
   let messageCaptureGroup = 4
   let pattern = #"^(.*?):([0-9]+):([0-9]+): (?:warning|error): (.*)$"#
-  guard let expression = try? NSRegularExpression(pattern: pattern),
+  let expression: NSRegularExpression
+  do {
+    expression = try NSRegularExpression(pattern: pattern)
+  } catch {
+    return nil
+  }
+  guard
     let match = expression.firstMatch(in: line, range: NSRange(line.startIndex..., in: line))
   else {
     return nil

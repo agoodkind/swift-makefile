@@ -181,7 +181,11 @@ enum StructuredGateTests {
       if didChangeDirectory {
         _ = fileManager.changeCurrentDirectoryPath(originalPath)
       }
-      try? fileManager.removeItem(at: directory)
+      do {
+        try fileManager.removeItem(at: directory)
+      } catch {
+        Output.warning("cleanup failed: \(error.localizedDescription)")
+      }
     }
 
     didChangeDirectory = fileManager.changeCurrentDirectoryPath(directory.path)
