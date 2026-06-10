@@ -1,5 +1,5 @@
 name: Setup Swift build env
-description: Select Xcode, install Tuist/XcodeGen and the Swift lint and analysis tools, with shared Tuist/SwiftPM and build caches.
+description: Select Xcode and install the generator and analysis tools a consumer declares, with shared Tuist/SwiftPM and build caches.
 
 inputs:
   xcode-version:
@@ -8,6 +8,26 @@ inputs:
   github-token:
     description: GitHub token used by mise for authenticated GitHub API requests.
     required: true
+  install-tuist:
+    description: >-
+      Install Tuist via mise. "auto" installs only when the repo has a
+      .tool-versions file; "true"/"false" force.
+    required: false
+    default: auto
+  install-xcodegen:
+    description: >-
+      Install XcodeGen via brew. "auto" installs only when the repo has a
+      project.yml; "true"/"false" force.
+    required: false
+    default: auto
+  install-lint-tools:
+    description: Install swift-format, swiftlint, periphery, and osv-scanner.
+    required: false
+    default: "true"
+  extra-cache-paths:
+    description: Newline-separated extra paths appended to the build cache.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -32,12 +52,18 @@ runs:
     - name: Restore build cache
       uses: actions/cache@v5
       with:
-        path: build
+        path: |
+          build
+          ${{ inputs.extra-cache-paths }}
         key: ${{ runner.os }}-build-${{ hashFiles('Sources/**', 'Tests/**', 'Project.swift', 'Workspace.swift', 'Tuist.swift', 'Tuist/Package.swift', 'Tuist/Package.resolved', 'Config/**', 'Scripts/**', 'Templates/**', 'Makefile') }}
         restore-keys: |
           ${{ runner.os }}-build-
 
+    # Tuist arrives through mise, so it only applies to repos that declare a
+    # toolchain; an xcodegen-only consumer has no .tool-versions and must not
+    # fail on a tuist check.
     - name: Install mise and Tuist
+      if: ${{ inputs.install-tuist == 'true' || (inputs.install-tuist == 'auto' && hashFiles('.tool-versions') != '') }}
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
@@ -55,6 +81,7 @@ runs:
         tuist version
 
     - name: Install XcodeGen
+      if: ${{ inputs.install-xcodegen == 'true' || (inputs.install-xcodegen == 'auto' && hashFiles('project.yml') != '') }}
       shell: bash
       run: |
         set -euo pipefail
@@ -66,6 +93,7 @@ runs:
         xcodegen --version
 
     - name: Install Swift lint and analysis tools
+      if: ${{ inputs.install-lint-tools == 'true' }}
       shell: bash
       run: |
         set -euo pipefail

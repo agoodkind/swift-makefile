@@ -1,9 +1,11 @@
 name: Notarize and staple
-description: Submit an artifact to Apple's Notary service with notarytool and staple the ticket.
+description: Submit artifacts to Apple's Notary service with notarytool and staple the tickets.
 
 inputs:
   artifact-path:
-    description: Path to the .dmg, .pkg, or .zip to notarize and staple.
+    description: >-
+      Whitespace- or newline-separated paths of the .dmg, .pkg, or .zip files
+      to notarize and staple. A single path keeps working.
     required: true
   notary-key-base64:
     description: Base64-encoded App Store Connect API .p8 key.
@@ -29,28 +31,36 @@ runs:
         set -euo pipefail
 
         key_path="$RUNNER_TEMP/notary-AuthKey.p8"
-        submit_output_path="$RUNNER_TEMP/notarytool-submit.json"
         printf '%s' "$NOTARY_KEY_BASE64" | base64 --decode > "$key_path"
 
-        set +e
-        xcrun notarytool submit "$ARTIFACT_PATH" \
-            --key "$key_path" \
-            --key-id "$NOTARY_KEY_ID" \
-            --issuer "$NOTARY_ISSUER_ID" \
-            --wait \
-            --output-format json > "$submit_output_path"
-        submit_exit_code=$?
-        set -e
-
-        submission_status="$(plutil -extract status raw -o - "$submit_output_path" 2>/dev/null || true)"
-        if [[ "$submit_exit_code" -ne 0 ]]; then
-            cat "$submit_output_path" >&2 || true
-            exit "$submit_exit_code"
-        fi
-        if [[ "$submission_status" != "Accepted" ]]; then
-            echo "Notary submission was not accepted: ${submission_status:-missing status}" >&2
-            cat "$submit_output_path" >&2 || true
+        if [[ -z "${ARTIFACT_PATH// /}" ]]; then
+            echo "notarize-staple: no artifacts to notarize" >&2
             exit 1
         fi
 
-        xcrun stapler staple "$ARTIFACT_PATH"
+        for artifact in $ARTIFACT_PATH; do
+            submit_output_path="$RUNNER_TEMP/notarytool-submit-$(basename "$artifact").json"
+
+            set +e
+            xcrun notarytool submit "$artifact" \
+                --key "$key_path" \
+                --key-id "$NOTARY_KEY_ID" \
+                --issuer "$NOTARY_ISSUER_ID" \
+                --wait \
+                --output-format json > "$submit_output_path"
+            submit_exit_code=$?
+            set -e
+
+            submission_status="$(plutil -extract status raw -o - "$submit_output_path" 2>/dev/null || true)"
+            if [[ "$submit_exit_code" -ne 0 ]]; then
+                cat "$submit_output_path" >&2 || true
+                exit "$submit_exit_code"
+            fi
+            if [[ "$submission_status" != "Accepted" ]]; then
+                echo "Notary submission was not accepted for $artifact: ${submission_status:-missing status}" >&2
+                cat "$submit_output_path" >&2 || true
+                exit 1
+            fi
+
+            xcrun stapler staple "$artifact"
+        done
