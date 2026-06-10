@@ -176,6 +176,12 @@ jobs:
 
 Secrets (set per repo; all optional): `APPLE_DEVELOPER_ID_P12_BASE64`, `APPLE_DEVELOPER_ID_P12_PASSWORD`, `APPLE_NOTARY_KEY_BASE64`, `APPLE_NOTARY_KEY_ID`, `APPLE_NOTARY_ISSUER_ID`.
 
+Verifying release attestations: provenance signed inside a reusable workflow records the CALLED workflow's repository as the signer, so a plain `gh attestation verify <artifact> -R <consumer>` fails with `Error: verifying with issuer "sigstore.dev"`. Pass the signer repo explicitly:
+
+```sh
+gh attestation verify <artifact> -R <owner>/<consumer> --signer-repo agoodkind/swift-makefile
+```
+
 Dependabot automerge (gated on CI success):
 
 ```yaml
