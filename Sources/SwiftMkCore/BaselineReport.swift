@@ -93,7 +93,7 @@ public enum BaselineReport {
   static func singleLines(_ stats: BaselineUpdateStats) -> [String] {
     [
       "\(stats.label) baseline",
-      "  \(changePhrase(stats)), \(stats.remaining) violation\(stats.remaining == 1 ? "" : "s").",
+      "  \(changePhrase(stats)), \(stats.remaining) violation\(stats.remaining == 1 ? "" : "s"): \(stats.baselinePath)",
     ]
   }
 
@@ -106,11 +106,14 @@ public enum BaselineReport {
     lines.append("")
     let labelWidth = all.map(\.label.count).max() ?? 0
     let changeWidth = all.map { changePhrase($0).count }.max() ?? 0
+    let remainingWidth = all.map { remainingPhrase($0).count }.max() ?? 0
     for stats in all {
       let label = stats.label.padding(toLength: labelWidth, withPad: " ", startingAt: 0)
       let change = changePhrase(stats).padding(
         toLength: changeWidth, withPad: " ", startingAt: 0)
-      lines.append("  \(label)   \(change)   \(remainingPhrase(stats))")
+      let remaining = remainingPhrase(stats).padding(
+        toLength: remainingWidth, withPad: " ", startingAt: 0)
+      lines.append("  \(label)   \(change)   \(remaining)   \(stats.baselinePath)")
     }
     let totalRemaining = all.reduce(0) { $0 + $1.remaining }
     lines.append("")

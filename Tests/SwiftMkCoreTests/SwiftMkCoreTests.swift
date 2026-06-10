@@ -192,8 +192,17 @@ private let forbiddenTokens = [
 private func assertNoForbiddenTokens(_ text: String) {
   let lower = text.lowercased()
   for token in forbiddenTokens {
-    #expect(!lower.contains(token.lowercased()), "forbidden token \"\(token)\" in: \(text)")
+    #expect(
+      !lower.contains(token.lowercased()), "forbidden token \"\(token)\" in: \(text)")
   }
+}
+
+@Test
+func baselineRunnerTokenGateRefusalMessageIsLoud() {
+  let expected =
+    "baseline: refused: token gate not satisfied (set BASELINE_CONFIRM and BASELINE_"
+    + "TOKEN); no baseline was written"
+  #expect(BaselineRunner.tokenGateRefusalMessage() == expected)
 }
 
 @Test
@@ -218,7 +227,11 @@ func reportIsNoopReflectsKeyChange() {
 func reportSingleLinesAreNeutral() {
   let lines = BaselineReport.singleLines(
     makeStats(label: "golangci-lint", removed: 2, remaining: 17))
-  #expect(lines == ["golangci-lint baseline", "  2 removed, 17 violations."])
+  #expect(
+    lines == [
+      "golangci-lint baseline",
+      "  2 removed, 17 violations: .golangci-lint-baseline.txt",
+    ])
   assertNoForbiddenTokens(lines.joined(separator: "\n"))
 }
 
@@ -237,6 +250,10 @@ func reportRollupListsEachToolAndSummary() {
   #expect(text.contains("no change"))
   #expect(text.contains("no existing"))
   #expect(text.contains("4 -> 0"))
+  #expect(text.contains(".golangci-lint-baseline.txt"))
+  #expect(text.contains(".gocyclo-baseline.txt"))
+  #expect(text.contains(".deadcode-baseline.txt"))
+  #expect(text.contains(".staticcheck-extra-baseline.txt"))
   #expect(text.contains("Done. 31 violations across 4 baselines."))
   assertNoForbiddenTokens(text)
 }

@@ -24,6 +24,19 @@ public enum BaselineRunner {
     )
   }
 
+  static func tokenGateRefusalMessage() -> String {
+    "baseline: refused: token gate not satisfied (set BASELINE_CONFIRM and BASELINE_"
+      + "TOKEN); no baseline was written"
+  }
+
+  static func tokenGatePassesOrReportsRefusal() -> Bool {
+    guard tokenGatePasses() else {
+      Output.logError(tokenGateRefusalMessage())
+      return false
+    }
+    return true
+  }
+
   private static func swiftcheckExclude() -> String {
     Text.excludePattern(
       Env.get("SWIFTCHECK_EXTRA_DEFAULT_EXCLUDE_PATHS"),
@@ -107,7 +120,7 @@ public enum BaselineRunner {
   public static func updateSwiftlint(
     mode: BaselineMode, context: PathContext
   ) throws -> BaselineUpdateStats? {
-    guard tokenGatePasses() else { return nil }
+    guard tokenGatePassesOrReportsRefusal() else { return nil }
     _ = Lint.runTools(context: context)
     return try writeFrom(
       swiftlintComponent(),
@@ -127,7 +140,7 @@ public enum BaselineRunner {
   public static func updateComplexity(
     mode: BaselineMode, context: PathContext
   ) throws -> BaselineUpdateStats? {
-    guard tokenGatePasses() else { return nil }
+    guard tokenGatePassesOrReportsRefusal() else { return nil }
     _ = Lint.runTools(context: context)
     let component = Component(
       label: "swiftlint-complexity",
@@ -152,7 +165,7 @@ public enum BaselineRunner {
   public static func updateDeadcode(
     mode: BaselineMode, context: PathContext
   ) throws -> BaselineUpdateStats? {
-    guard tokenGatePasses() else { return nil }
+    guard tokenGatePassesOrReportsRefusal() else { return nil }
     _ = Lint.runTools(context: context)
     let component = Component(
       label: "periphery",
@@ -177,7 +190,7 @@ public enum BaselineRunner {
   public static func updateSwiftcheck(
     mode: BaselineMode, context: PathContext
   ) throws -> BaselineUpdateStats? {
-    guard tokenGatePasses() else { return nil }
+    guard tokenGatePassesOrReportsRefusal() else { return nil }
     _ = Swiftcheck.resolveBin()
     let component = Component(
       label: "swiftcheck-extra",
@@ -209,7 +222,7 @@ public enum BaselineRunner {
         "swiftlint scope baseline: set RULE=<id> or SWIFTLINT_BASELINE_SCOPE_PATTERN")
       return nil
     }
-    guard tokenGatePasses() else { return nil }
+    guard tokenGatePassesOrReportsRefusal() else { return nil }
     _ = Lint.runTools(context: context)
     let rule = Env.get("RULE")
     let onlyRules = rule.isEmpty ? [] : [rule]
@@ -252,24 +265,26 @@ public enum BaselineRunner {
     )
   }
 
+  private static func append(_ value: BaselineUpdateStats?, to stats: inout [BaselineUpdateStats]) {
+    guard let value else { return }
+    stats.append(value)
+  }
+
+  private static func updateAll(mode: BaselineMode, context: PathContext) throws {
+    guard tokenGatePassesOrReportsRefusal() else { return }
+    var stats: [BaselineUpdateStats] = []
+    append(try updateSwiftlint(mode: mode, context: context), to: &stats)
+    append(try updateComplexity(mode: mode, context: context), to: &stats)
+    append(try updateDeadcode(mode: mode, context: context), to: &stats)
+    append(try updateSwiftcheck(mode: mode, context: context), to: &stats)
+    BaselineReport.renderRollup(stats)
+  }
+
   public static func update(component: String, context: PathContext) throws {
     let mode = self.mode()
     switch component {
     case "all":
-      var stats: [BaselineUpdateStats] = []
-      if let value = try updateSwiftlint(mode: mode, context: context) {
-        stats.append(value)
-      }
-      if let value = try updateComplexity(mode: mode, context: context) {
-        stats.append(value)
-      }
-      if let value = try updateDeadcode(mode: mode, context: context) {
-        stats.append(value)
-      }
-      if let value = try updateSwiftcheck(mode: mode, context: context) {
-        stats.append(value)
-      }
-      BaselineReport.renderRollup(stats)
+      try updateAll(mode: mode, context: context)
     case "swiftlint":
       if let value = try updateSwiftlint(mode: mode, context: context) {
         BaselineReport.renderSingle(value)
