@@ -11,6 +11,7 @@ SWIFT_MK_API_REF ?= main
 SWIFT_MK_SWIFTLINT_CONFIG ?= .make/swiftlint.yml
 SWIFT_MK_SWIFT_FORMAT_CONFIG ?= .make/swift-format.json
 SWIFT_MK_PERIPHERY_CONFIG ?= .make/periphery.yml
+SWIFT_MK_MISE_CONFIG ?= .make/mise.toml
 SWIFT_MK_ALLOW_LOCAL_CONFIGS ?=
 
 ifeq ($(strip $(SWIFT_MK_ALLOW_LOCAL_CONFIGS)),)
@@ -28,6 +29,16 @@ endif
 ifneq ($(wildcard .periphery.yml),)
 ifneq ($(abspath $(SWIFT_MK_PERIPHERY_CONFIG)),$(abspath .periphery.yml))
 $(warning swift-makefile: local .periphery.yml is ignored; shared Periphery config is $(SWIFT_MK_PERIPHERY_CONFIG))
+endif
+endif
+ifneq ($(wildcard mise.toml),)
+ifneq ($(abspath $(SWIFT_MK_MISE_CONFIG)),$(abspath mise.toml))
+$(warning swift-makefile: local mise config is ignored; shared mise config is $(SWIFT_MK_MISE_CONFIG))
+endif
+endif
+ifneq ($(wildcard .tool-versions),)
+ifneq ($(abspath $(SWIFT_MK_MISE_CONFIG)),$(abspath .tool-versions))
+$(warning swift-makefile: local mise config is ignored; shared mise config is $(SWIFT_MK_MISE_CONFIG))
 endif
 endif
 endif
@@ -62,12 +73,14 @@ SWIFT_MK_FETCH_CHECK := $(call _swift_mk_require_fetched,$(SWIFT_MK))
 SWIFT_MK_FETCH_CHECK += $(call _swift_mk_require_fetched,$(SWIFT_MK_SWIFTLINT_CONFIG))
 SWIFT_MK_FETCH_CHECK += $(call _swift_mk_require_fetched,$(SWIFT_MK_SWIFT_FORMAT_CONFIG))
 SWIFT_MK_FETCH_CHECK += $(call _swift_mk_require_fetched,$(SWIFT_MK_PERIPHERY_CONFIG))
+SWIFT_MK_FETCH_CHECK += $(call _swift_mk_require_fetched,$(SWIFT_MK_MISE_CONFIG))
 SWIFT_MK_FETCH_CHECK += $(foreach m,$(SWIFT_MK_MODULES),$(call _swift_mk_require_fetched,.make/$(m)))
 else
 $(if $(filter ok,$(shell mkdir -p .make && if $(call _swift_mk_fetch,swift.mk,$(SWIFT_MK)); then printf ok; else printf fail; fi)),,$(error swift-makefile failed to fetch swift.mk))
 $(if $(filter ok,$(shell mkdir -p .make && if $(call _swift_mk_fetch,.swiftlint.yml,$(SWIFT_MK_SWIFTLINT_CONFIG)); then printf ok; else printf fail; fi)),,$(error swift-makefile failed to fetch .swiftlint.yml))
 $(if $(filter ok,$(shell mkdir -p .make && if $(call _swift_mk_fetch,.swift-format,$(SWIFT_MK_SWIFT_FORMAT_CONFIG)); then printf ok; else printf fail; fi)),,$(error swift-makefile failed to fetch .swift-format))
 $(if $(filter ok,$(shell mkdir -p .make && if $(call _swift_mk_fetch,.periphery.yml,$(SWIFT_MK_PERIPHERY_CONFIG)); then printf ok; else printf fail; fi)),,$(error swift-makefile failed to fetch .periphery.yml))
+$(if $(filter ok,$(shell mkdir -p .make && if $(call _swift_mk_fetch,mise.toml,$(SWIFT_MK_MISE_CONFIG)); then printf ok; else printf fail; fi)),,$(error swift-makefile failed to fetch mise.toml))
 $(foreach m,$(SWIFT_MK_MODULES),$(if $(filter ok,$(shell mkdir -p .make && if $(call _swift_mk_fetch,$(m),.make/$(m)); then printf ok; else printf fail; fi)),,$(error swift-makefile failed to fetch $(m))))
 endif
 

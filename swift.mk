@@ -196,6 +196,7 @@ endif
 SWIFT_MK_SWIFTLINT_CONFIG ?= .make/swiftlint.yml
 SWIFT_MK_SWIFT_FORMAT_CONFIG ?= .make/swift-format.json
 SWIFT_MK_PERIPHERY_CONFIG ?= .make/periphery.yml
+SWIFT_MK_MISE_CONFIG ?= .make/mise.toml
 
 # Default Xcode location for the rendered file-header macros. Override to a
 # project's xcshareddata for a per-project header. swift-mk reads the git
@@ -206,10 +207,12 @@ ifneq ($(strip $(SWIFT_MK_BOOTSTRAP_FETCHED)$(SWIFT_MK_SKIP_FETCH)),)
 SWIFT_MK_FETCHED_SWIFTLINT := $(call swift-mk-require-one,$(SWIFT_MK_SWIFTLINT_CONFIG))
 SWIFT_MK_FETCHED_SWIFT_FORMAT := $(call swift-mk-require-one,$(SWIFT_MK_SWIFT_FORMAT_CONFIG))
 SWIFT_MK_FETCHED_PERIPHERY := $(call swift-mk-require-one,$(SWIFT_MK_PERIPHERY_CONFIG))
+SWIFT_MK_FETCHED_MISE := $(call swift-mk-require-one,$(SWIFT_MK_MISE_CONFIG))
 else
 SWIFT_MK_FETCHED_SWIFTLINT := $(call swift-mk-fetch-path,.swiftlint.yml,$(SWIFT_MK_SWIFTLINT_CONFIG))
 SWIFT_MK_FETCHED_SWIFT_FORMAT := $(call swift-mk-fetch-path,.swift-format,$(SWIFT_MK_SWIFT_FORMAT_CONFIG))
 SWIFT_MK_FETCHED_PERIPHERY := $(call swift-mk-fetch-path,.periphery.yml,$(SWIFT_MK_PERIPHERY_CONFIG))
+SWIFT_MK_FETCHED_MISE := $(call swift-mk-fetch-path,mise.toml,$(SWIFT_MK_MISE_CONFIG))
 endif
 
 SWIFTLINT ?= swiftlint
@@ -356,6 +359,7 @@ export SWIFT_MK_API_REF
 export SWIFT_MK_SWIFTLINT_CONFIG
 export SWIFT_MK_SWIFT_FORMAT_CONFIG
 export SWIFT_MK_PERIPHERY_CONFIG
+export SWIFT_MK_MISE_CONFIG
 export SWIFTLINT
 export SWIFTLINT_FLAGS
 export SWIFTLINT_TARGETS
