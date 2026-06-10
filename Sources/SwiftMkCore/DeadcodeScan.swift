@@ -248,19 +248,28 @@ enum DeadcodeScan {
     // Disable code signing for the coverage build only: it produces the index,
     // not a signed product, and a signed build can fail on provisioning and leave
     // a partial index. swift-mk owns this, so consumers need no configuration.
-    let result = Shell.sh(
-      buildCommand,
+    let result = Shell.runStreamingStderr(
+      "/bin/sh",
+      ["-c", buildCommand],
       environment: DeadcodeBuildConfig.buildEnvironment(derivedData: derivedData))
     if result.status != 0 {
       // A failed build leaves a partial index whose missing references read as
       // false "unused" findings, so the scan must not run. Save the output
-      // under a trace-scoped name, surface the compiler errors, and fail.
+      // under a trace-scoped name, surface structured compiler errors, and fail.
       let logPath = BuildFailureLog.write(
-        output: result.combined,
+        output: result.stdout,
         logDirectory: Logging.logDirectory,
         traceID: Logging.correlation.traceID)
-      for line in BuildFailureLog.errorLines(in: result.combined) {
-        Output.error("deadcode: \(line)")
+      let errorIssues = buildIssues(derivedData: derivedData).filter { issue in
+        issue.severity == "error"
+      }
+      for issue in errorIssues {
+        outputBuildIssue(issue)
+      }
+      if errorIssues.isEmpty {
+        Output.error(
+          "deadcode: no structured build issues found; full transcript at "
+            + (logPath ?? "(unavailable)"))
       }
       failHard(
         rawPath: rawPath,
@@ -280,20 +289,6 @@ enum DeadcodeScan {
       message:
         "lint-deadcode: no index store under \(derivedData) after SWIFT_BUILD_CMD; "
         + "ensure the build passes -derivedDataPath $(SWIFT_MK_DERIVED_DATA)")
-    return nil
-  }
-
-  static func existingIndexStore(_ derivedData: String) -> String? {
-    guard !derivedData.isEmpty else {
-      return nil
-    }
-    let candidates = [
-      "\(derivedData)/Index.noindex/DataStore",
-      "\(derivedData)/Index/DataStore",
-    ]
-    for candidate in candidates where FileManager.default.fileExists(atPath: candidate) {
-      return candidate
-    }
     return nil
   }
 
@@ -404,6 +399,90 @@ enum DeadcodeScan {
     Output.error(message)
     appendCombined(message + "\n", to: rawPath)
     GateStatus.last = hardFailStatus
+  }
+}
+
+// MARK: - DeadcodeScan
+
+extension DeadcodeScan {
+  static func existingIndexStore(_ derivedData: String) -> String? {
+    guard !derivedData.isEmpty else {
+      return nil
+    }
+    let candidates = [
+      "\(derivedData)/Index.noindex/DataStore",
+      "\(derivedData)/Index/DataStore",
+    ]
+    for candidate in candidates where FileManager.default.fileExists(atPath: candidate) {
+      return candidate
+    }
+    return nil
+  }
+
+  private static func buildIssues(derivedData: String) -> [XCResult.Issue] {
+    let trimmed = derivedData.trimmingCharacters(in: .whitespaces)
+    guard !trimmed.isEmpty else {
+      return []
+    }
+    return issues(inBundleDirectory: "\(trimmed)/ResultBundles")
+  }
+
+  private static func issues(inBundleDirectory directory: String) -> [XCResult.Issue] {
+    var isDirectory = ObjCBool(false)
+    guard FileManager.default.fileExists(atPath: directory, isDirectory: &isDirectory),
+      isDirectory.boolValue
+    else {
+      return []
+    }
+
+    let entries: [String]
+    do {
+      entries = try FileManager.default.contentsOfDirectory(atPath: directory)
+    } catch {
+      Output.error("deadcode: could not list \(directory): \(error)")
+      return []
+    }
+
+    let bundles =
+      entries
+      .filter { entry in
+        entry.hasSuffix(".xcresult")
+      }
+      .sorted()
+    var issues: [XCResult.Issue] = []
+    for bundleName in bundles {
+      let bundle = (directory as NSString).appendingPathComponent(bundleName)
+      let result = Shell.run(
+        "xcrun",
+        [
+          "xcresulttool",
+          "get",
+          "build-results",
+          "--path",
+          bundle,
+          "--format",
+          "json",
+        ])
+      guard result.status == 0 else {
+        Output.error("deadcode: could not read \(bundle)")
+        continue
+      }
+      let bundleIssues = XCResult.issuesFromBuildResultsJSON(Data(result.stdout.utf8))
+      guard !bundleIssues.isEmpty else {
+        Output.error("deadcode: could not read \(bundle)")
+        continue
+      }
+      issues.append(contentsOf: bundleIssues)
+    }
+    return issues
+  }
+
+  private static func outputBuildIssue(_ issue: XCResult.Issue) {
+    if issue.file.isEmpty {
+      Output.error("deadcode: \(issue.message)")
+      return
+    }
+    Output.error("deadcode: \(issue.file):\(issue.line): \(issue.message)")
   }
 }
 

@@ -10,13 +10,12 @@ import Foundation
 
 // MARK: - BuildFailureLog
 
-/// Persists a failed dead-code build's output and extracts its compiler errors.
+/// Persists a failed dead-code build's output.
 ///
 /// The dead-code gate builds the project to refresh the Xcode index store. A
 /// failed build leaves a partial index, so the gate must not scan it. This saves
 /// the full build output under a trace-scoped name, so the failure is reachable
-/// from the run's printed trace id, and pulls the compiler-error lines so the
-/// cause is visible without opening the file.
+/// from the run's printed trace id.
 enum BuildFailureLog {
   private static let keepCount = 5
 
@@ -40,37 +39,6 @@ enum BuildFailureLog {
     }
     prune(in: logDirectory, name: name)
     return path
-  }
-
-  /// The lines that name the failure: compiler errors, the build-failed banner,
-  /// and the failing-command list, in source order. A build can fail with no
-  /// `error:` line at all (a script phase, a signing step), in which case the
-  /// only lines that name the cause are the ones xcodebuild prints between
-  /// "The following build commands failed:" and its "(N failures)" closer, so
-  /// that block is captured whole.
-  static func errorLines(in output: String) -> [String] {
-    var lines: [String] = []
-    var inFailedCommandList = false
-    for rawLine in output.split(separator: "\n", omittingEmptySubsequences: false) {
-      let line = String(rawLine)
-      if inFailedCommandList {
-        lines.append(line)
-        if line.range(of: #"^\([0-9]+ failures?\)"#, options: .regularExpression) != nil {
-          inFailedCommandList = false
-        }
-        continue
-      }
-      let isError = line.contains("error:")
-      let isBanner = line.contains("** BUILD FAILED **")
-      let isSummary = line.contains("The following build commands failed")
-      if isError || isBanner || isSummary {
-        lines.append(line)
-      }
-      if isSummary {
-        inFailedCommandList = true
-      }
-    }
-    return lines
   }
 
   /// Keep the most recent build logs and remove older ones so the log directory

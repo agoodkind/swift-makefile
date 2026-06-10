@@ -57,6 +57,22 @@ func deadcodeBuildConfigWritesXcconfigAndReturnsAbsolutePath() throws {
 }
 
 @Test
+func deadcodeBuildConfigSetsResultBundleDirectoryWithDerivedData() {
+  let makeDir = NSTemporaryDirectory() + "swiftmk-xcconfig-" + UUID().uuidString
+  let environment = DeadcodeBuildConfig.buildEnvironment(
+    derivedData: "/proj/build/DerivedData", makeDir: makeDir)
+  #expect(
+    environment["SWIFT_MK_RESULT_BUNDLE_DIR"] == "/proj/build/DerivedData/ResultBundles")
+}
+
+@Test
+func deadcodeBuildConfigOmitsResultBundleDirectoryWithoutDerivedData() {
+  let makeDir = NSTemporaryDirectory() + "swiftmk-xcconfig-" + UUID().uuidString
+  let environment = DeadcodeBuildConfig.buildEnvironment(derivedData: "  ", makeDir: makeDir)
+  #expect(environment["SWIFT_MK_RESULT_BUNDLE_DIR"] == nil)
+}
+
+@Test
 func deadcodeBuildConfigCarriesDevelopmentTeamThroughSigningOverride() {
   // The deadcode xcconfig displaces the signing xcconfig that otherwise supplies
   // DEVELOPMENT_TEAM, and a consumer's config-generation script phase can require

@@ -103,6 +103,11 @@ enum DeadcodeBuildConfig {
     }
     let absolutePath = URL(fileURLWithPath: path).standardizedFileURL.path
     Output.info("deadcode: coverage build runs with code signing disabled via \(absolutePath)")
-    return ["XCODE_XCCONFIG_FILE": absolutePath]
+    var environment = ["XCODE_XCCONFIG_FILE": absolutePath]
+    let trimmed = derivedData.trimmingCharacters(in: .whitespaces)
+    if !trimmed.isEmpty {
+      environment["SWIFT_MK_RESULT_BUNDLE_DIR"] = "\(trimmed)/ResultBundles"
+    }
+    return environment
   }
 }
