@@ -62,5 +62,31 @@ runs:
                 exit 1
             fi
 
-            xcrun stapler staple "$artifact"
+            # stapler cannot write into a zip. A zip carrying .app bundles is
+            # expanded, each app stapled, and the zip rebuilt; a zip of bare
+            # binaries cannot be stapled at all (Gatekeeper fetches the ticket
+            # online on first launch), so it ships as-is once notarized.
+            case "$artifact" in
+            *.zip)
+                expand_dir="$(mktemp -d "$RUNNER_TEMP/staple.XXXXXX")"
+                ditto -x -k "$artifact" "$expand_dir"
+                found_app=0
+                for app in "$expand_dir"/*.app "$expand_dir"/*/*.app; do
+                    if [[ -d "$app" ]]; then
+                        xcrun stapler staple "$app"
+                        found_app=1
+                    fi
+                done
+                if [[ "$found_app" -eq 1 ]]; then
+                    rm "$artifact"
+                    ditto -c -k "$expand_dir" "$artifact"
+                else
+                    echo "notarize-staple: $artifact carries no .app to staple; notarized ticket is online-only"
+                fi
+                rm -rf "$expand_dir"
+                ;;
+            *)
+                xcrun stapler staple "$artifact"
+                ;;
+            esac
         done

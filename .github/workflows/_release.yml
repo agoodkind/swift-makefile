@@ -125,6 +125,9 @@ jobs:
 
       # Signing values pass as make command-line variables only when present, so
       # a secretless run never clobbers a consumer's ?= defaults with empties.
+      # Notary credentials are exposed too: a consumer whose build hook must
+      # notarize mid-build (bare CLI binaries that the staple step cannot help)
+      # submits from inside make and sets `notarize: false` on this workflow.
       - name: Build release artifacts
         env:
           CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
@@ -133,6 +136,9 @@ jobs:
           MARKETING_VERSION: ${{ needs.meta.outputs.marketing_version }}
           CURRENT_PROJECT_VERSION: ${{ needs.meta.outputs.build_version }}
           SWIFT_MK_DIST_DIR: ${{ inputs.dist-dir }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
         run: |
           sign_args=""
           if [ -n "${CERT_SHA1:-}" ]; then
