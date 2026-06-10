@@ -1,41 +1,236 @@
+# Reusable Swift release pipeline: meta -> build (+SBOM) -> notarize/staple
+# (+attestations) -> publish. The make layer owns all build and publish logic
+# (release-meta / release-build / release-publish in swift-release.mk); this
+# workflow only orchestrates. Signing and notarization silently no-op when the
+# Apple secrets are absent, so a fork or a secretless repo still releases.
 name: Release
 
 on:
   workflow_call:
+    inputs:
+      runner:
+        type: string
+        default: macos-latest
+      publish-runner:
+        type: string
+        default: ubuntu-latest
+      xcode-version:
+        type: string
+        default: latest-stable
+      build-target:
+        type: string
+        default: release-build
+      dist-dir:
+        type: string
+        default: dist
+      make-args:
+        type: string
+        default: ""
+      brew-packages:
+        type: string
+        default: ""
+      notarize:
+        type: boolean
+        default: true
+      # Globs evaluated inside dist-dir naming the artifacts to notarize.
+      notarize-pattern:
+        type: string
+        default: "*.dmg *.zip *.pkg"
+      attest:
+        type: boolean
+        default: true
+      # Path of the built product to SBOM-scan; empty skips the SBOM.
+      sbom-subject-path:
+        type: string
+        default: ""
+      signing-identity-name:
+        type: string
+        default: ""
+      apple-team-id:
+        type: string
+        default: ""
+      extra-cache-paths:
+        type: string
+        default: ""
+      timeout-minutes:
+        type: number
+        default: 45
+    secrets:
+      APPLE_DEVELOPER_ID_P12_BASE64:
+        required: false
+      APPLE_DEVELOPER_ID_P12_PASSWORD:
+        required: false
+      APPLE_NOTARY_KEY_BASE64:
+        required: false
+      APPLE_NOTARY_KEY_ID:
+        required: false
+      APPLE_NOTARY_ISSUER_ID:
+        required: false
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  # The swift-makefile bootstrap fetches swift.mk via `gh api`; unauthenticated
+  # fetches fail silently, so every consumer needs this token.
+  GH_TOKEN: ${{ github.token }}
 
 jobs:
-  release:
-    runs-on: macos-latest
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      build_version: ${{ steps.meta.outputs.build_version }}
+      marketing_version: ${{ steps.meta.outputs.marketing_version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Compute release metadata
+        id: meta
+        run: make release-meta
+
+  build:
+    needs: meta
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    env:
+      HAS_SIGNING: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install brew packages
+        if: inputs.brew-packages != ''
+        run: brew install ${{ inputs.brew-packages }}
+
+      - uses: agoodkind/swift-makefile/.github/actions/setup-build-env@main
+        with:
+          xcode-version: ${{ inputs.xcode-version }}
+          github-token: ${{ github.token }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+
+      - name: Install signing certificate
+        id: cert
+        if: env.HAS_SIGNING == 'true'
+        uses: agoodkind/swift-makefile/.github/actions/import-signing-cert@main
+        with:
+          p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          identity-name: ${{ inputs.signing-identity-name }}
+
+      # Signing values pass as make command-line variables only when present, so
+      # a secretless run never clobbers a consumer's ?= defaults with empties.
+      - name: Build release artifacts
+        env:
+          CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+          RELEASE_TAG: ${{ needs.meta.outputs.tag }}
+          MARKETING_VERSION: ${{ needs.meta.outputs.marketing_version }}
+          CURRENT_PROJECT_VERSION: ${{ needs.meta.outputs.build_version }}
+          SWIFT_MK_DIST_DIR: ${{ inputs.dist-dir }}
+        run: |
+          sign_args=""
+          if [ -n "${CERT_SHA1:-}" ]; then
+            sign_args="CODE_SIGN_IDENTITY=$CERT_SHA1 DMG_SIGN_IDENTITY=$CERT_SHA1"
+          fi
+          if [ -n "${TEAM_ID:-}" ]; then sign_args="$sign_args DEVELOPMENT_TEAM=$TEAM_ID"; fi
+          make ${{ inputs.build-target }} ${{ inputs.make-args }} $sign_args
+
+      - name: Generate SBOM
+        if: inputs.sbom-subject-path != ''
+        uses: anchore/sbom-action@v0.24.0
+        with:
+          path: ${{ inputs.sbom-subject-path }}
+          format: spdx-json
+          output-file: ${{ inputs.dist-dir }}/sbom-${{ needs.meta.outputs.tag }}.spdx.json
+          upload-artifact: false
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-dist-${{ needs.meta.outputs.tag }}
+          path: ${{ inputs.dist-dir }}/*
+          if-no-files-found: error
+
+  notarize:
+    needs: [meta, build]
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    env:
+      HAS_NOTARY: ${{ secrets.APPLE_NOTARY_KEY_BASE64 != '' }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-dist-${{ needs.meta.outputs.tag }}
+          path: ${{ inputs.dist-dir }}
+
+      # Expand the notarize pattern into an explicit newline-separated file list
+      # once; the notarize and attest steps all consume the same list.
+      - name: Resolve release artifacts
+        id: artifacts
+        run: |
+          cd "${{ inputs.dist-dir }}"
+          {
+            echo "list<<ARTIFACTS_EOF"
+            for f in ${{ inputs.notarize-pattern }}; do
+              if [ -e "$f" ]; then echo "${{ inputs.dist-dir }}/$f"; fi
+            done
+            echo "ARTIFACTS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Notarize and staple
+        if: ${{ inputs.notarize && env.HAS_NOTARY == 'true' }}
+        uses: agoodkind/swift-makefile/.github/actions/notarize-staple@main
+        with:
+          artifact-path: ${{ steps.artifacts.outputs.list }}
+          notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+
+      - name: Attest provenance
+        if: ${{ inputs.attest && steps.artifacts.outputs.list != '' }}
+        uses: actions/attest@v4.1.0
+        with:
+          subject-path: ${{ steps.artifacts.outputs.list }}
+
+      - name: Attest SBOM
+        if: ${{ inputs.attest && inputs.sbom-subject-path != '' && steps.artifacts.outputs.list != '' }}
+        uses: actions/attest@v4.1.0
+        with:
+          subject-path: ${{ steps.artifacts.outputs.list }}
+          sbom-path: ${{ inputs.dist-dir }}/sbom-${{ needs.meta.outputs.tag }}.spdx.json
+
+      # One artifact name for publish, whether or not notarization ran.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-dist-stapled-${{ needs.meta.outputs.tag }}
+          path: ${{ inputs.dist-dir }}/*
+          if-no-files-found: error
+
+  publish:
+    needs: [meta, build, notarize]
+    runs-on: ${{ inputs.publish-runner }}
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Compute release tag
-        id: tag
-        run: |
-          TS=$(date -u +%Y%m%d%H%M)
-          SHA=$(git rev-parse --short HEAD)
-          TAG="${TS}-${SHA}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-      - name: Push tag
-        env:
-          TAG: ${{ steps.tag.outputs.tag }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "$TAG"
-          git push origin "$TAG"
-      - name: Archive repo
-        env:
-          TAG: ${{ steps.tag.outputs.tag }}
-        run: |
-          mkdir release
-          git archive --format tar.gz --output "release/swift-makefile-${TAG}.tar.gz" HEAD
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-dist-stapled-${{ needs.meta.outputs.tag }}
+          path: ${{ inputs.dist-dir }}
       - name: Publish release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.tag.outputs.tag }}
-        run: |
-          gh release create "$TAG" "release/swift-makefile-${TAG}.tar.gz"
+          RELEASE_TAG: ${{ needs.meta.outputs.tag }}
+          SWIFT_MK_DIST_DIR: ${{ inputs.dist-dir }}
+        run: make release-publish

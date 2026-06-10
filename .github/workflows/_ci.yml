@@ -1,37 +1,115 @@
+# Reusable Swift CI. Consumers call this with their make targets; all logic
+# stays in make. Triggers live in the caller (GitHub does not allow them here).
 name: CI
 
 on:
   workflow_call:
+    inputs:
+      runner:
+        type: string
+        default: macos-latest
+      xcode-version:
+        type: string
+        default: latest-stable
+      # JSON array of make targets; one matrix job per target.
+      targets:
+        type: string
+        default: '["lint","build","test","audit"]'
+      # Optional make target run before each matrix target (e.g. install-dependencies).
+      setup-target:
+        type: string
+        default: ""
+      # Appended verbatim to every make invocation (e.g. CODE_SIGN_IDENTITY=-).
+      make-args:
+        type: string
+        default: ""
+      brew-packages:
+        type: string
+        default: ""
+      # Import a real Developer ID certificate before building (requires the
+      # APPLE_DEVELOPER_ID_P12_* secrets; silently skipped when absent).
+      import-signing-cert:
+        type: boolean
+        default: false
+      signing-identity-name:
+        type: string
+        default: ""
+      apple-team-id:
+        type: string
+        default: ""
+      extra-cache-paths:
+        type: string
+        default: ""
+      fetch-depth:
+        type: string
+        default: "1"
+      timeout-minutes:
+        type: number
+        default: 30
+    secrets:
+      APPLE_DEVELOPER_ID_P12_BASE64:
+        required: false
+      APPLE_DEVELOPER_ID_P12_PASSWORD:
+        required: false
+
+env:
+  # The swift-makefile bootstrap fetches swift.mk via `gh api`; unauthenticated
+  # fetches fail silently, so every consumer needs this token.
+  GH_TOKEN: ${{ github.token }}
 
 jobs:
-  smoke-fetch:
-    runs-on: macos-latest
+  ci:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(inputs.targets) }}
+    env:
+      HAS_SIGNING: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v6
-      - run: make smoke-fetch
+        with:
+          fetch-depth: ${{ inputs.fetch-depth }}
 
-  lint:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v6
-      - run: brew install swiftlint periphery osv-scanner
-      - run: make lint
+      - name: Install brew packages
+        if: inputs.brew-packages != ''
+        run: brew install ${{ inputs.brew-packages }}
 
-  build:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v6
-      - run: make build
+      - uses: agoodkind/swift-makefile/.github/actions/setup-build-env@main
+        with:
+          xcode-version: ${{ inputs.xcode-version }}
+          github-token: ${{ github.token }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
 
-  test:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v6
-      - run: make test
+      - name: Install signing certificate
+        id: cert
+        if: ${{ inputs.import-signing-cert && env.HAS_SIGNING == 'true' }}
+        uses: agoodkind/swift-makefile/.github/actions/import-signing-cert@main
+        with:
+          p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          identity-name: ${{ inputs.signing-identity-name }}
 
-  audit:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v6
-      - run: brew install osv-scanner
-      - run: make audit
+      # Signing values pass as make command-line variables only when present, so
+      # an absent cert never clobbers a consumer's ?= defaults with empty values.
+      - name: Run setup target
+        if: inputs.setup-target != ''
+        env:
+          CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+        run: |
+          sign_args=""
+          if [ -n "${CERT_SHA1:-}" ]; then sign_args="CODE_SIGN_IDENTITY=$CERT_SHA1"; fi
+          if [ -n "${TEAM_ID:-}" ]; then sign_args="$sign_args DEVELOPMENT_TEAM=$TEAM_ID"; fi
+          make ${{ inputs.setup-target }} ${{ inputs.make-args }} $sign_args
+
+      - name: Run ${{ matrix.target }}
+        env:
+          CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+        run: |
+          sign_args=""
+          if [ -n "${CERT_SHA1:-}" ]; then sign_args="CODE_SIGN_IDENTITY=$CERT_SHA1"; fi
+          if [ -n "${TEAM_ID:-}" ]; then sign_args="$sign_args DEVELOPMENT_TEAM=$TEAM_ID"; fi
+          make ${{ matrix.target }} ${{ inputs.make-args }} $sign_args

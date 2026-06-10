@@ -1,0 +1,44 @@
+# Reusable Dependabot automerge, gated on a successful CI workflow_run so a
+# bump never merges before its checks finish. Callers trigger on
+# `workflow_run: workflows: ["CI"]` and pass `secrets: inherit`.
+name: Dependabot Auto Merge
+
+on:
+  workflow_call:
+    inputs:
+      merge-method:
+        type: string
+        default: squash
+
+jobs:
+  automerge:
+    if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      # gh pr merge --delete-branch shells out to git to clean up the local
+      # branch, so it needs a checkout; without one it aborts with
+      # "fatal: not a git repository" before the merge happens.
+      - uses: actions/checkout@v6
+
+      - name: Merge passing Dependabot pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          MERGE_METHOD: ${{ inputs.merge-method }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          pr_json="$(gh pr list --state open --head "$HEAD_BRANCH" --json number,author,isDraft)"
+          pr_number="$(printf '%s' "$pr_json" | jq -r '[.[] | select(.author.login == "dependabot[bot]" and (.isDraft | not)) | .number] | first // empty')"
+
+          if [[ -z "$pr_number" ]]; then
+              echo "No open non-draft Dependabot PR found for branch $HEAD_BRANCH"
+              exit 0
+          fi
+
+          gh pr merge "$pr_number" "--${MERGE_METHOD}" --delete-branch
