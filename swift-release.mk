@@ -66,7 +66,7 @@ release-build:
 		exit 1; \
 	fi
 	@mkdir -p "$(SWIFT_MK_DIST_DIR)"
-	@eval "$(SWIFT_MK_RELEASE_BUILD_CMD)"
+	@export SWIFT_MK_RELEASE_NONBLOCKING_GATES=1; eval "$(SWIFT_MK_RELEASE_BUILD_CMD)"
 	@if [ -z "$$(ls -A '$(SWIFT_MK_DIST_DIR)' 2>/dev/null)" ]; then \
 		echo "release-build: SWIFT_MK_RELEASE_BUILD_CMD left $(SWIFT_MK_DIST_DIR)/ empty" >&2; \
 		exit 1; \

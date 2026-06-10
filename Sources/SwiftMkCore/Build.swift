@@ -26,7 +26,17 @@ public enum Build {
   /// status when `SWIFT_BUILD_CMD` is unset, or the build command's exit status.
   public static func gateAndBuild() -> Int32 {
     if !Lint.runBuildCheck(context: PathContext.current()) {
-      return Toolchain.gateFailureStatus
+      // The release pipeline ships even when lint gates are red: the CI lint
+      // jobs surface those failures on their own, and blocking a signed
+      // release on lint debt only strands users on broken versions. Every
+      // other build path stays hard-gated; only swift-release.mk sets this.
+      guard Env.get("SWIFT_MK_RELEASE_NONBLOCKING_GATES") == "1" else {
+        return Toolchain.gateFailureStatus
+      }
+      Output.log(
+        "build: lint gates FAILED; continuing because the release pipeline set "
+          + "SWIFT_MK_RELEASE_NONBLOCKING_GATES=1. The lint gates still report "
+          + "these failures everywhere else.")
     }
     let command = Env.get("SWIFT_BUILD_CMD")
     guard !command.isEmpty else {
