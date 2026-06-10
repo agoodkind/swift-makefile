@@ -207,11 +207,23 @@ ifneq ($(strip $(SWIFT_MK_BOOTSTRAP_FETCHED)$(SWIFT_MK_SKIP_FETCH)),)
 SWIFT_MK_FETCHED_SWIFTLINT := $(call swift-mk-require-one,$(SWIFT_MK_SWIFTLINT_CONFIG))
 SWIFT_MK_FETCHED_SWIFT_FORMAT := $(call swift-mk-require-one,$(SWIFT_MK_SWIFT_FORMAT_CONFIG))
 SWIFT_MK_FETCHED_PERIPHERY := $(call swift-mk-require-one,$(SWIFT_MK_PERIPHERY_CONFIG))
-SWIFT_MK_FETCHED_MISE := $(call swift-mk-require-one,$(SWIFT_MK_MISE_CONFIG))
 else
 SWIFT_MK_FETCHED_SWIFTLINT := $(call swift-mk-fetch-path,.swiftlint.yml,$(SWIFT_MK_SWIFTLINT_CONFIG))
 SWIFT_MK_FETCHED_SWIFT_FORMAT := $(call swift-mk-fetch-path,.swift-format,$(SWIFT_MK_SWIFT_FORMAT_CONFIG))
 SWIFT_MK_FETCHED_PERIPHERY := $(call swift-mk-fetch-path,.periphery.yml,$(SWIFT_MK_PERIPHERY_CONFIG))
+endif
+
+# swift.mk owns the shared mise config outright: it is fetched here, not by the
+# consumer's tracked bootstrap.mk, so every consumer converges on its next run
+# with no consumer-repo change. The top-level run fetches it once, which is how
+# the SWIFT_MK_SKIP_FETCH=1 sub-makes consumers use for their inner builds find
+# it already present; a strict skip-fetch run that genuinely lacks it gets the
+# standard pre-fetch error.
+ifneq ($(wildcard $(SWIFT_MK_MISE_CONFIG)),)
+SWIFT_MK_FETCHED_MISE := 1
+else ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
+SWIFT_MK_FETCHED_MISE := $(call swift-mk-require-one,$(SWIFT_MK_MISE_CONFIG))
+else
 SWIFT_MK_FETCHED_MISE := $(call swift-mk-fetch-path,mise.toml,$(SWIFT_MK_MISE_CONFIG))
 endif
 
