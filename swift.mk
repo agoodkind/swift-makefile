@@ -474,6 +474,7 @@ help:
 	@printf '  %-40s %s\n' 'update-consumers-dry-run' 'show fleet update work without writes'
 
 swift-mk-bin:
+	@if [ -x "$(SWIFT_MK_BIN)" ]; then "$(SWIFT_MK_BIN)" trace begin 2>/dev/null || true; fi
 	@SWIFT_MK_ROOT="$(CURDIR)" bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-build.sh" resolve
 
 # Render the Xcode file-header macros from the current git identity so newly

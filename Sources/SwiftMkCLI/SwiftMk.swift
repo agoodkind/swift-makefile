@@ -27,13 +27,32 @@ struct SwiftMk: ParsableCommand {
       BaselineMigrateCommand.self,
       XcodeFileHeader.self, BuildCheck.self, BuildCommand.self, GateToken.self,
       SigningXcconfig.self, SigningIdentity.self, VerifySigning.self,
-      ToolchainCommand.self, BuildToolingAuditCommand.self,
+      TraceCommand.self, ToolchainCommand.self, BuildToolingAuditCommand.self,
     ]
   )
 }
 
 private func gate(_ body: (PathContext) -> Bool) throws {
   if !body(PathContext.current()) { throw ExitCode(1) }
+}
+
+// MARK: - TraceCommand
+
+struct TraceCommand: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "trace",
+    subcommands: [TraceBegin.self]
+  )
+}
+
+// MARK: - TraceBegin
+
+struct TraceBegin: ParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "begin")
+
+  func run() {
+    Logging.beginRun()
+  }
 }
 
 // MARK: - LintCommand

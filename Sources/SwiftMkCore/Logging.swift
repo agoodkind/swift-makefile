@@ -21,6 +21,7 @@ import Foundation
 public enum Logging {
   /// The per-concern JSONL directory every run writes under.
   public static let logDirectory = ".make/logs"
+  public static let traceparentPath = ".make/logs/.traceparent"
 
   private static let sentinelPath = ".make/logs/.run"
   private static let fallbackConcern = "swift-mk"
@@ -31,6 +32,7 @@ public enum Logging {
   nonisolated(unsafe) private static var started = false
   nonisolated(unsafe) private static var recording = false
   nonisolated(unsafe) private static var correlationValue = Correlation.new()
+  nonisolated(unsafe) private static var logDirectoryOverride: String?
 
   nonisolated(unsafe) private static let timestampFormatter: ISO8601DateFormatter = {
     let formatter = ISO8601DateFormatter()
@@ -44,30 +46,128 @@ public enum Logging {
     return correlationValue
   }
 
-  /// Resolve the run's trace once: adopt an inherited traceparent or mint a new
-  /// one and export it for child processes, then print the header unless this is
-  /// an auxiliary subcommand. swift-mk runs single-threaded, so the started flag
-  /// needs no lock.
+  /// Begin a top-level make run before any shell build output can appear.
+  public static func beginRun() {
+    if isNestedMakeLevel(Env.get("MAKELEVEL")) {
+      ensureStarted()
+      return
+    }
+    let minted = Correlation.new()
+    started = true
+    correlationValue = minted
+    setenv("TRACEPARENT", minted.traceparent, 1)
+    writeTraceparent(minted)
+    // The make recipe redirects stderr to hide stale-binary errors.
+    printHeaderOnce(minted, to: .standardOutput)
+    startExport(minted)
+  }
+
+  /// Resolve the run's trace once: adopt an inherited traceparent, adopt the
+  /// persisted trace from the latest make run, or mint a new one, then print the
+  /// header unless this is an auxiliary subcommand. swift-mk runs single-threaded,
+  /// so the started flag needs no lock.
   public static func ensureStarted() {
     if started {
       return
     }
     started = true
-    let inherited = Env.get("TRACEPARENT")
-    if let adopted = Correlation.fromTraceparent(inherited) {
-      correlationValue = adopted
-    } else {
-      correlationValue = Correlation.new()
-      setenv("TRACEPARENT", correlationValue.traceparent, 1)
-    }
+    correlationValue = resolveCorrelation()
     if !isHeaderless() {
       printHeaderOnce(correlationValue)
     }
+    startExport(correlationValue)
+  }
+
+  public static func resetForTesting(logDirectory: String? = nil) {
+    started = false
+    recording = false
+    correlationValue = Correlation.new()
+    logDirectoryOverride = logDirectory
+  }
+
+  static func isNestedMakeLevel(_ value: String) -> Bool {
+    guard !value.isEmpty else {
+      return false
+    }
+    guard let level = Int(value) else {
+      return value != "0"
+    }
+    // GNU make increments MAKELEVEL before recipe commands run.
+    return level > 1
+  }
+
+  public static var traceparentPathForTesting: String {
+    activeTraceparentPath
+  }
+
+  public static var sentinelPathForTesting: String {
+    activeSentinelPath
+  }
+
+  private static var activeLogDirectory: String {
+    logDirectoryOverride ?? logDirectory
+  }
+
+  private static var activeTraceparentPath: String {
+    if let logDirectoryOverride {
+      return (logDirectoryOverride as NSString).appendingPathComponent(".traceparent")
+    }
+    return traceparentPath
+  }
+
+  private static var activeSentinelPath: String {
+    if let logDirectoryOverride {
+      return (logDirectoryOverride as NSString).appendingPathComponent(".run")
+    }
+    return sentinelPath
+  }
+
+  private static func resolveCorrelation() -> Correlation {
+    if let adopted = Correlation.fromTraceparent(Env.get("TRACEPARENT")) {
+      return adopted
+    }
+    if let adopted = traceparentFileCorrelation() {
+      setenv("TRACEPARENT", adopted.traceparent, 1)
+      return adopted
+    }
+    let minted = Correlation.new()
+    setenv("TRACEPARENT", minted.traceparent, 1)
+    writeTraceparent(minted)
+    return minted
+  }
+
+  private static func writeTraceparent(_ correlation: Correlation) {
+    ensureLogDirectory()
+    do {
+      try correlation.traceparent.write(
+        toFile: activeTraceparentPath, atomically: true, encoding: .utf8)
+    } catch {
+      Output.error("swift-mk logging: write traceparent: \(error)")
+    }
+  }
+
+  private static func traceparentFileCorrelation() -> Correlation? {
+    guard FileManager.default.fileExists(atPath: activeTraceparentPath) else {
+      return nil
+    }
+    do {
+      let value = try String(contentsOfFile: activeTraceparentPath, encoding: .utf8)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      // Direct CLI calls outside make intentionally join the last run's file trace
+      // until a new top-level `make` run refreshes it through `trace begin`.
+      return Correlation.fromTraceparent(value)
+    } catch {
+      Output.error("swift-mk logging: read traceparent: \(error)")
+      return nil
+    }
+  }
+
+  private static func startExport(_ correlation: Correlation) {
     // Export the run's span when a collector endpoint is set. The exporter
     // adopts the run's trace id, so a collector sees the same trace id the
     // header prints. The flush runs at process exit through atexit, which
     // fires even though the CLI subcommands return rather than call exit.
-    OTelExport.start(correlationValue)
+    OTelExport.start(correlation)
     atexit { OTelExport.shutdown() }
   }
 
@@ -113,27 +213,30 @@ public enum Logging {
     return false
   }
 
-  private static func printHeaderOnce(_ correlation: Correlation) {
+  private static func printHeaderOnce(
+    _ correlation: Correlation,
+    to handle: FileHandle = .standardError
+  ) {
     if alreadyPrinted(correlation.traceID) {
       return
     }
     ensureLogDirectory()
     do {
-      try correlation.traceID.write(toFile: sentinelPath, atomically: true, encoding: .utf8)
+      try correlation.traceID.write(toFile: activeSentinelPath, atomically: true, encoding: .utf8)
     } catch {
       Output.error("swift-mk logging: write run sentinel: \(error)")
     }
     let ids = "trace_id=\(correlation.traceID) span_id=\(correlation.spanID)"
-    let header = "🔎 logs=\(logDirectory) \(ids)\n"
-    FileHandle.standardError.write(Data(header.utf8))
+    let header = "🔎 logs=\(activeLogDirectory) \(ids)\n"
+    handle.write(Data(header.utf8))
   }
 
   private static func alreadyPrinted(_ traceID: String) -> Bool {
-    guard FileManager.default.fileExists(atPath: sentinelPath) else {
+    guard FileManager.default.fileExists(atPath: activeSentinelPath) else {
       return false
     }
     do {
-      let previous = try String(contentsOfFile: sentinelPath, encoding: .utf8)
+      let previous = try String(contentsOfFile: activeSentinelPath, encoding: .utf8)
       return previous.trimmingCharacters(in: .whitespacesAndNewlines) == traceID
     } catch {
       Output.error("swift-mk logging: read run sentinel: \(error)")
@@ -155,7 +258,7 @@ public enum Logging {
 
   private static func appendLine(_ line: String, toConcern concern: String) {
     ensureLogDirectory()
-    let path = "\(logDirectory)/\(concern).jsonl"
+    let path = "\(activeLogDirectory)/\(concern).jsonl"
     let data = Data((line + "\n").utf8)
     guard let handle = FileHandle(forWritingAtPath: path) else {
       FileManager.default.createFile(atPath: path, contents: data)
@@ -173,7 +276,7 @@ public enum Logging {
   private static func ensureLogDirectory() {
     do {
       try FileManager.default.createDirectory(
-        atPath: logDirectory, withIntermediateDirectories: true)
+        atPath: activeLogDirectory, withIntermediateDirectories: true)
     } catch {
       Output.error("swift-mk logging: create log directory: \(error)")
     }
