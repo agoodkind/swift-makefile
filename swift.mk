@@ -131,6 +131,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkRenderCore/TemplateRenderer.swift \
 	Sources/SwiftMkRenderCLI/main.swift \
 	Sources/SwiftMkCLI/SwiftMk.swift \
+	Sources/SwiftMkCLI/CodesignRun.swift \
 	Sources/SwiftMkCLI/ToolchainCommand.swift \
 	Sources/SwiftMkCore/Findings.swift \
 	Sources/SwiftMkCore/Text.swift \
@@ -148,6 +149,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/DeadcodeScan+Witness.swift \
 	Sources/SwiftMkCore/DeadcodeBuildConfig.swift \
 	Sources/SwiftMkCore/WitnessFilter.swift \
+	Sources/SwiftMkCore/Codesign.swift \
 	Sources/SwiftMkCore/SigningBuildConfig.swift \
 	Sources/SwiftMkCore/SigningVerification.swift \
 	Sources/SwiftMkCore/Toolchain.swift \
