@@ -13,12 +13,10 @@ import Testing
 
 // MARK: - ToolchainTests
 
-/// Namesake suite for environment-sensitive toolchain tests. The remaining
+/// Namesake suite for result-bundle toolchain tests. The remaining
 /// suite is written as free `@Test` functions below.
 @Suite(.serialized)
 enum ToolchainTests {
-  private static let resultBundleDirectoryKey = "SWIFT_MK_RESULT_BUNDLE_DIR"
-
   @Test
   static func resultBundlePathIsAddedWhenDirectoryIsConfigured() throws {
     try withTemporaryResultBundleDirectory { resultBundleDirectory in
@@ -28,7 +26,8 @@ enum ToolchainTests {
         configuration: "Debug",
         workspace: "App.xcworkspace"
       )
-      let args = Toolchain.xcodebuildArguments(request, action: "build")
+      let args = Toolchain.xcodebuildArguments(
+        request, action: "build", resultBundleDirectory: resultBundleDirectory)
       let path = try #require(resultBundlePath(in: args))
       #expect(args.contains("-resultBundlePath"))
       #expect(path.hasSuffix("/App-Debug.xcresult"))
@@ -38,14 +37,15 @@ enum ToolchainTests {
 
   @Test
   static func resultBundlePathSanitizesSchemeSpaces() throws {
-    try withTemporaryResultBundleDirectory { _ in
+    try withTemporaryResultBundleDirectory { resultBundleDirectory in
       let request = Toolchain.Request(
         generator: .tuist,
         scheme: "Fan Curve",
         configuration: "Release",
         workspace: "FanCurveApp.xcworkspace"
       )
-      let args = Toolchain.xcodebuildArguments(request, action: "build")
+      let args = Toolchain.xcodebuildArguments(
+        request, action: "build", resultBundleDirectory: resultBundleDirectory)
       let path = try #require(resultBundlePath(in: args))
       #expect(path.hasSuffix("/Fan-Curve-Release.xcresult"))
       #expect(!path.contains(" "))
@@ -53,17 +53,17 @@ enum ToolchainTests {
   }
 
   @Test
-  static func resultBundlePathIsOmittedWhenDirectoryIsUnset() throws {
-    try withResultBundleDirectory(nil) {
-      let request = Toolchain.Request(
-        generator: .tuist,
-        scheme: "App",
-        configuration: "Debug",
-        workspace: "App.xcworkspace"
-      )
-      let args = Toolchain.xcodebuildArguments(request, action: "build")
-      #expect(!args.contains("-resultBundlePath"))
-    }
+  static func resultBundlePathIsOmittedWhenDirectoryIsUnset() {
+    #expect(Env.get("SWIFT_MK_RESULT_BUNDLE_DIR").isEmpty)
+    let request = Toolchain.Request(
+      generator: .tuist,
+      scheme: "App",
+      configuration: "Debug",
+      workspace: "App.xcworkspace"
+    )
+    let args = Toolchain.xcodebuildArguments(
+      request, action: "build", resultBundleDirectory: nil)
+    #expect(!args.contains("-resultBundlePath"))
   }
 
   @Test
@@ -79,7 +79,8 @@ enum ToolchainTests {
         configuration: "Debug",
         workspace: "App.xcworkspace"
       )
-      let args = Toolchain.xcodebuildArguments(request, action: "build")
+      let args = Toolchain.xcodebuildArguments(
+        request, action: "build", resultBundleDirectory: resultBundleDirectory)
       let path = try #require(resultBundlePath(in: args))
       #expect(path == expectedPath)
       #expect(!FileManager.default.fileExists(atPath: expectedPath))
@@ -110,30 +111,7 @@ enum ToolchainTests {
       try? FileManager.default.removeItem(
         atPath: resultBundleDirectory)
     }
-    try withResultBundleDirectory(resultBundleDirectory) {
-      try run(resultBundleDirectory)
-    }
-  }
-
-  private static func withResultBundleDirectory(
-    _ value: String?,
-    run: () throws -> Void
-  ) rethrows {
-    let previousValue = getenv(resultBundleDirectoryKey)
-      .map { String(cString: $0) }
-    if let value {
-      setenv(resultBundleDirectoryKey, value, 1)
-    } else {
-      unsetenv(resultBundleDirectoryKey)
-    }
-    defer {
-      if let previousValue {
-        setenv(resultBundleDirectoryKey, previousValue, 1)
-      } else {
-        unsetenv(resultBundleDirectoryKey)
-      }
-    }
-    try run()
+    try run(resultBundleDirectory)
   }
 }
 

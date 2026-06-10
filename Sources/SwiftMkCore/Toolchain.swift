@@ -362,15 +362,19 @@ public enum Toolchain {
   }
 
   /// xcodebuild argument vector naming an explicit container, for a single action.
-  static func xcodebuildArguments(_ request: Request, action: String) -> [String] {
-    xcodebuildArguments(request, actions: [action])
+  static func xcodebuildArguments(
+    _ request: Request, action: String, resultBundleDirectory: String? = nil
+  ) -> [String] {
+    xcodebuildArguments(request, actions: [action], resultBundleDirectory: resultBundleDirectory)
   }
 
   /// xcodebuild argument vector naming an explicit container, for one or more
   /// actions appended in order (for example `clean build`). A Tuist request names
   /// its `-workspace`; an xcodegen request names its `-project`. A missing container
   /// degrades to `-version` rather than letting xcodebuild auto-discover.
-  static func xcodebuildArguments(_ request: Request, actions: [String]) -> [String] {
+  static func xcodebuildArguments(
+    _ request: Request, actions: [String], resultBundleDirectory: String? = nil
+  ) -> [String] {
     var args: [String] = []
     switch request.generator {
     case .tuist:
@@ -398,21 +402,19 @@ public enum Toolchain {
     }
     args.append(contentsOf: request.extraArguments)
     args.append(contentsOf: settingArguments(request.extraSettings))
-    args.append(contentsOf: resultBundleArguments(request))
+    args.append(contentsOf: resultBundleArguments(request, dir: resultBundleDirectory))
     args.append(contentsOf: actions)
     return args
   }
 
-  private static func resultBundleArguments(_ request: Request) -> [String] {
-    let resultBundleDirectory = Env.get("SWIFT_MK_RESULT_BUNDLE_DIR")
-    guard !resultBundleDirectory.isEmpty else {
-      return []
-    }
+  private static func resultBundleArguments(_ request: Request, dir: String? = nil) -> [String] {
+    let configuredDirectory = dir ?? Env.get("SWIFT_MK_RESULT_BUNDLE_DIR")
+    guard !configuredDirectory.isEmpty else { return [] }
     var bundleName = sanitizedResultBundleComponent(request.scheme)
     if !request.configuration.isEmpty {
       bundleName += "-\(sanitizedResultBundleComponent(request.configuration))"
     }
-    let bundlePath = (resultBundleDirectory as NSString).appendingPathComponent(
+    let bundlePath = (configuredDirectory as NSString).appendingPathComponent(
       "\(bundleName).xcresult")
     guard removeExistingResultBundle(atPath: bundlePath) else {
       return []

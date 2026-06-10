@@ -15,15 +15,14 @@ import Testing
 
 @Suite(.serialized)
 enum LoggingTests {
-  private static let environmentKeys = ["MAKELEVEL", "TRACEPARENT"]
+  private static let environmentKeys = ["TRACEPARENT"]
 
   @Test
   static func beginRunWritesTraceparentAndEnsureStartedAdoptsIt() throws {
     try withTemporaryLogDirectory { logDirectory in
       clearLoggingEnvironment()
-      Logging.resetForTesting(logDirectory: logDirectory)
 
-      Logging.beginRun()
+      Logging.beginRun(makeLevel: "")
 
       let traceparent = try readTrimmed(Logging.traceparentPathForTesting)
       let persisted = try #require(Correlation.fromTraceparent(traceparent))
@@ -40,18 +39,15 @@ enum LoggingTests {
 
   @Test
   static func beginRunUnderNestedMakeLevelDoesNotOverwriteTraceparentFile() throws {
-    try withTemporaryLogDirectory { logDirectory in
+    try withTemporaryLogDirectory { _ in
       clearLoggingEnvironment()
-      Logging.resetForTesting(logDirectory: logDirectory)
       let existing = Correlation.new()
       try existing.traceparent.write(
         toFile: Logging.traceparentPathForTesting, atomically: true, encoding: .utf8)
       try existing.traceID.write(
         toFile: Logging.sentinelPathForTesting, atomically: true, encoding: .utf8)
-      setenv("MAKELEVEL", "2", 1)
-      Logging.resetForTesting(logDirectory: logDirectory)
 
-      Logging.beginRun()
+      Logging.beginRun(makeLevel: "2")
 
       #expect(try readTrimmed(Logging.traceparentPathForTesting) == existing.traceparent)
       #expect(Logging.correlation.traceID == existing.traceID)
@@ -77,7 +73,6 @@ enum LoggingTests {
 
     defer {
       restoreEnvironment(originalEnvironment)
-      Logging.resetForTesting()
       do {
         try fileManager.removeItem(at: directory)
       } catch {
@@ -85,7 +80,9 @@ enum LoggingTests {
       }
     }
 
-    try run(directory.path)
+    try Logging.withTestingState(logDirectory: directory.path) {
+      try run(directory.path)
+    }
   }
 
   private static func readTrimmed(_ path: String) throws -> String {

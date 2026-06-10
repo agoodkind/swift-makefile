@@ -33,6 +33,7 @@ public enum Logging {
   nonisolated(unsafe) private static var recording = false
   nonisolated(unsafe) private static var correlationValue = Correlation.new()
   nonisolated(unsafe) private static var logDirectoryOverride: String?
+  private static let stateLock = NSRecursiveLock()
 
   nonisolated(unsafe) private static let timestampFormatter: ISO8601DateFormatter = {
     let formatter = ISO8601DateFormatter()
@@ -42,31 +43,66 @@ public enum Logging {
 
   /// The run's correlation, resolving it on first use.
   public static var correlation: Correlation {
-    ensureStarted()
-    return correlationValue
+    withStateLock {
+      ensureStartedLocked()
+      return correlationValue
+    }
   }
 
   /// Begin a top-level make run before any shell build output can appear.
-  public static func beginRun() {
-    if isNestedMakeLevel(Env.get("MAKELEVEL")) {
-      ensureStarted()
-      return
+  public static func beginRun(makeLevel: String? = nil) {
+    withStateLock {
+      if isNestedMakeLevel(makeLevel ?? Env.get("MAKELEVEL")) {
+        ensureStartedLocked()
+        return
+      }
+      let minted = Correlation.new()
+      started = true
+      correlationValue = minted
+      setenv("TRACEPARENT", minted.traceparent, 1)
+      writeTraceparent(minted)
+      // The make recipe redirects stderr to hide stale-binary errors.
+      printHeaderOnce(minted, to: .standardOutput)
+      startExport(minted)
     }
-    let minted = Correlation.new()
-    started = true
-    correlationValue = minted
-    setenv("TRACEPARENT", minted.traceparent, 1)
-    writeTraceparent(minted)
-    // The make recipe redirects stderr to hide stale-binary errors.
-    printHeaderOnce(minted, to: .standardOutput)
-    startExport(minted)
   }
 
   /// Resolve the run's trace once: adopt an inherited traceparent, adopt the
   /// persisted trace from the latest make run, or mint a new one, then print the
-  /// header unless this is an auxiliary subcommand. swift-mk runs single-threaded,
-  /// so the started flag needs no lock.
+  /// header unless this is an auxiliary subcommand.
   public static func ensureStarted() {
+    withStateLock {
+      ensureStartedLocked()
+    }
+  }
+
+  public static func resetForTesting(logDirectory: String? = nil) {
+    withStateLock {
+      resetForTestingLocked(logDirectory: logDirectory)
+    }
+  }
+
+  public static func withTestingState<T>(
+    logDirectory: String? = nil,
+    _ run: () throws -> T
+  ) rethrows -> T {
+    try withStateLock {
+      let previousStarted = started
+      let previousRecording = recording
+      let previousCorrelationValue = correlationValue
+      let previousLogDirectoryOverride = logDirectoryOverride
+      resetForTestingLocked(logDirectory: logDirectory)
+      defer {
+        started = previousStarted
+        recording = previousRecording
+        correlationValue = previousCorrelationValue
+        logDirectoryOverride = previousLogDirectoryOverride
+      }
+      return try run()
+    }
+  }
+
+  private static func ensureStartedLocked() {
     if started {
       return
     }
@@ -78,11 +114,17 @@ public enum Logging {
     startExport(correlationValue)
   }
 
-  public static func resetForTesting(logDirectory: String? = nil) {
+  private static func resetForTestingLocked(logDirectory: String? = nil) {
     started = false
     recording = false
     correlationValue = Correlation.new()
     logDirectoryOverride = logDirectory
+  }
+
+  private static func withStateLock<T>(_ run: () throws -> T) rethrows -> T {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    return try run()
   }
 
   static func isNestedMakeLevel(_ value: String) -> Bool {
@@ -176,31 +218,33 @@ public enum Logging {
   /// guard drops a re-entrant call, so a write failure that reports through
   /// Output cannot recurse back into a record.
   public static func record(_ message: String, level: String) {
-    ensureStarted()
-    if recording {
-      return
+    withStateLock {
+      ensureStartedLocked()
+      if recording {
+        return
+      }
+      recording = true
+      defer { recording = false }
+      let current = correlationValue
+      let payload: [String: String] = [
+        "time": timestampFormatter.string(from: Date()),
+        "level": level,
+        "msg": message,
+        "trace_id": current.traceID,
+        "span_id": current.spanID,
+      ]
+      let data: Data
+      do {
+        data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+      } catch {
+        Output.error("swift-mk logging: encode record: \(error)")
+        return
+      }
+      guard let line = String(data: data, encoding: .utf8) else {
+        return
+      }
+      appendLine(line, toConcern: concern(of: message))
     }
-    recording = true
-    defer { recording = false }
-    let current = correlationValue
-    let payload: [String: String] = [
-      "time": timestampFormatter.string(from: Date()),
-      "level": level,
-      "msg": message,
-      "trace_id": current.traceID,
-      "span_id": current.spanID,
-    ]
-    let data: Data
-    do {
-      data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
-    } catch {
-      Output.error("swift-mk logging: encode record: \(error)")
-      return
-    }
-    guard let line = String(data: data, encoding: .utf8) else {
-      return
-    }
-    appendLine(line, toConcern: concern(of: message))
   }
 
   private static func isHeaderless() -> Bool {
