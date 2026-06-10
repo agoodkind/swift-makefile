@@ -160,9 +160,19 @@ public enum Swiftcheck {
     Output.debug("swiftcheck-extra: capturing analyzer findings")
     Capture.write("", to: rawPath)
     GateStatus.last = 0
+    // Build the analyzer on demand when no binary is selected yet, and fail the
+    // gate loudly when one still cannot be produced: an empty-findings OK here
+    // would silently skip every swiftcheck rule.
+    if selectedBin() == nil {
+      _ = resolveBin()
+    }
     guard let binary = selectedBin(), FileManager.default.isExecutableFile(atPath: binary)
     else {
-      Output.log("swiftcheck-extra: not configured")
+      Output.log(
+        "swiftcheck-extra: analyzer binary unavailable "
+          + "(set SWIFTCHECK_EXTRA_BIN or provide SWIFTCHECK_EXTRA_BUILD_REPO)"
+      )
+      GateStatus.last = 1
       Capture.write("", to: findingsPath)
       return
     }
