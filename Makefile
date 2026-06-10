@@ -5,7 +5,8 @@ SWIFT_MK := swift.mk
 
 ROOT_ARGS := \
 	SWIFT_MK_DEV_DIR='$(CURDIR)' \
-	SWIFT_MK_MODULES=swift-build.mk \
+	SWIFT_MK_MODULES='swift-build.mk swift-release.mk' \
+	SWIFT_MK_RELEASE_BUILD_CMD='git archive --format tar.gz --output dist/swift-makefile-$$$$RELEASE_TAG.tar.gz HEAD' \
 	SWIFT_BUILD_CMD='swift build --product swift-mk-render' \
 	SWIFT_TEST_CMD='swift test' \
 	SWIFT_CLEAN_CMD='swift package clean' \
@@ -44,7 +45,8 @@ CHECK_SWIFT_MK := $(MAKE) -C swiftcheck -f ../$(SWIFT_MK) $(CHECK_ARGS)
 	lint-deadcode-baseline lint-deadcode-baseline-prune-fixed lint-deadcode-baseline-remove-fixed lint-deadcode-baseline-accept-new \
 	swiftcheck-extra-baseline swiftcheck-extra-baseline-prune-fixed swiftcheck-extra-baseline-remove-fixed swiftcheck-extra-baseline-accept-new \
 	baseline baseline-prune-fixed baseline-remove-fixed baseline-accept-new baseline-add-new \
-	update-swift-mk swift-mk-sync smoke-fetch update-consumers update-consumers-dry-run help xcode-file-header
+	update-swift-mk swift-mk-sync smoke-fetch update-consumers update-consumers-dry-run help xcode-file-header \
+	release-meta release-build release-publish
 
 build: xcode-file-header
 	$(ROOT_SWIFT_MK) build
@@ -199,6 +201,9 @@ check: lint xcode-file-header
 # current git identity. Consumers invoke this target on demand instead.
 xcode-file-header:
 	$(ROOT_SWIFT_MK) xcode-file-header
+
+release-meta release-build release-publish:
+	$(ROOT_SWIFT_MK) $@
 
 help:
 	$(ROOT_SWIFT_MK) help
