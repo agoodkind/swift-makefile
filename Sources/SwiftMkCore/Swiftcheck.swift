@@ -246,9 +246,17 @@ public enum Swiftcheck {
     exclude: String,
     context: PathContext
   ) -> [Finding] {
-    let parsed = Text.readLines(rawPath).compactMap { parseFindingLine($0, context: context) }
+    let parsed = parseFindings(rawPath: rawPath, context: context)
     let excluded = applyExclude(parsed, exclude: exclude)
     return dropGitIgnored(excluded)
+  }
+
+  static func parseFindings(rawPath: String, context: PathContext) -> [Finding] {
+    Text.readLines(rawPath).compactMap { parseFindingLine($0, context: context) }
+  }
+
+  static func isToolFailure(status: Int32, parsedAll: [Finding]) -> Bool {
+    status != 0 && parsedAll.isEmpty
   }
 
   @discardableResult
@@ -262,6 +270,7 @@ public enum Swiftcheck {
       Env.get("SWIFTCHECK_EXTRA_EXCLUDE_PATHS")
     )
     captureFindings(rawPath: raw, findingsPath: findings, context: context)
+    let parsedAll = parseFindings(rawPath: raw, context: context)
     let parsedFindings = structuredFindings(rawPath: raw, exclude: exclude, context: context)
     let status = GateStatus.last
     if !StructuredGate.run(
@@ -272,7 +281,7 @@ public enum Swiftcheck {
     ) {
       return false
     }
-    if status != 0, parsedFindings.isEmpty {
+    if isToolFailure(status: status, parsedAll: parsedAll) {
       Output.log("swiftcheck-extra: FAILED")
       Output.log("  Exit status: \(status)\n")
       Output.log("Output:")
