@@ -49,5 +49,27 @@ func deadcodeBuildConfigWritesXcconfigAndReturnsAbsolutePath() throws {
   let path = try #require(environment["XCODE_XCCONFIG_FILE"])
   #expect((path as NSString).isAbsolutePath)
   let written = try String(contentsOfFile: path, encoding: .utf8)
-  #expect(written == DeadcodeBuildConfig.contents(derivedData: "/proj/build/DerivedData"))
+  #expect(
+    written
+      == DeadcodeBuildConfig.contents(
+        derivedData: "/proj/build/DerivedData",
+        developmentTeam: Env.get("DEVELOPMENT_TEAM")))
+}
+
+@Test
+func deadcodeBuildConfigCarriesDevelopmentTeamThroughSigningOverride() {
+  // The deadcode xcconfig displaces the signing xcconfig that otherwise supplies
+  // DEVELOPMENT_TEAM, and a consumer's config-generation script phase can require
+  // the team as non-signing context, so the override must carry it through while
+  // signing stays disabled.
+  let text = DeadcodeBuildConfig.contents(
+    derivedData: "/proj/build/DerivedData", developmentTeam: "H3BMXM4W7H")
+  #expect(text.contains("DEVELOPMENT_TEAM = H3BMXM4W7H"))
+  #expect(text.contains("CODE_SIGNING_ALLOWED = NO"))
+}
+
+@Test
+func deadcodeBuildConfigOmitsDevelopmentTeamWhenUnknown() {
+  let text = DeadcodeBuildConfig.contents(derivedData: "", developmentTeam: "  ")
+  #expect(!text.contains("DEVELOPMENT_TEAM"))
 }

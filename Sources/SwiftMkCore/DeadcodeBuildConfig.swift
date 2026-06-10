@@ -54,13 +54,24 @@ enum DeadcodeBuildConfig {
 
   /// The full xcconfig text. When a derived-data path is known, also redirect the
   /// build intermediates and products under it, so a `rm -rf` of that directory
-  /// makes the next coverage build clean and the index complete.
-  static func contents(derivedData: String) -> String {
+  /// makes the next coverage build clean and the index complete. When a
+  /// development team is known, carry it through: this xcconfig displaces the
+  /// signing xcconfig that would otherwise supply `DEVELOPMENT_TEAM`, and the team
+  /// is non-signing context a consumer's build scripts may require (a config
+  /// generator rendering the team into a plist), so dropping it fails the coverage
+  /// build on machines with no team in their project xcconfigs. Signing stays
+  /// disabled regardless because `CODE_SIGNING_ALLOWED = NO` wins.
+  static func contents(derivedData: String, developmentTeam: String = "") -> String {
+    var text = baseContents
+    let team = developmentTeam.trimmingCharacters(in: .whitespaces)
+    if !team.isEmpty {
+      text += "\nDEVELOPMENT_TEAM = \(team)"
+    }
     let trimmed = derivedData.trimmingCharacters(in: .whitespaces)
     guard !trimmed.isEmpty else {
-      return baseContents
+      return text
     }
-    return baseContents + """
+    return text + """
 
       // Keep build intermediates (the incremental build database) with the index
       // under the derived-data directory, so the consumer's
@@ -83,8 +94,8 @@ enum DeadcodeBuildConfig {
     do {
       try FileManager.default.createDirectory(
         atPath: makeDir, withIntermediateDirectories: true)
-      try contents(derivedData: derivedData).write(
-        toFile: path, atomically: true, encoding: .utf8)
+      try contents(derivedData: derivedData, developmentTeam: Env.get("DEVELOPMENT_TEAM"))
+        .write(toFile: path, atomically: true, encoding: .utf8)
     } catch {
       Output.error(
         "deadcode: could not write \(path), coverage build keeps signing: \(error)")

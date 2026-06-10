@@ -399,6 +399,13 @@ export BYPASS_TOKEN_CMD
 export SWIFT_MK_GATE_TOKEN_CMD
 export SWIFT_BUILD_CMD
 export SWIFT_DEADCODE_BUILD_CMD
+# Signing context the swift-mk binary reads when it owns a build (the signing
+# xcconfig, the dead-code coverage build). Consumers set these as plain make
+# variables, so without the export the gate processes never see them and a CI
+# runner with no local xcconfig loses DEVELOPMENT_TEAM inside the coverage build.
+export CODE_SIGN_IDENTITY
+export CODE_SIGN_STYLE
+export DEVELOPMENT_TEAM
 # A consumer builds via Xcode when it declares a scheme or a dead-code coverage
 # build; a plain SwiftPM package declares neither. The dead-code gate and the build
 # chokepoint key off this one flag rather than guessing from on-disk project files,
