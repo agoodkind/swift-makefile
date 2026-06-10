@@ -134,6 +134,17 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCLI/CodesignRun.swift \
 	Sources/SwiftMkCLI/ToolchainCommand.swift \
 	Sources/SwiftMkCore/Findings.swift \
+	Sources/SwiftMkCore/BaselineKey.swift \
+	Sources/SwiftMkCore/BaselineMigration.swift \
+	Sources/SwiftMkCore/BaselineMigrationRunner.swift \
+	Sources/SwiftMkCore/BaselineRecord.swift \
+	Sources/SwiftMkCore/BaselineRunner+StructuredWrite.swift \
+	Sources/SwiftMkCore/CountAwareGate.swift \
+	Sources/SwiftMkCore/Finding.swift \
+	Sources/SwiftMkCore/FindingsSource.swift \
+	Sources/SwiftMkCore/Preflight.swift \
+	Sources/SwiftMkCore/StructuredGate.swift \
+	Sources/SwiftMkCore/XCResult.swift \
 	Sources/SwiftMkCore/Text.swift \
 	Sources/SwiftMkCore/Env.swift \
 	Sources/SwiftMkCore/Shell.swift \
@@ -177,6 +188,22 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/SigningVerificationTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainTests.swift \
 	Tests/SwiftMkCoreTests/BuildToolingAuditTests.swift \
+	Tests/SwiftMkCoreTests/AdHocSigningAllowlistTests.swift \
+	Tests/SwiftMkCoreTests/BaselineKeyTests.swift \
+	Tests/SwiftMkCoreTests/BaselineMigrationTests.swift \
+	Tests/SwiftMkCoreTests/BaselineRecordTests.swift \
+	Tests/SwiftMkCoreTests/CodesignTests.swift \
+	Tests/SwiftMkCoreTests/CountAwareGateTests.swift \
+	Tests/SwiftMkCoreTests/DeadcodeScanTests.swift \
+	Tests/SwiftMkCoreTests/FindingsSourceTests.swift \
+	Tests/SwiftMkCoreTests/FindingTests.swift \
+	Tests/SwiftMkCoreTests/LoggingTests.swift \
+	Tests/SwiftMkCoreTests/PreflightTests.swift \
+	Tests/SwiftMkCoreTests/ShellStreamingTests.swift \
+	Tests/SwiftMkCoreTests/ShellTests.swift \
+	Tests/SwiftMkCoreTests/StructuredGateTests.swift \
+	Tests/SwiftMkCoreTests/SwiftcheckTests.swift \
+	Tests/SwiftMkCoreTests/XCResultTests.swift \
 	notices.txt \
 	templates/xcode/IDETemplateMacros.plist.template
 
