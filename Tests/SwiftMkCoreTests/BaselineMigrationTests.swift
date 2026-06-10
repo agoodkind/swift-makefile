@@ -6,6 +6,7 @@
 //  Copyright © 2026, all rights reserved.
 //
 
+import Foundation
 import Testing
 
 @testable import SwiftMkCore
@@ -146,79 +147,55 @@ func preservesDuplicateKeyCounts() throws {
 }
 
 @Test
-func recordsForMigrationKeepsCurrentOccurrencesForOldKeysOnly() throws {
-  let olderFinding = migrationFinding(
-    ruleId: "no_magic_numbers",
-    file: "Sources/App.swift",
-    line: 10
+func migrateOneTranscribesExistingTextBaselineToJsonl() throws {
+  let temporaryDirectory = FileManager.default.temporaryDirectory
+    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+  try FileManager.default.createDirectory(
+    at: temporaryDirectory,
+    withIntermediateDirectories: true
   )
-  let fixedFinding = migrationFinding(
-    ruleId: "identifier_name",
-    file: "Sources/App.swift",
-    line: 20
-  )
-  let currentFirstFinding = migrationFinding(
-    ruleId: "no_magic_numbers",
-    file: "Sources/App.swift",
-    line: 30
-  )
-  let currentSecondFinding = migrationFinding(
-    ruleId: "no_magic_numbers",
-    file: "Sources/App.swift",
-    line: 40
-  )
-  let newFinding = migrationFinding(
-    ruleId: "line_length",
-    file: "Sources/App.swift",
-    line: 50
-  )
-  let oldRecords = [
-    BaselineRecord.from(
-      olderFinding,
-      firstAdded: "2026-06-08T10:00:00Z",
-      lastSeen: "2026-06-08T11:00:00Z"
-    ),
-    BaselineRecord.from(
-      olderFinding,
-      firstAdded: "2026-06-08T09:00:00Z",
-      lastSeen: "2026-06-08T11:00:00Z"
-    ),
-    BaselineRecord.from(
-      fixedFinding,
-      firstAdded: "2026-06-08T08:00:00Z",
-      lastSeen: "2026-06-08T11:00:00Z"
-    ),
-  ]
+  defer {
+    do {
+      try FileManager.default.removeItem(at: temporaryDirectory)
+    } catch {
+      Output.warning("cleanup failed: \(error.localizedDescription)")
+    }
+  }
 
-  let records = BaselineMigrationRunner.recordsForMigration(
-    oldRecords: oldRecords,
-    current: [currentFirstFinding, newFinding, currentSecondFinding],
-    now: "2026-06-09T12:00:00Z"
+  let txtURL = temporaryDirectory.appendingPathComponent("baseline.txt")
+  let jsonlURL = temporaryDirectory.appendingPathComponent("baseline.jsonl")
+  let baselineText = [
+    swiftlintComplexityFirstLine,
+    swiftlintComplexitySecondLine,
+  ].joined(separator: "\n")
+  try (baselineText + "\n").write(to: txtURL, atomically: true, encoding: .utf8)
+
+  let outcome = try BaselineMigrationRunner.migrateOne(
+    label: "swiftlint-complexity",
+    txtPath: txtURL.path,
+    jsonlPath: jsonlURL.path
   )
-  let keptKey = BaselineKey.of(currentFirstFinding)
+  let records = BaselineStore.read(jsonlURL.path)
   let counts = BaselineStore.keyCounts(records)
 
+  #expect(outcome.label == "swiftlint-complexity")
+  #expect(outcome.migrated == 2)
+  #expect(outcome.jsonlPath == jsonlURL.path)
+  #expect(!FileManager.default.fileExists(atPath: txtURL.path))
   #expect(records.count == 2)
-  #expect(records.map(\.key) == [keptKey, keptKey])
-  #expect(try #require(counts[keptKey]) == 2)
-  #expect(records.allSatisfy { $0.firstAdded == "2026-06-08T09:00:00Z" })
-  #expect(records.allSatisfy { $0.lastSeen == "2026-06-09T12:00:00Z" })
-  #expect(!records.contains { $0.key == BaselineKey.of(newFinding) })
-  #expect(!records.contains { $0.key == BaselineKey.of(fixedFinding) })
-}
-
-private func migrationFinding(
-  ruleId: String,
-  file: String,
-  line: Int
-) -> Finding {
-  Finding(
-    tool: "swiftlint",
-    ruleId: ruleId,
-    file: file,
-    line: line,
-    column: 1,
-    severity: .warning,
-    message: "Example finding"
+  #expect(
+    try #require(counts["sources/helper/smcfanhelper.swift\tcyclomatic_complexity"])
+      == 1
+  )
+  #expect(
+    try #require(counts["sources/helper/smcfanhelper.swift\tfunction_body_length"])
+      == 1
+  )
+  #expect(
+    records.map(\.firstAdded)
+      == [
+        "2026-06-06T23:27:35Z",
+        "2026-06-06T23:27:35Z",
+      ]
   )
 }
