@@ -13,8 +13,12 @@ import Testing
 
 // MARK: - PreflightTests
 
-@Suite
+@Suite(.serialized)
 enum PreflightTests {
+  private static let verifyXcconfigKey = "SWIFT_MK_VERIFY_XCCONFIG"
+  private static let verifyXcconfigHint =
+    "copy Config/local.xcconfig.example and fill in DEVELOPMENT_TEAM"
+
   @Test
   static func missingReturnsAbsentRequirementsInOrder() {
     let requirements = [
@@ -50,6 +54,36 @@ enum PreflightTests {
     #expect(message.contains("export the signing identity"))
     #expect(!message.contains("\u{2014}"))
     #expect(!message.contains("\u{2013}"))
+  }
+
+  @Test
+  static func preflightRequirementsIncludeDeclaredXcconfigPath() {
+    let originalValue = savedEnvironmentValue(verifyXcconfigKey)
+    defer {
+      restoreEnvironmentValue(originalValue, forKey: verifyXcconfigKey)
+    }
+
+    setenv(verifyXcconfigKey, "Config/local.xcconfig", 1)
+
+    let requirements = Lint.preflightRequirements()
+    let expected = [
+      Preflight.Requirement(
+        path: "Config/local.xcconfig",
+        hint: verifyXcconfigHint)
+    ]
+    #expect(requirements == expected)
+  }
+
+  @Test
+  static func preflightRequirementsAreEmptyWhenXcconfigPathIsUnset() {
+    let originalValue = savedEnvironmentValue(verifyXcconfigKey)
+    defer {
+      restoreEnvironmentValue(originalValue, forKey: verifyXcconfigKey)
+    }
+
+    unsetenv(verifyXcconfigKey)
+
+    #expect(Lint.preflightRequirements().isEmpty)
   }
 
   @Test
@@ -92,5 +126,20 @@ enum PreflightTests {
     )
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     return directory.path
+  }
+
+  private static func savedEnvironmentValue(_ key: String) -> String? {
+    guard let value = getenv(key) else {
+      return nil
+    }
+    return String(cString: value)
+  }
+
+  private static func restoreEnvironmentValue(_ value: String?, forKey key: String) {
+    guard let value else {
+      unsetenv(key)
+      return
+    }
+    setenv(key, value, 1)
   }
 }

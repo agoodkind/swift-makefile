@@ -83,6 +83,21 @@ extension Lint {
     return true
   }
 
+  // MARK: preflight
+
+  static func preflightRequirements() -> [Preflight.Requirement] {
+    let xcconfigPath = Env.get("SWIFT_MK_VERIFY_XCCONFIG")
+    guard !xcconfigPath.isEmpty else {
+      return []
+    }
+
+    return [
+      Preflight.Requirement(
+        path: xcconfigPath,
+        hint: "copy Config/local.xcconfig.example and fill in DEVELOPMENT_TEAM")
+    ]
+  }
+
   // MARK: generate
 
   /// Run the consumer's `SWIFT_GENERATE_CMD` once before a compile-based gate, the
@@ -194,6 +209,15 @@ extension Lint {
   @discardableResult
   public static func runLint(context: PathContext) -> Bool {
     Output.info("lint: running gate chain")
+    let preflightResult = Preflight.checkFiles(preflightRequirements())
+    guard preflightResult.ok else {
+      Output.log("\n1 check failed: preflight")
+      return false
+    }
+    guard Preflight.trustMise(in: ".") else {
+      Output.log("\n1 check failed: preflight")
+      return false
+    }
     // Generate once before the gates. setenv marks SWIFT_MK_GENERATED so a gate
     // that still recurses through make inherits it; a failure here is surfaced and
     // stops the chain rather than letting each compile gate fail on missing sources.
