@@ -160,6 +160,7 @@ permissions:
   contents: write
   id-token: write
   attestations: write
+  artifact-metadata: write
 jobs:
   release:
     uses: agoodkind/swift-makefile/.github/workflows/_release.yml@main

@@ -6,8 +6,13 @@ on:
       - main
   workflow_dispatch:
 
+# The caller must grant every permission the called workflow's jobs request,
+# even for steps an input disables; the validation is static.
 permissions:
   contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 
 jobs:
   release:
