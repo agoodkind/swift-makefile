@@ -42,17 +42,32 @@ enum BuildFailureLog {
     return path
   }
 
-  /// The lines that name the failure: compiler errors and the build-failed
-  /// banner, in source order.
+  /// The lines that name the failure: compiler errors, the build-failed banner,
+  /// and the failing-command list, in source order. A build can fail with no
+  /// `error:` line at all (a script phase, a signing step), in which case the
+  /// only lines that name the cause are the ones xcodebuild prints between
+  /// "The following build commands failed:" and its "(N failures)" closer, so
+  /// that block is captured whole.
   static func errorLines(in output: String) -> [String] {
     var lines: [String] = []
+    var inFailedCommandList = false
     for rawLine in output.split(separator: "\n", omittingEmptySubsequences: false) {
       let line = String(rawLine)
+      if inFailedCommandList {
+        lines.append(line)
+        if line.range(of: #"^\([0-9]+ failures?\)"#, options: .regularExpression) != nil {
+          inFailedCommandList = false
+        }
+        continue
+      }
       let isError = line.contains("error:")
       let isBanner = line.contains("** BUILD FAILED **")
       let isSummary = line.contains("The following build commands failed")
       if isError || isBanner || isSummary {
         lines.append(line)
+      }
+      if isSummary {
+        inFailedCommandList = true
       }
     }
     return lines
