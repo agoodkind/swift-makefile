@@ -13,9 +13,129 @@ import Testing
 
 // MARK: - ToolchainTests
 
-/// Empty namesake type so SwiftLint `file_name` finds a declaration matching
-/// `ToolchainTests.swift`; the suite is written as free `@Test` functions.
-enum ToolchainTests {}
+/// Namesake suite for environment-sensitive toolchain tests. The remaining
+/// suite is written as free `@Test` functions below.
+@Suite(.serialized)
+enum ToolchainTests {
+  private static let resultBundleDirectoryKey = "SWIFT_MK_RESULT_BUNDLE_DIR"
+
+  @Test
+  static func resultBundlePathIsAddedWhenDirectoryIsConfigured() throws {
+    try withTemporaryResultBundleDirectory { resultBundleDirectory in
+      let request = Toolchain.Request(
+        generator: .tuist,
+        scheme: "App",
+        configuration: "Debug",
+        workspace: "App.xcworkspace"
+      )
+      let args = Toolchain.xcodebuildArguments(request, action: "build")
+      let path = try #require(resultBundlePath(in: args))
+      #expect(args.contains("-resultBundlePath"))
+      #expect(path.hasSuffix("/App-Debug.xcresult"))
+      #expect(path.hasPrefix(resultBundleDirectory))
+    }
+  }
+
+  @Test
+  static func resultBundlePathSanitizesSchemeSpaces() throws {
+    try withTemporaryResultBundleDirectory { _ in
+      let request = Toolchain.Request(
+        generator: .tuist,
+        scheme: "Fan Curve",
+        configuration: "Release",
+        workspace: "FanCurveApp.xcworkspace"
+      )
+      let args = Toolchain.xcodebuildArguments(request, action: "build")
+      let path = try #require(resultBundlePath(in: args))
+      #expect(path.hasSuffix("/Fan-Curve-Release.xcresult"))
+      #expect(!path.contains(" "))
+    }
+  }
+
+  @Test
+  static func resultBundlePathIsOmittedWhenDirectoryIsUnset() throws {
+    try withResultBundleDirectory(nil) {
+      let request = Toolchain.Request(
+        generator: .tuist,
+        scheme: "App",
+        configuration: "Debug",
+        workspace: "App.xcworkspace"
+      )
+      let args = Toolchain.xcodebuildArguments(request, action: "build")
+      #expect(!args.contains("-resultBundlePath"))
+    }
+  }
+
+  @Test
+  static func resultBundlePathRemovesPreexistingDirectory() throws {
+    try withTemporaryResultBundleDirectory { resultBundleDirectory in
+      let expectedPath = (resultBundleDirectory as NSString).appendingPathComponent(
+        "App-Debug.xcresult")
+      try FileManager.default.createDirectory(
+        atPath: expectedPath, withIntermediateDirectories: true)
+      let request = Toolchain.Request(
+        generator: .tuist,
+        scheme: "App",
+        configuration: "Debug",
+        workspace: "App.xcworkspace"
+      )
+      let args = Toolchain.xcodebuildArguments(request, action: "build")
+      let path = try #require(resultBundlePath(in: args))
+      #expect(path == expectedPath)
+      #expect(!FileManager.default.fileExists(atPath: expectedPath))
+    }
+  }
+
+  private static func resultBundlePath(in args: [String]) -> String? {
+    guard let flagIndex = args.firstIndex(of: "-resultBundlePath") else {
+      return nil
+    }
+    let pathIndex = args.index(after: flagIndex)
+    guard pathIndex < args.endIndex else {
+      return nil
+    }
+    return args[pathIndex]
+  }
+
+  private static func withTemporaryResultBundleDirectory(
+    _ run: (String) throws -> Void
+  ) throws {
+    let resultBundleDirectory =
+      NSTemporaryDirectory()
+      + "swiftmk-result-bundle-"
+      + UUID().uuidString
+    try FileManager.default.createDirectory(
+      atPath: resultBundleDirectory, withIntermediateDirectories: true)
+    defer {
+      try? FileManager.default.removeItem(
+        atPath: resultBundleDirectory)
+    }
+    try withResultBundleDirectory(resultBundleDirectory) {
+      try run(resultBundleDirectory)
+    }
+  }
+
+  private static func withResultBundleDirectory(
+    _ value: String?,
+    run: () throws -> Void
+  ) rethrows {
+    let previousValue = getenv(resultBundleDirectoryKey)
+      .map { String(cString: $0) }
+    if let value {
+      setenv(resultBundleDirectoryKey, value, 1)
+    } else {
+      unsetenv(resultBundleDirectoryKey)
+    }
+    defer {
+      if let previousValue {
+        setenv(resultBundleDirectoryKey, previousValue, 1)
+      } else {
+        unsetenv(resultBundleDirectoryKey)
+      }
+    }
+    try run()
+  }
+}
 
 @Test
 func toolchainTuistBuildNamesWorkspaceNeverAutoDiscovers() {

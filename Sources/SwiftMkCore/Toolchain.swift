@@ -398,8 +398,53 @@ public enum Toolchain {
     }
     args.append(contentsOf: request.extraArguments)
     args.append(contentsOf: settingArguments(request.extraSettings))
+    args.append(contentsOf: resultBundleArguments(request))
     args.append(contentsOf: actions)
     return args
+  }
+
+  private static func resultBundleArguments(_ request: Request) -> [String] {
+    let resultBundleDirectory = Env.get("SWIFT_MK_RESULT_BUNDLE_DIR")
+    guard !resultBundleDirectory.isEmpty else {
+      return []
+    }
+    var bundleName = sanitizedResultBundleComponent(request.scheme)
+    if !request.configuration.isEmpty {
+      bundleName += "-\(sanitizedResultBundleComponent(request.configuration))"
+    }
+    let bundlePath = (resultBundleDirectory as NSString).appendingPathComponent(
+      "\(bundleName).xcresult")
+    guard removeExistingResultBundle(atPath: bundlePath) else {
+      return []
+    }
+    return ["-resultBundlePath", bundlePath]
+  }
+
+  private static func sanitizedResultBundleComponent(_ component: String) -> String {
+    component
+      .replacingOccurrences(of: "/", with: "-")
+      .replacingOccurrences(of: " ", with: "-")
+  }
+
+  private static func removeExistingResultBundle(atPath path: String) -> Bool {
+    do {
+      try FileManager.default.removeItem(atPath: path)
+      return true
+    } catch {
+      let nsError = error as NSError
+      if nsError.domain == NSCocoaErrorDomain,
+        nsError.code == CocoaError.Code.fileNoSuchFile.rawValue
+      {
+        return true
+      }
+      if nsError.domain == NSPOSIXErrorDomain,
+        nsError.code == Int(ENOENT)
+      {
+        return true
+      }
+      Output.error("toolchain: could not remove result bundle \(path): \(error)")
+      return false
+    }
   }
 
   private static func settingArguments(_ settings: [String: String]) -> [String] {
