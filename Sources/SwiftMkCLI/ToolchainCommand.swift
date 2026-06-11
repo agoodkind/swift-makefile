@@ -22,7 +22,7 @@ struct ToolchainCommand: ParsableCommand {
     subcommands: [
       ToolchainGenerate.self, ToolchainInstall.self, ToolchainBuild.self,
       ToolchainBuildForTesting.self, ToolchainTest.self, ToolchainAnalyze.self,
-      ToolchainVersion.self, ToolchainDownloadMetal.self,
+      ToolchainVersion.self, ToolchainDownloadComponent.self,
     ]
   )
 }
@@ -188,12 +188,15 @@ struct ToolchainVersion: ParsableCommand {
   func run() { Output.log(Toolchain.version()) }
 }
 
-// MARK: - ToolchainDownloadMetal
+// MARK: - ToolchainDownloadComponent
 
-struct ToolchainDownloadMetal: ParsableCommand {
-  static let configuration = CommandConfiguration(commandName: "download-metal")
+struct ToolchainDownloadComponent: ParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "download-component")
 
-  func run() throws { try toolchainExit(Toolchain.downloadMetalToolchain()) }
+  @Argument(help: "The on-demand Xcode component to download.")
+  var component: String
+
+  func run() throws { try toolchainExit(Toolchain.downloadComponent(component)) }
 }
 
 // MARK: - BuildToolingAuditCommand

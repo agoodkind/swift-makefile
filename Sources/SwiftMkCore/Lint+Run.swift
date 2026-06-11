@@ -220,6 +220,10 @@ extension Lint {
       Output.log("\n1 check failed: preflight")
       return false
     }
+    guard Preflight.ensureConsumerRequirement() else {
+      Output.log("\n1 check failed: preflight")
+      return false
+    }
     // Generate once before the gates. setenv marks SWIFT_MK_GENERATED so a gate
     // that still recurses through make inherits it; a failure here is surfaced and
     // stops the chain rather than letting each compile gate fail on missing sources.

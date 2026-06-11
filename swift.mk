@@ -380,6 +380,15 @@ SWIFT_DEPLOY_CMD ?=
 SWIFT_ANALYZE_CMD ?=
 SWIFT_AUDIT_EXTRA_CMD ?=
 SWIFT_LOG_AUDIT_CMD ?=
+# Consumer-injected preflight rail: CHECK asserts a requirement the build needs,
+# ENSURE establishes it on a miss, then the check re-runs and a still-failing
+# check fails the run loud. Both empty (the default) leaves the rail inert. The
+# engine owns only the pattern; both commands are opaque consumer strings, e.g.
+# CHECK 'xcrun --find <tool>' with ENSURE '"$(SWIFT_MK_BIN)" toolchain
+# download-component <ComponentName>'. An empty CHECK with a set ENSURE runs
+# the ensure on every invocation, so that command must be idempotent.
+SWIFT_PREFLIGHT_CHECK_CMD ?=
+SWIFT_PREFLIGHT_ENSURE_CMD ?=
 
 SWIFTCHECK_EXTRA_BIN ?=
 SWIFTCHECK_EXTRA_BUILD_REPO ?= $(if $(and $(SWIFT_MK_DEV_DIR),$(wildcard $(SWIFT_MK_DEV_DIR)/swiftcheck/Package.swift)),$(SWIFT_MK_DEV_DIR)/swiftcheck,$(CURDIR)/.make/swiftcheck)
@@ -476,6 +485,8 @@ export SWIFT_DEPLOY_CMD
 export SWIFT_ANALYZE_CMD
 export SWIFT_AUDIT_EXTRA_CMD
 export SWIFT_LOG_AUDIT_CMD
+export SWIFT_PREFLIGHT_CHECK_CMD
+export SWIFT_PREFLIGHT_ENSURE_CMD
 export SWIFTCHECK_EXTRA_BIN
 export SWIFTCHECK_EXTRA_BUILD_REPO
 export SWIFTCHECK_EXTRA_BUILD_PRODUCT
@@ -505,6 +516,9 @@ help:
 	@printf '  %-40s %s\n' 'test' 'execute SWIFT_TEST_CMD'
 	@printf '  %-40s %s\n' 'analyze' 'run deadcode analysis and SWIFT_ANALYZE_CMD'
 	@printf '  %-40s %s\n' 'audit' 'run dependency audit and SWIFT_AUDIT_EXTRA_CMD'
+	@printf '\n%s\n' 'Consumer preflight rail:'
+	@printf '  %-40s %s\n' 'SWIFT_PREFLIGHT_CHECK_CMD=...' 'assert a build requirement before the gate chain'
+	@printf '  %-40s %s\n' 'SWIFT_PREFLIGHT_ENSURE_CMD=...' 'establish the requirement when the check misses'
 	@printf '\n%s\n' 'Build caching:'
 	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE=auto|1|0' 'default local Xcode 26 compilation cache behavior'
 	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_DIAGNOSTICS=1' 'emit Xcode compilation cache diagnostic remarks'

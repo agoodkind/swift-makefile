@@ -292,14 +292,6 @@ public enum Toolchain {
     ].joined(separator: "\n")
   }
 
-  /// Download Apple's on-demand Metal toolchain via xcodebuild. A consumer that
-  /// compiles `.metal` shaders (which SwiftPM cannot) needs it on a fresh Xcode
-  /// install; routed here so the consumer does not name xcodebuild itself.
-  @discardableResult
-  public static func downloadMetalToolchain() -> Int32 {
-    Shell.runForwardingOutput("xcodebuild", ["-downloadComponent", "MetalToolchain"])
-  }
-
   /// `xcodebuild -list -json` for a workspace or project, captured. A read-only
   /// query, routed here so the chokepoint stays the only site that names
   /// xcodebuild.
@@ -321,6 +313,9 @@ public enum Toolchain {
     return Shell.run("xcodebuild", arguments)
   }
 
+  /// Download an on-demand Xcode component via xcodebuild. The component name
+  /// is caller-supplied data, never engine policy; routed here so the consumer
+  /// does not name xcodebuild itself.
   @discardableResult
   public static func downloadComponent(_ name: String) -> Int32 {
     Output.info("toolchain: downloadComponent \(name)")
