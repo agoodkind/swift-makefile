@@ -110,3 +110,26 @@ func auditScanReportsFindingWithPathAndLine() throws {
   #expect(findings.count == 1)
   #expect(findings.first?.line == 4)
 }
+
+@Test
+func codesignDetectorFlagsDirectSignLines() {
+  #expect(
+    BuildToolingAudit.lineRunsCodesign(
+      #"          codesign -s "${ID}" -f --options runtime "$APP""#))
+  #expect(BuildToolingAudit.lineRunsCodesign(#"        "/usr/bin/codesign","#))
+  #expect(BuildToolingAudit.lineRunsCodesign(#"      "codesign","#))
+  #expect(BuildToolingAudit.lineRunsCodesign("\tcodesign --sign x dmgpath"))
+}
+
+@Test
+func codesignDetectorPassesSanctionedLines() {
+  #expect(!BuildToolingAudit.lineRunsCodesign(#"  # Codesign the copy in LaunchServices"#))
+  #expect(!BuildToolingAudit.lineRunsCodesign(#"  // fall back to direct codesign"#))
+  #expect(
+    !BuildToolingAudit.lineRunsCodesign(
+      #"  runPassthrough("codesign", ["--verify", "--strict", path])"#))
+  #expect(BuildToolingAudit.lineRunsCodesign(#"  codesign --verify -s id app"#))
+  #expect(!BuildToolingAudit.lineRunsCodesign(#"  swift-mk codesign-run --mode binary app"#))
+  #expect(!BuildToolingAudit.lineRunsCodesign(#"  codesign --force --sign - "$out" || true"#))
+  #expect(!BuildToolingAudit.lineRunsCodesign("  let unrelated = 1"))
+}

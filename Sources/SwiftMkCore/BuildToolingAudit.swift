@@ -30,15 +30,35 @@ public enum BuildToolingAudit {
   private static let zeroDigit: Unicode.Scalar = "0"
   private static let nineDigit: Unicode.Scalar = "9"
 
+  /// What a finding flags, which selects its remediation text.
+  public enum Kind: Sendable, Equatable {
+    case codesign
+    case toolchain
+  }
+
   /// A finding: the file, the 1-based line, and the offending line text.
   public struct Finding: Sendable, Equatable {
     public let path: String
     public let line: Int
     public let text: String
+    public let kind: Kind
+
+    public init(path: String, line: Int, text: String, kind: Kind = .toolchain) {
+      self.path = path
+      self.line = line
+      self.text = text
+      self.kind = kind
+    }
 
     public var rendered: String {
-      "\(path):\(line): build-tooling-audit: invoke the build toolchain through "
-        + "$(SWIFT_MK_BIN) toolchain, not tuist/xcodegen/xcodebuild directly: \(text)"
+      switch kind {
+      case .toolchain:
+        return "\(path):\(line): build-tooling-audit: invoke the build toolchain through "
+          + "$(SWIFT_MK_BIN) toolchain, not tuist/xcodegen/xcodebuild directly: \(text)"
+      case .codesign:
+        return "\(path):\(line): build-tooling-audit: sign through swift-mk codesign-run; "
+          + "no direct codesign is permitted in consumer files: \(text)"
+      }
     }
   }
 
@@ -73,6 +93,86 @@ public enum BuildToolingAudit {
       }
     }
     return findings
+  }
+
+  /// Scan build-pipeline files for direct codesign invocations. The detector is
+  /// text-level on purpose: a spawn's flags may sit on later lines, so naming
+  /// the codesign binary at all requires either routing through codesign-run or
+  /// the explicit fallback marker.
+  public static func scanCodesign(paths: [String]) -> [Finding] {
+    var findings: [Finding] = []
+    for path in paths {
+      let contents: String
+      do {
+        contents = try String(contentsOfFile: path, encoding: .utf8)
+      } catch {
+        continue
+      }
+      let lines = contents.components(separatedBy: .newlines)
+      for (index, rawLine) in lines.enumerated() where lineRunsCodesign(rawLine) {
+        findings.append(
+          Finding(
+            path: path,
+            line: index + 1,
+            text: rawLine.trimmingCharacters(in: .whitespaces),
+            kind: .codesign))
+      }
+    }
+    return findings
+  }
+
+  /// Whether a line reaches the codesign binary outside the canonical channel.
+  /// There is deliberately no opt-out marker: a marker is exactly the string a
+  /// code-generating agent would copy onto a bypass. Comments cannot execute
+  /// and pass; a line that only verifies (`--verify` present, no sign flag)
+  /// passes because verification is not a signing path; everything else that
+  /// names codesign is a bypass, including spawns whose flags sit on later
+  /// lines.
+  static func lineRunsCodesign(_ line: String) -> Bool {
+    if line.contains("codesign-run") {
+      return false
+    }
+    guard line.contains("codesign") else {
+      return false
+    }
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    if trimmed.hasPrefix("#") || trimmed.hasPrefix("//") {
+      return false
+    }
+    if line.contains("--sign - ") || line.contains(" -s - ") {
+      // Explicit ad-hoc signing cannot carry an identity, cannot notarize, and
+      // is how the bootstrap signs the swift-mk binary into existence.
+      return false
+    }
+    if line.contains("--sign") || line.contains(" -s ") {
+      return true
+    }
+    if line.contains("--verify") {
+      return false
+    }
+    let spawnForms = ["\"codesign\"", "'codesign'", "/usr/bin/codesign"]
+    if spawnForms.contains(where: { line.contains($0) }) {
+      return true
+    }
+    return trimmed.hasPrefix("codesign ")
+  }
+
+  /// The default codesign scan set: the entry Makefile, the project manifests,
+  /// and every script or dev-tool source under Scripts/ and Tools/.
+  public static func codesignScanPaths(makefile: String) -> [String] {
+    var paths = [makefile, "project.yml", "Project.swift", "Workspace.swift"]
+    let fileManager = FileManager.default
+    for root in ["Scripts", "Tools"] {
+      guard let enumerator = fileManager.enumerator(atPath: root) else {
+        continue
+      }
+      for case let relative as String in enumerator
+      where relative.hasSuffix(".swift") || relative.hasSuffix(".sh") || relative.hasSuffix(".yml")
+      {
+        paths.append(root + "/" + relative)
+      }
+    }
+    return paths
   }
 
   /// Whether a make recipe line invokes the toolchain, as opposed to naming it as

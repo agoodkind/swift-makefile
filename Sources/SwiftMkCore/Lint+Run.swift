@@ -191,7 +191,9 @@ extension Lint {
   @discardableResult
   public static func runBuildToolingAudit(context _: PathContext) -> Bool {
     let makefile = Env.get("SWIFT_MK_ENTRY_MAKEFILE", "Makefile")
-    let findings = BuildToolingAudit.scan(paths: [makefile])
+    var findings = BuildToolingAudit.scan(paths: [makefile])
+    findings += BuildToolingAudit.scanCodesign(
+      paths: BuildToolingAudit.codesignScanPaths(makefile: makefile))
     if findings.isEmpty {
       Output.log("build-tooling-audit: OK")
       return true
