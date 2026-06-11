@@ -51,7 +51,10 @@ public enum Notarize {
   }
 
   /// The notarytool submit arguments for one artifact, pure for tests.
-  static func submitArguments(artifact: String, credentials: Credentials) -> [String] {  // gitleaks:allow
+  static func submitArguments(
+    artifact: String,
+    credentials: Credentials  // gitleaks:allow
+  ) -> [String] {
     var arguments = ["notarytool", "submit", artifact]
     switch credentials {
     case let .keyFile(path, keyId, issuerId):
@@ -93,9 +96,14 @@ public enum Notarize {
 
   /// Submit one artifact and wait for the verdict; on anything but Accepted,
   /// print the submission output and the notary log so the cause is inline.
-  static func submit(artifact: String, credentials: Credentials) -> Bool {  // gitleaks:allow
+  static func submit(
+    artifact: String,
+    credentials: Credentials  // gitleaks:allow
+  ) -> Bool {
     Output.log("notarize: submitting \(artifact)")
-    let result = Shell.run("xcrun", submitArguments(artifact: artifact, credentials: credentials))  // gitleaks:allow
+    let result = Shell.run(
+      "xcrun",
+      submitArguments(artifact: artifact, credentials: credentials))  // gitleaks:allow
     let decoded: SubmitResult?
     do {
       decoded = try JSONDecoder().decode(SubmitResult.self, from: Data(result.stdout.utf8))
