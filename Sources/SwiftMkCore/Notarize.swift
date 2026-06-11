@@ -66,13 +66,27 @@ public enum Notarize {
     return arguments
   }
 
+  /// Decode the base64 App Store Connect key, tolerating whitespace the way
+  /// the shell `base64 --decode` this replaced did: a secret set with line
+  /// wrapping or a trailing newline decodes identically to a clean one.
+  static func decodeKeyBase64(_ text: String) -> Data? {
+    Data(base64Encoded: text, options: .ignoreUnknownCharacters)
+  }
+
   /// Decode the env credentials, materializing APPLE_NOTARY_KEY_BASE64 into a
-  /// temp key file when present. Returns nil with a loud error when neither
-  /// mode is configured.
+  /// temp key file when present. A set-but-undecodable key fails loud with its
+  /// own message, never the misleading no-credentials one. Returns nil with a
+  /// loud error when neither mode is configured.
   static func resolveCredentialsFromEnvironment() -> Credentials? {
     var keyPath: String?
     let keyBase64 = Env.get("APPLE_NOTARY_KEY_BASE64")
-    if !keyBase64.isEmpty, let keyData = Data(base64Encoded: keyBase64) {
+    if !keyBase64.isEmpty {
+      guard let keyData = decodeKeyBase64(keyBase64) else {
+        Output.error(
+          "notarize: APPLE_NOTARY_KEY_BASE64 is set but does not decode as base64; "
+            + "re-set it from the .p8 key file")
+        return nil
+      }
       let path =
         NSTemporaryDirectory()
         + "swift-mk-notary-key-\(ProcessInfo.processInfo.processIdentifier).p8"
