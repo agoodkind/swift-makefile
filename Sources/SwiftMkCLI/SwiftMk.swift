@@ -27,6 +27,7 @@ struct SwiftMk: ParsableCommand {
       BaselineMigrateCommand.self,
       XcodeFileHeader.self, BuildCheck.self, BuildCommand.self, GateToken.self,
       SigningXcconfig.self, SigningIdentity.self, VerifySigning.self, CodesignRun.self,
+      NotarizeCommand.self,
       TraceCommand.self, ToolchainCommand.self, BuildToolingAuditCommand.self,
     ]
   )

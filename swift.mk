@@ -132,6 +132,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkRenderCLI/main.swift \
 	Sources/SwiftMkCLI/SwiftMk.swift \
 	Sources/SwiftMkCLI/CodesignRun.swift \
+	Sources/SwiftMkCLI/NotarizeCommand.swift \
 	Sources/SwiftMkCLI/ToolchainCommand.swift \
 	Sources/SwiftMkCore/Findings.swift \
 	Sources/SwiftMkCore/BaselineKey.swift \
@@ -161,6 +162,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/DeadcodeBuildConfig.swift \
 	Sources/SwiftMkCore/WitnessFilter.swift \
 	Sources/SwiftMkCore/Codesign.swift \
+	Sources/SwiftMkCore/Notarize.swift \
 	Sources/SwiftMkCore/SigningBuildConfig.swift \
 	Sources/SwiftMkCore/SigningVerification.swift \
 	Sources/SwiftMkCore/Toolchain.swift \
@@ -193,6 +195,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/BaselineMigrationTests.swift \
 	Tests/SwiftMkCoreTests/BaselineRecordTests.swift \
 	Tests/SwiftMkCoreTests/CodesignTests.swift \
+	Tests/SwiftMkCoreTests/NotarizeTests.swift \
 	Tests/SwiftMkCoreTests/CountAwareGateTests.swift \
 	Tests/SwiftMkCoreTests/DeadcodeScanTests.swift \
 	Tests/SwiftMkCoreTests/FindingsSourceTests.swift \
