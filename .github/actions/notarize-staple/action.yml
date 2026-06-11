@@ -1,5 +1,8 @@
 name: Notarize and staple
-description: Submit artifacts to Apple's Notary service with notarytool and staple the tickets.
+description: >-
+  Notarize and staple artifacts through `swift-mk notarize`, the one canonical
+  notarization channel. The engine is built from main here (revision-cached)
+  because the notarize job runs with no checkout of its own.
 
 inputs:
   artifact-path:
@@ -20,73 +23,51 @@ inputs:
 runs:
   using: composite
   steps:
+    - uses: actions/checkout@v6
+      with:
+        repository: agoodkind/swift-makefile
+        ref: main
+        path: .swift-mk-notarize-src
+
+    - name: Resolve engine revision
+      id: engine
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "rev=$(git -C .swift-mk-notarize-src rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+    - uses: actions/cache@v5
+      with:
+        path: .swift-mk-notarize-bin
+        key: swift-mk-notarize-${{ runner.os }}-${{ steps.engine.outputs.rev }}
+
+    - name: Build swift-mk if not cached
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        if [ -x .swift-mk-notarize-bin/swift-mk ]; then
+            exit 0
+        fi
+        swift build --package-path .swift-mk-notarize-src -c release --product swift-mk
+        bin_dir="$(swift build --package-path .swift-mk-notarize-src -c release --show-bin-path)"
+        mkdir -p .swift-mk-notarize-bin
+        cp "$bin_dir/swift-mk" .swift-mk-notarize-bin/swift-mk
+
     - name: Notarize and staple
       shell: bash
       env:
         ARTIFACT_PATH: ${{ inputs.artifact-path }}
-        NOTARY_KEY_BASE64: ${{ inputs.notary-key-base64 }}
-        NOTARY_KEY_ID: ${{ inputs.notary-key-id }}
-        NOTARY_ISSUER_ID: ${{ inputs.notary-issuer-id }}
+        APPLE_NOTARY_KEY_BASE64: ${{ inputs.notary-key-base64 }}
+        APPLE_NOTARY_KEY_ID: ${{ inputs.notary-key-id }}
+        APPLE_NOTARY_ISSUER_ID: ${{ inputs.notary-issuer-id }}
       run: |
         set -euo pipefail
-
-        key_path="$RUNNER_TEMP/notary-AuthKey.p8"
-        printf '%s' "$NOTARY_KEY_BASE64" | base64 --decode > "$key_path"
 
         if [[ -z "${ARTIFACT_PATH// /}" ]]; then
             echo "notarize-staple: no artifacts to notarize" >&2
             exit 1
         fi
 
-        for artifact in $ARTIFACT_PATH; do
-            submit_output_path="$RUNNER_TEMP/notarytool-submit-$(basename "$artifact").json"
-
-            set +e
-            xcrun notarytool submit "$artifact" \
-                --key "$key_path" \
-                --key-id "$NOTARY_KEY_ID" \
-                --issuer "$NOTARY_ISSUER_ID" \
-                --wait \
-                --output-format json > "$submit_output_path"
-            submit_exit_code=$?
-            set -e
-
-            submission_status="$(plutil -extract status raw -o - "$submit_output_path" 2>/dev/null || true)"
-            if [[ "$submit_exit_code" -ne 0 ]]; then
-                cat "$submit_output_path" >&2 || true
-                exit "$submit_exit_code"
-            fi
-            if [[ "$submission_status" != "Accepted" ]]; then
-                echo "Notary submission was not accepted for $artifact: ${submission_status:-missing status}" >&2
-                cat "$submit_output_path" >&2 || true
-                exit 1
-            fi
-
-            # stapler cannot write into a zip. A zip carrying .app bundles is
-            # expanded, each app stapled, and the zip rebuilt; a zip of bare
-            # binaries cannot be stapled at all (Gatekeeper fetches the ticket
-            # online on first launch), so it ships as-is once notarized.
-            case "$artifact" in
-            *.zip)
-                expand_dir="$(mktemp -d "$RUNNER_TEMP/staple.XXXXXX")"
-                ditto -x -k "$artifact" "$expand_dir"
-                found_app=0
-                for app in "$expand_dir"/*.app "$expand_dir"/*/*.app; do
-                    if [[ -d "$app" ]]; then
-                        xcrun stapler staple "$app"
-                        found_app=1
-                    fi
-                done
-                if [[ "$found_app" -eq 1 ]]; then
-                    rm "$artifact"
-                    ditto -c -k "$expand_dir" "$artifact"
-                else
-                    echo "notarize-staple: $artifact carries no .app to staple; notarized ticket is online-only"
-                fi
-                rm -rf "$expand_dir"
-                ;;
-            *)
-                xcrun stapler staple "$artifact"
-                ;;
-            esac
-        done
+        # shellcheck disable=SC2086
+        .swift-mk-notarize-bin/swift-mk notarize $ARTIFACT_PATH
