@@ -41,6 +41,7 @@ public enum Build {
       return missingBuildCommandStatus
     }
     Output.info("build: running configured build command")
-    return Shell.runForwardingOutput("/bin/sh", ["-c", command])
+    let cacheEnvironment = BuildCache.environment() ?? [:]
+    return Shell.runForwardingOutput("/bin/sh", ["-c", command], environment: cacheEnvironment)
   }
 }

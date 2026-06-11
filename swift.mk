@@ -161,6 +161,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/DeadcodeScan+Witness.swift \
 	Sources/SwiftMkCore/DeadcodeBuildConfig.swift \
 	Sources/SwiftMkCore/WitnessFilter.swift \
+	Sources/SwiftMkCore/BuildCache.swift \
 	Sources/SwiftMkCore/Codesign.swift \
 	Sources/SwiftMkCore/Notarize.swift \
 	Sources/SwiftMkCore/SigningBuildConfig.swift \
@@ -194,6 +195,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/BaselineKeyTests.swift \
 	Tests/SwiftMkCoreTests/BaselineMigrationTests.swift \
 	Tests/SwiftMkCoreTests/BaselineRecordTests.swift \
+	Tests/SwiftMkCoreTests/BuildCacheTests.swift \
 	Tests/SwiftMkCoreTests/CodesignTests.swift \
 	Tests/SwiftMkCoreTests/NotarizeTests.swift \
 	Tests/SwiftMkCoreTests/CountAwareGateTests.swift \
@@ -409,6 +411,7 @@ export SWIFT_MK_SWIFT_FORMAT_CONFIG
 export SWIFT_MK_PERIPHERY_CONFIG
 export SWIFT_MK_MISE_CONFIG
 export SWIFT_MK_PREFLIGHT_METAL
+export SWIFT_MK_BUILD_CACHE
 export SWIFTLINT
 export SWIFTLINT_FLAGS
 export SWIFTLINT_TARGETS
