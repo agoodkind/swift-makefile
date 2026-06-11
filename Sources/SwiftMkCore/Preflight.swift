@@ -62,30 +62,6 @@ public enum Preflight {
     return Result(ok: false, message: message)
   }
 
-  /// Ensure the Metal shader compiler is present when the consumer opts in
-  /// with SWIFT_MK_PREFLIGHT_METAL=1. Apple ships it as an on-demand
-  /// component, so a fresh Xcode install lacks it; the engine downloads it
-  /// once and re-checks, failing loud when it still cannot be found.
-  public static func ensureMetal() -> Bool {
-    guard Env.get("SWIFT_MK_PREFLIGHT_METAL") == "1" else {
-      return true
-    }
-    if Shell.run("xcrun", ["--find", "metal"]).status == 0 {
-      return true
-    }
-    Output.log("preflight: Metal toolchain missing; downloading")
-    guard Toolchain.downloadMetalToolchain() == 0 else {
-      Output.error("preflight: Metal toolchain download failed")
-      return false
-    }
-    guard Shell.run("xcrun", ["--find", "metal"]).status == 0 else {
-      Output.error(
-        "preflight: Metal toolchain still missing after download; check the Xcode install")
-      return false
-    }
-    return true
-  }
-
   public static func trustMise(in directory: String) -> Bool {
     let directoryURL = URL(fileURLWithPath: directory, isDirectory: true)
     let fileManager = FileManager.default
