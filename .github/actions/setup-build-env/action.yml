@@ -62,8 +62,12 @@ runs:
     # Tuist arrives through mise, so it only applies to repos that declare a
     # toolchain; an xcodegen-only consumer has no .tool-versions and must not
     # fail on a tuist check.
+    # The shared tool pins live in swift-makefile's mise.toml and are fetched
+    # into .config/mise/conf.d/ (gitignored), so the gate keys on the tuist
+    # manifests and any local mise config rather than a root pin file, and the
+    # shared config is materialized here before `mise install` runs.
     - name: Install mise and Tuist
-      if: ${{ inputs.install-tuist == 'true' || (inputs.install-tuist == 'auto' && hashFiles('.tool-versions') != '') }}
+      if: ${{ inputs.install-tuist == 'true' || (inputs.install-tuist == 'auto' && hashFiles('.tool-versions', 'mise.toml', 'Project.swift', 'Workspace.swift', 'Tuist.swift') != '') }}
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
@@ -77,6 +81,18 @@ runs:
         } >> "$GITHUB_PATH"
 
         export PATH="$HOME/.local/share/mise/bin:$HOME/.local/share/mise/shims:$PATH"
+
+        if [ ! -f .config/mise/conf.d/swift-mk.toml ]; then
+            mkdir -p .config/mise/conf.d
+            if [ "${GITHUB_REPOSITORY##*/}" = "swift-makefile" ] && [ -f mise.toml ]; then
+                cp mise.toml .config/mise/conf.d/swift-mk.toml
+            else
+                curl -fsSL https://raw.githubusercontent.com/agoodkind/swift-makefile/main/mise.toml \
+                    -o .config/mise/conf.d/swift-mk.toml
+            fi
+        fi
+        mise trust .config/mise/conf.d/swift-mk.toml
+
         mise install
         tuist version
 
