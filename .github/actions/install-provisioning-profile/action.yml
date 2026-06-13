@@ -1,0 +1,35 @@
+name: Install provisioning profile
+description: Install a Developer ID provisioning profile into the user keychain location and resolve its profile-specifier name.
+
+inputs:
+  profile-base64:
+    description: Base64-encoded `.provisionprofile`.
+    required: true
+
+outputs:
+  profile-specifier:
+    description: The profile's Name, for PROVISIONING_PROFILE_SPECIFIER.
+    value: ${{ steps.install.outputs.profile-specifier }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install profile
+      id: install
+      shell: bash
+      env:
+        PROFILE_BASE64: ${{ inputs.profile-base64 }}
+      run: |
+        set -euo pipefail
+
+        profile_path="$RUNNER_TEMP/developer-id.provisionprofile"
+        profile_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
+        printf '%s' "$PROFILE_BASE64" | base64 --decode > "$profile_path"
+
+        profile_uuid="$(security cms -D -i "$profile_path" | plutil -extract UUID raw -o - -)"
+        profile_name="$(security cms -D -i "$profile_path" | plutil -extract Name raw -o - -)"
+
+        mkdir -p "$profile_dir"
+        cp "$profile_path" "$profile_dir/$profile_uuid.provisionprofile"
+
+        printf 'profile-specifier=%s\n' "$profile_name" >> "$GITHUB_OUTPUT"

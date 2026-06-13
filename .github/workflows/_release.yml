@@ -43,6 +43,12 @@ on:
       sbom-subject-path:
         type: string
         default: ""
+      # Install a Developer ID provisioning profile before building, for apps with
+      # entitlements that require one (iCloud). Requires the
+      # APPLE_DEVELOPER_ID_PROFILE_BASE64 secret; silently skipped when absent.
+      install-provisioning-profile:
+        type: boolean
+        default: false
       signing-identity-name:
         type: string
         default: ""
@@ -59,6 +65,8 @@ on:
       APPLE_DEVELOPER_ID_P12_BASE64:
         required: false
       APPLE_DEVELOPER_ID_P12_PASSWORD:
+        required: false
+      APPLE_DEVELOPER_ID_PROFILE_BASE64:
         required: false
       APPLE_NOTARY_KEY_BASE64:
         required: false
@@ -99,6 +107,7 @@ jobs:
       contents: read
     env:
       HAS_SIGNING: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
+      HAS_PROFILE: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -123,6 +132,13 @@ jobs:
           p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
           identity-name: ${{ inputs.signing-identity-name }}
 
+      - name: Install provisioning profile
+        id: profile
+        if: ${{ inputs.install-provisioning-profile && env.HAS_PROFILE == 'true' }}
+        uses: agoodkind/swift-makefile/.github/actions/install-provisioning-profile@main
+        with:
+          profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
+
       # Signing values pass as make command-line variables only when present, so
       # a secretless run never clobbers a consumer's ?= defaults with empties.
       # Notary credentials are exposed too: a consumer whose build hook must
@@ -132,6 +148,7 @@ jobs:
         env:
           CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
           TEAM_ID: ${{ inputs.apple-team-id }}
+          PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile.outputs.profile-specifier }}
           RELEASE_TAG: ${{ needs.meta.outputs.tag }}
           MARKETING_VERSION: ${{ needs.meta.outputs.marketing_version }}
           CURRENT_PROJECT_VERSION: ${{ needs.meta.outputs.build_version }}
