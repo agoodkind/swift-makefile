@@ -136,8 +136,6 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCLI/ToolchainCommand.swift \
 	Sources/SwiftMkCore/Findings.swift \
 	Sources/SwiftMkCore/BaselineKey.swift \
-	Sources/SwiftMkCore/BaselineMigration.swift \
-	Sources/SwiftMkCore/BaselineMigrationRunner.swift \
 	Sources/SwiftMkCore/BaselineRecord.swift \
 	Sources/SwiftMkCore/BaselineRunner+StructuredWrite.swift \
 	Sources/SwiftMkCore/CountAwareGate.swift \
@@ -193,7 +191,6 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/BuildToolingAuditTests.swift \
 	Tests/SwiftMkCoreTests/AdHocSigningAllowlistTests.swift \
 	Tests/SwiftMkCoreTests/BaselineKeyTests.swift \
-	Tests/SwiftMkCoreTests/BaselineMigrationTests.swift \
 	Tests/SwiftMkCoreTests/BaselineRecordTests.swift \
 	Tests/SwiftMkCoreTests/BuildCacheTests.swift \
 	Tests/SwiftMkCoreTests/CodesignTests.swift \

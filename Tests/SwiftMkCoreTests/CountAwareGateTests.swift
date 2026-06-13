@@ -6,6 +6,7 @@
 //  Copyright © 2026, all rights reserved.
 //
 
+import Foundation
 import Testing
 
 @testable import SwiftMkCore
@@ -13,6 +14,78 @@ import Testing
 // MARK: - CountAwareGateTests
 
 enum CountAwareGateTests {}
+
+@Test
+func contentKeySurvivesAMoveButNotAnEdit() throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "swift-mk-contentkey-\(UUID().uuidString)", isDirectory: true)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer {
+    do {
+      try FileManager.default.removeItem(at: directory)
+    } catch {
+      Output.warning("cleanup failed: \(error.localizedDescription)")
+    }
+  }
+  let sourcePath = directory.appendingPathComponent("Worker.swift").path
+  let offendingLine = "    let total = price * quantity"
+  let message = "Line should be 120 or less"
+
+  // Original tree: the violation sits on line 3, and that is the baselined state.
+  let original = ["import Foundation", "", offendingLine, "", "// trailer"]
+  try writeSource(original, to: sourcePath)
+  let baselined = makeSwiftlintFinding(
+    ruleId: "line_length", file: sourcePath, line: 3, column: 1, message: message)
+  let baseline = [makeRecord(from: baselined)]
+
+  // Move: same code, now on line 5. The key reads the line text, so it still matches.
+  let moved = ["import Foundation", "", "", "", offendingLine, "// trailer"]
+  try writeSource(moved, to: sourcePath)
+  let movedFinding = makeSwiftlintFinding(
+    ruleId: "line_length", file: sourcePath, line: 5, column: 1, message: message)
+  let afterMove = CountAwareGate.evaluate(current: [movedFinding], baseline: baseline)
+  #expect(afterMove.passed)
+  #expect(afterMove.newFindings.isEmpty)
+
+  // Edit: the line's tokens change, so the key changes and the finding reads new.
+  let edited = ["import Foundation", "", "", "", "    let total = price * rate", "// trailer"]
+  try writeSource(edited, to: sourcePath)
+  let editedFinding = makeSwiftlintFinding(
+    ruleId: "line_length", file: sourcePath, line: 5, column: 1, message: message)
+  let afterEdit = CountAwareGate.evaluate(current: [editedFinding], baseline: baseline)
+  #expect(!afterEdit.passed)
+  #expect(afterEdit.newFindings == [editedFinding])
+}
+
+@Test
+func contentKeyCollapsesTwoIdenticalLinesIntoOneCountedKey() throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "swift-mk-contentkey-\(UUID().uuidString)", isDirectory: true)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer {
+    do {
+      try FileManager.default.removeItem(at: directory)
+    } catch {
+      Output.warning("cleanup failed: \(error.localizedDescription)")
+    }
+  }
+  let sourcePath = directory.appendingPathComponent("Magic.swift").path
+  // Two byte-identical offending lines normalize to the same text.
+  try writeSource(["    print(value)", "    print(value)"], to: sourcePath)
+
+  let firstFinding = makeSwiftlintFinding(
+    ruleId: "no_magic_numbers", file: sourcePath, line: 1, column: 1, message: "magic")
+  let secondFinding = makeSwiftlintFinding(
+    ruleId: "no_magic_numbers", file: sourcePath, line: 2, column: 1, message: "magic")
+
+  // Both lines normalize to the same text, so they share one key with count 2.
+  #expect(BaselineKey.of(firstFinding) == BaselineKey.of(secondFinding))
+  let baseline = [makeRecord(from: firstFinding), makeRecord(from: secondFinding)]
+  let evaluation = CountAwareGate.evaluate(
+    current: [firstFinding, secondFinding], baseline: baseline)
+  #expect(evaluation.passed)
+  #expect(evaluation.goneCount == 0)
+}
 
 @Test
 func evaluatePassesWhenCurrentMatchesBaselineKeysAndCounts() {
@@ -189,6 +262,11 @@ func evaluatePreservesCurrentOrderForExcessFindings() {
   #expect(!evaluation.passed)
   #expect(evaluation.newFindings == [firstExcess, secondExcess, thirdExcess])
   #expect(evaluation.goneCount == 0)
+}
+
+private func writeSource(_ lines: [String], to path: String) throws {
+  let content = lines.joined(separator: "\n") + "\n"
+  try content.write(toFile: path, atomically: true, encoding: .utf8)
 }
 
 private func makeSwiftlintFinding(

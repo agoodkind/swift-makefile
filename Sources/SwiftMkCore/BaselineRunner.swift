@@ -12,6 +12,10 @@ import Foundation
 
 /// Drive baseline updates per component. Port of `scripts/swift-mk-baseline.sh`.
 public enum BaselineRunner {
+  enum RunnerError: Error, Equatable {
+    case unsupportedComponent(String)
+  }
+
   public static func mode() -> BaselineMode {
     BaselineMode(argument: Env.get("BASELINE_UPDATE_MODE", "sync")) ?? .sync
   }
@@ -68,7 +72,7 @@ public enum BaselineRunner {
         context: context
       )
     default:
-      throw BaselineMigration.MigrationError.unsupportedTool(label)
+      throw RunnerError.unsupportedComponent(label)
     }
   }
 

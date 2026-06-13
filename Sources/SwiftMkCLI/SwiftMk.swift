@@ -24,7 +24,6 @@ struct SwiftMk: ParsableCommand {
       LintSwiftlintScope.self, SwiftcheckExtra.self, SwiftcheckExtraBin.self,
       Fmt.self, TestCommand.self, Audit.self, LogAudit.self,
       BaselineCommand.self, NoticeCommand.self, Render.self, RenderBatch.self,
-      BaselineMigrateCommand.self,
       XcodeFileHeader.self, BuildCheck.self, BuildCommand.self, GateToken.self,
       SigningXcconfig.self, SigningIdentity.self, VerifySigning.self, CodesignRun.self,
       NotarizeCommand.self,
@@ -357,22 +356,6 @@ struct BaselineCommand: ParsableCommand {
     if let rule { setenv("RULE", rule, 1) }
     if json { setenv("BASELINE_OUTPUT_FORMAT", "json", 1) }
     try BaselineRunner.update(component: component, context: PathContext.current())
-  }
-}
-
-// MARK: - BaselineMigrateCommand
-
-struct BaselineMigrateCommand: ParsableCommand {
-  static let configuration = CommandConfiguration(commandName: "baseline-migrate")
-
-  func run() throws {
-    let outcomes = try BaselineMigrationRunner.migrateTextTools()
-    for outcome in outcomes {
-      Output.log(
-        "migrated \(outcome.label): \(outcome.migrated) findings -> "
-          + outcome.jsonlPath
-      )
-    }
   }
 }
 
