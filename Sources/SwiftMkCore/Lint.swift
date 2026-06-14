@@ -411,11 +411,19 @@ private enum SwiftlintCapture {
       "swiftlint: capturing structured findings (only: \(onlyRules.joined(separator: ",")))")
     Capture.write("", to: rawPath)
     let invocation = invocation(onlyRules: onlyRules, flags: structuredFlags())
-    let captured = FindingsSource.swiftlint(
-      executable: invocation.executable,
-      arguments: invocation.arguments,
-      environment: invocation.environment
-    )
+    var captured: [Finding] = []
+    var decodeError: Error?
+    do {
+      captured = try FindingsSource.swiftlint(
+        executable: invocation.executable,
+        arguments: invocation.arguments,
+        environment: invocation.environment
+      )
+    } catch {
+      decodeError = error
+      Output.error(
+        "swiftlint: \(error); failing the gate rather than passing on undecodable output")
+    }
     let result = Shell.run(
       invocation.executable,
       invocation.arguments + ["--reporter", "json"],
@@ -427,7 +435,28 @@ private enum SwiftlintCapture {
     let normalized = captured.map { normalize($0, context: context) }
     let excluded = applyExclude(normalized)
     let notIgnored = dropGitIgnored(excluded)
-    return applyLineRanges(notIgnored)
+    var findings = applyLineRanges(notIgnored)
+    if let decodeError {
+      // A non-empty, undecodable result is unknown, not clean: append a finding the
+      // baseline never matches so the gate fails loud, past the exclude and line-range
+      // filters so it cannot be dropped.
+      findings.append(undecodableFinding(decodeError))
+    }
+    return findings
+  }
+
+  private static func undecodableFinding(_ error: Error) -> Finding {
+    Finding(
+      tool: "swiftlint",
+      ruleId: "output-not-decodable",
+      file: "",
+      line: 0,
+      column: 0,
+      severity: .error,
+      message:
+        "swiftlint --reporter json output could not be decoded; "
+        + "the gate cannot verify results: \(error)"
+    )
   }
 
   private static func structuredFlags() -> [String] {
