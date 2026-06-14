@@ -73,16 +73,13 @@ func explicitIdentifierWinsForEveryPath() {
 
 @Test
 func identifierPrefixDerivesFromBasename() {
-  #expect(
-    Codesign.identifier(forPath: "Products/Build/Release/lmd", explicit: nil, prefix: "io.goodkind.lmd")
-      == "io.goodkind.lmd.lmd")
-  #expect(
-    Codesign.identifier(forPath: "Products/Build/Release/lmd-serve", explicit: nil, prefix: "io.goodkind.lmd")
-      == "io.goodkind.lmd.lmd-serve")
+  func derived(_ path: String) -> String? {
+    Codesign.identifier(forPath: path, explicit: nil, prefix: "io.goodkind.lmd")
+  }
+  #expect(derived("Products/Build/Release/lmd") == "io.goodkind.lmd.lmd")
+  #expect(derived("Products/Build/Release/lmd-serve") == "io.goodkind.lmd.lmd-serve")
   // A resource bundle drops its extension, matching the per-bundle identifier form.
-  #expect(
-    Codesign.identifier(forPath: "Products/Build/Release/mlx.bundle", explicit: nil, prefix: "io.goodkind.lmd")
-      == "io.goodkind.lmd.mlx")
+  #expect(derived("Products/Build/Release/mlx.bundle") == "io.goodkind.lmd.mlx")
 }
 
 @Test
@@ -96,11 +93,18 @@ func discoverBundlesFindsTopLevelBundlesSorted() throws {
   let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
     "swift-mk-bundles-\(UUID().uuidString)", isDirectory: true)
   try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-  defer { try? FileManager.default.removeItem(at: directory) }
+  defer {
+    do {
+      try FileManager.default.removeItem(at: directory)
+    } catch {
+      Output.warning("cleanup failed: \(error.localizedDescription)")
+    }
+  }
   for name in ["zeta.bundle", "alpha.bundle", "lmd", "notes.txt"] {
     try Data().write(to: directory.appendingPathComponent(name))
   }
-  let found = Codesign.discoverBundles(in: directory.path).map { ($0 as NSString).lastPathComponent }
+  let found = Codesign.discoverBundles(in: directory.path)
+    .map { ($0 as NSString).lastPathComponent }
   #expect(found == ["alpha.bundle", "zeta.bundle"])
 }
 

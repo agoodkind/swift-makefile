@@ -81,9 +81,11 @@ public enum Codesign {
   /// missing directory yields none, so an unbuilt or bundle-less product signs
   /// cleanly. Pure file listing, no codesign.
   static func discoverBundles(in directory: String) -> [String] {
-    guard
-      let contents = try? FileManager.default.contentsOfDirectory(atPath: directory)
-    else {
+    let contents: [String]
+    do {
+      contents = try FileManager.default.contentsOfDirectory(atPath: directory)
+    } catch {
+      // A missing or unreadable directory means no resource bundles to sign.
       return []
     }
     let bundles = contents.filter { ($0 as NSString).pathExtension == "bundle" }
