@@ -58,6 +58,38 @@ public enum Codesign {
     return inputs.identity.trimmingCharacters(in: .whitespaces)
   }
 
+  /// The codesign identifier for one artifact. An explicit identifier wins for
+  /// every path; otherwise a prefix derives `<prefix>.<basename without
+  /// extension>`, the per-product bundle-id form a multi-artifact CLI signs each
+  /// of its binaries and resource bundles with; otherwise nil (codesign keeps the
+  /// path's own identifier). Pure so tests cover the derivation without codesign.
+  static func identifier(forPath path: String, explicit: String?, prefix: String?) -> String? {
+    if let explicit, !explicit.isEmpty {
+      return explicit
+    }
+    guard let prefix, !prefix.isEmpty else {
+      return nil
+    }
+    let base = (path as NSString).lastPathComponent
+    let stem = (base as NSString).deletingPathExtension
+    return "\(prefix).\(stem)"
+  }
+
+  /// Top-level `*.bundle` resource bundles in a directory, sorted for a stable
+  /// signing order. Matches the runtime discovery a multi-artifact CLI does for
+  /// the resource bundles its build drops alongside the binaries; an empty or
+  /// missing directory yields none, so an unbuilt or bundle-less product signs
+  /// cleanly. Pure file listing, no codesign.
+  static func discoverBundles(in directory: String) -> [String] {
+    guard
+      let contents = try? FileManager.default.contentsOfDirectory(atPath: directory)
+    else {
+      return []
+    }
+    let bundles = contents.filter { ($0 as NSString).pathExtension == "bundle" }
+    return bundles.sorted().map { (directory as NSString).appendingPathComponent($0) }
+  }
+
   /// Sign every path with the canonical flags for the mode and verify each
   /// signature strictly. Fails loud when no identity resolves or any codesign
   /// invocation exits nonzero.
@@ -65,6 +97,8 @@ public enum Codesign {
     paths: [String],
     mode: Mode,
     identifier: String?,
+    identifierPrefix: String? = nil,
+    bundlesDirectory: String? = nil,
     localXcconfigPaths: [String] = ["Config/local.xcconfig"]
   ) -> Bool {
     let identity = resolveIdentity(localXcconfigPaths: localXcconfigPaths)
@@ -75,17 +109,24 @@ public enum Codesign {
       )
       return false
     }
-    guard !paths.isEmpty else {
+    var allPaths = paths
+    if let bundlesDirectory, !bundlesDirectory.isEmpty {
+      allPaths += discoverBundles(in: bundlesDirectory)
+    }
+    guard !allPaths.isEmpty else {
       Output.error("codesign-run: no paths given")
       return false
     }
-    for path in paths {
+    for path in allPaths {
       guard FileManager.default.fileExists(atPath: path) else {
         Output.error("codesign-run: missing path \(path)")
         return false
       }
+      let pathIdentifier = Self.identifier(
+        forPath: path, explicit: identifier, prefix: identifierPrefix)
       let sign = Shell.run(
-        "codesign", arguments(path: path, mode: mode, identity: identity, identifier: identifier))
+        "codesign",
+        arguments(path: path, mode: mode, identity: identity, identifier: pathIdentifier))
       guard sign.status == 0 else {
         Output.error("codesign-run: signing failed for \(path)")
         Output.emitStandardError(sign.combined)

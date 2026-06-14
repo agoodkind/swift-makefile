@@ -33,16 +33,27 @@ SWIFT_MK_VERIFY_ARTIFACTS_CMD = $(if $(strip $(SWIFT_MK_VERIFY_SIGNING_PATHS)),"
 
 # Post-build code signing for products the xcconfig override cannot reach. The
 # override only affects xcodebuild; a bare SwiftPM binary from `swift build` is
-# never signed by it. A consumer declares the built product paths in
-# SWIFT_MK_SIGN_PRODUCTS (and a bundle id in SWIFT_MK_SIGN_IDENTIFIER), and swift-mk
-# signs them through the same canonical codesign channel and identity resolution as
-# the build override. It runs only when an identity is set (CODE_SIGN_IDENTITY or
-# SWIFT_MK_SIGN_IDENTITY), so an unsigned build (no cert, the common local and fork
-# case) is left untouched. The paths must be literal, not a wildcard, since the
-# products do not exist at make parse time.
+# never signed by it. A consumer declares what to sign, and swift-mk signs it
+# through the same canonical codesign channel and identity resolution as the build
+# override:
+#   SWIFT_MK_SIGN_PRODUCTS          literal built binary paths (no make wildcard;
+#                                   a shell glob in the value is fine, expanded at
+#                                   recipe time after the build).
+#   SWIFT_MK_SIGN_BUNDLES_DIR       directory whose top-level *.bundle resource
+#                                   bundles are discovered and signed too.
+#   SWIFT_MK_SIGN_IDENTIFIER        one bundle id applied to every path, or
+#   SWIFT_MK_SIGN_IDENTIFIER_PREFIX derive each id as <prefix>.<basename>.
+# It runs only when something is declared and an identity is set (CODE_SIGN_IDENTITY
+# or SWIFT_MK_SIGN_IDENTITY), so an unsigned build (no cert, the common local and
+# fork case) is left untouched.
 SWIFT_MK_SIGN_PRODUCTS ?=
+SWIFT_MK_SIGN_BUNDLES_DIR ?=
 SWIFT_MK_SIGN_IDENTIFIER ?=
-SWIFT_MK_POST_BUILD_SIGN_CMD = $(if $(strip $(SWIFT_MK_SIGN_PRODUCTS)),$(if $(strip $(CODE_SIGN_IDENTITY))$(strip $(SWIFT_MK_SIGN_IDENTITY)),&& "$(SWIFT_MK_BIN)" codesign-run --mode binary $(if $(strip $(SWIFT_MK_SIGN_IDENTIFIER)),--identifier $(SWIFT_MK_SIGN_IDENTIFIER),) $(SWIFT_MK_SIGN_PRODUCTS),),)
+SWIFT_MK_SIGN_IDENTIFIER_PREFIX ?=
+SWIFT_MK_HAS_SIGN_WORK := $(strip $(SWIFT_MK_SIGN_PRODUCTS)$(SWIFT_MK_SIGN_BUNDLES_DIR))
+SWIFT_MK_SIGN_ID_ARGS = $(if $(strip $(SWIFT_MK_SIGN_IDENTIFIER)),--identifier $(SWIFT_MK_SIGN_IDENTIFIER),$(if $(strip $(SWIFT_MK_SIGN_IDENTIFIER_PREFIX)),--identifier-prefix $(SWIFT_MK_SIGN_IDENTIFIER_PREFIX),))
+SWIFT_MK_SIGN_BUNDLES_ARGS = $(if $(strip $(SWIFT_MK_SIGN_BUNDLES_DIR)),--bundles-in $(SWIFT_MK_SIGN_BUNDLES_DIR),)
+SWIFT_MK_POST_BUILD_SIGN_CMD = $(if $(SWIFT_MK_HAS_SIGN_WORK),$(if $(strip $(CODE_SIGN_IDENTITY))$(strip $(SWIFT_MK_SIGN_IDENTITY)),&& "$(SWIFT_MK_BIN)" codesign-run --mode binary $(SWIFT_MK_SIGN_ID_ARGS) $(SWIFT_MK_SIGN_BUNDLES_ARGS) $(SWIFT_MK_SIGN_PRODUCTS),),)
 
 # `swift-mk build` is the chokepoint: it runs the lint gates in-process and then
 # the configured SWIFT_BUILD_CMD, so there is no separate recipe step that compiles

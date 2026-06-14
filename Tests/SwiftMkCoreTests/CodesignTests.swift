@@ -65,6 +65,51 @@ func dmgModeSkipsHardenedRuntime() {
 }
 
 @Test
+func explicitIdentifierWinsForEveryPath() {
+  #expect(
+    Codesign.identifier(forPath: "Products/lmd", explicit: "io.fixed", prefix: "io.goodkind.lmd")
+      == "io.fixed")
+}
+
+@Test
+func identifierPrefixDerivesFromBasename() {
+  #expect(
+    Codesign.identifier(forPath: "Products/Build/Release/lmd", explicit: nil, prefix: "io.goodkind.lmd")
+      == "io.goodkind.lmd.lmd")
+  #expect(
+    Codesign.identifier(forPath: "Products/Build/Release/lmd-serve", explicit: nil, prefix: "io.goodkind.lmd")
+      == "io.goodkind.lmd.lmd-serve")
+  // A resource bundle drops its extension, matching the per-bundle identifier form.
+  #expect(
+    Codesign.identifier(forPath: "Products/Build/Release/mlx.bundle", explicit: nil, prefix: "io.goodkind.lmd")
+      == "io.goodkind.lmd.mlx")
+}
+
+@Test
+func identifierIsNilWithoutExplicitOrPrefix() {
+  #expect(Codesign.identifier(forPath: "Products/lmd", explicit: nil, prefix: nil) == nil)
+  #expect(Codesign.identifier(forPath: "Products/lmd", explicit: "", prefix: "") == nil)
+}
+
+@Test
+func discoverBundlesFindsTopLevelBundlesSorted() throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "swift-mk-bundles-\(UUID().uuidString)", isDirectory: true)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  for name in ["zeta.bundle", "alpha.bundle", "lmd", "notes.txt"] {
+    try Data().write(to: directory.appendingPathComponent(name))
+  }
+  let found = Codesign.discoverBundles(in: directory.path).map { ($0 as NSString).lastPathComponent }
+  #expect(found == ["alpha.bundle", "zeta.bundle"])
+}
+
+@Test
+func discoverBundlesIsEmptyForMissingDirectory() {
+  #expect(Codesign.discoverBundles(in: "/no/such/dir-\(UUID().uuidString)").isEmpty)
+}
+
+@Test
 func runFailsWithoutIdentity() {
   let previousIdentity = ProcessInfo.processInfo.environment["CODE_SIGN_IDENTITY"]
   let previousSignIdentity = ProcessInfo.processInfo.environment["SWIFT_MK_SIGN_IDENTITY"]

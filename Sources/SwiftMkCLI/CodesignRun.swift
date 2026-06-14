@@ -23,14 +23,26 @@ struct CodesignRun: ParsableCommand {
   @Option(name: .long, help: "Artifact kind: binary, sparkle, or dmg.")
   var mode: String = "binary"
 
-  @Option(name: .long, help: "Bundle identifier for bare binaries.")
+  @Option(name: .long, help: "Bundle identifier applied to every path.")
   var identifier: String?
+
+  @Option(
+    name: .customLong("identifier-prefix"),
+    help: "Derive each path's identifier as <prefix>.<basename>; --identifier wins when both set."
+  )
+  var identifierPrefix: String?
+
+  @Option(
+    name: .customLong("bundles-in"),
+    help: "Directory whose top-level *.bundle resource bundles are signed alongside the paths."
+  )
+  var bundlesIn: String?
 
   @Option(name: .long, help: "Local xcconfig consulted for blank signing values.")
   var localXcconfig: String = "Config/local.xcconfig"
 
   @Argument(help: "Paths to sign.")
-  var paths: [String]
+  var paths: [String] = []
 
   func run() throws {
     guard let parsedMode = Codesign.Mode(rawValue: mode) else {
@@ -42,6 +54,8 @@ struct CodesignRun: ParsableCommand {
         paths: paths,
         mode: parsedMode,
         identifier: identifier,
+        identifierPrefix: identifierPrefix,
+        bundlesDirectory: bundlesIn,
         localXcconfigPaths: [localXcconfig]
       )
     else {
