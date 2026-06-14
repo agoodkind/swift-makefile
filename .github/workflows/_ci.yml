@@ -59,6 +59,16 @@ on:
         required: false
       APPLE_DEVELOPER_ID_PROFILE_BASE64:
         required: false
+      # App Store Connect API key for iOS automatic signing
+      # (`xcodebuild -allowProvisioningUpdates`). The consumer's build reads these
+      # from the environment, the same names `_release.yml` uses for notarization.
+      # Absent, the build does no automatic signing, which a simulator build never needs.
+      APPLE_NOTARY_KEY_BASE64:
+        required: false
+      APPLE_NOTARY_KEY_ID:
+        required: false
+      APPLE_NOTARY_ISSUER_ID:
+        required: false
 
 env:
   # The swift-makefile bootstrap fetches swift.mk via `gh api`; unauthenticated
@@ -66,6 +76,47 @@ env:
   GH_TOKEN: ${{ github.token }}
 
 jobs:
+  # The decoupled, always-run lint/audit/deadcode gate. swift-mk owns it, so it
+  # runs on every consumer PR regardless of `targets` and cannot be dropped. It
+  # runs `build-check` (the exact set the inline `build` gate ran before), so the
+  # `build` matrix job below skips its inline gates on CI and never double-gates.
+  # The deadcode coverage build disables signing itself, so this job imports no
+  # cert; DEVELOPMENT_TEAM still flows for project generation when set.
+  gate:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: ${{ inputs.fetch-depth }}
+
+      - name: Install brew packages
+        if: inputs.brew-packages != ''
+        run: brew install ${{ inputs.brew-packages }}
+
+      - uses: agoodkind/swift-makefile/.github/actions/setup-build-env@main
+        with:
+          xcode-version: ${{ inputs.xcode-version }}
+          github-token: ${{ github.token }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+
+      - name: Run setup target
+        if: inputs.setup-target != ''
+        env:
+          TEAM_ID: ${{ inputs.apple-team-id }}
+        run: |
+          sign_args=""
+          if [ -n "${TEAM_ID:-}" ]; then sign_args="DEVELOPMENT_TEAM=$TEAM_ID"; fi
+          make ${{ inputs.setup-target }} ${{ inputs.make-args }} $sign_args
+
+      - name: Run build-check gate
+        env:
+          TEAM_ID: ${{ inputs.apple-team-id }}
+        run: |
+          sign_args=""
+          if [ -n "${TEAM_ID:-}" ]; then sign_args="DEVELOPMENT_TEAM=$TEAM_ID"; fi
+          make build-check ${{ inputs.make-args }} $sign_args
+
   ci:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
@@ -113,12 +164,18 @@ jobs:
       # setting (swift-mk forbids that key), so the consumer's project resolves
       # `$(PROVISIONING_PROFILE_SPECIFIER)` from it; it is empty for profile-less
       # consumers and has no effect there.
+      # The notary key flows in the environment under the names the consumer's
+      # build reads for `-allowProvisioningUpdates` automatic signing. It is empty
+      # for consumers that do not sign iOS and has no effect there.
       - name: Run setup target
         if: inputs.setup-target != ''
         env:
           CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
           TEAM_ID: ${{ inputs.apple-team-id }}
           PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile.outputs.profile-specifier }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
         run: |
           sign_args=""
           if [ -n "${CERT_SHA1:-}" ]; then sign_args="CODE_SIGN_IDENTITY=$CERT_SHA1"; fi
@@ -130,6 +187,9 @@ jobs:
           CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
           TEAM_ID: ${{ inputs.apple-team-id }}
           PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile.outputs.profile-specifier }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
         run: |
           sign_args=""
           if [ -n "${CERT_SHA1:-}" ]; then sign_args="CODE_SIGN_IDENTITY=$CERT_SHA1"; fi

@@ -70,7 +70,16 @@ public enum Notarize {
   /// the shell `base64 --decode` this replaced did: a secret set with line
   /// wrapping or a trailing newline decodes identically to a clean one.
   static func decodeKeyBase64(_ text: String) -> Data? {
-    Data(base64Encoded: text, options: .ignoreUnknownCharacters)
+    // An all-invalid string decodes to empty Data under .ignoreUnknownCharacters on
+    // some Foundation versions and to nil on others; a real .p8 key is never empty,
+    // so treat an empty decode as undecodable for a consistent result across runners.
+    guard
+      let data = Data(base64Encoded: text, options: .ignoreUnknownCharacters),
+      !data.isEmpty
+    else {
+      return nil
+    }
+    return data
   }
 
   /// Decode the env credentials, materializing APPLE_NOTARY_KEY_BASE64 into a

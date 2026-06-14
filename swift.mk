@@ -182,6 +182,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/FileLock.swift \
 	Tests/SwiftMkRenderCoreTests/TemplateRendererTests.swift \
 	Tests/SwiftMkCoreTests/SwiftMkCoreTests.swift \
+	Tests/SwiftMkCoreTests/BuildTests.swift \
 	Tests/SwiftMkCoreTests/DeadcodeBuildConfigTests.swift \
 	Tests/SwiftMkCoreTests/IndexCompletenessTests.swift \
 	Tests/SwiftMkCoreTests/WitnessFilterTests.swift \

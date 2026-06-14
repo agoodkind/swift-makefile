@@ -19,21 +19,32 @@ public enum Build {
   /// consumer fails loudly rather than silently building nothing.
   static let missingBuildCommandStatus: Int32 = 1
 
+  /// Whether `build` runs the lint gates inline. A local or agent run has no
+  /// GitHub Actions environment, so `build` is the unbypassable chokepoint and
+  /// runs the gates itself. A CI run (`GITHUB_ACTIONS=true` with a non-empty
+  /// `GITHUB_RUN_ID`) runs the gates as its own decoupled job in the reusable
+  /// workflow, so `build` skips them and stays a pure compile, with no double
+  /// gating. `GITHUB_ACTIONS` without a run id is not a CI run, so gates still fire.
+  public static func runsInlineGates(githubActions: String, githubRunId: String) -> Bool {
+    !(githubActions == "true" && !githubRunId.isEmpty)
+  }
+
   /// Run the lint gates once, then the configured build command with its output
-  /// forwarded live. This is the single place every `make build` gates, so the
-  /// build command and any `toolchain build` it calls stay pure compilers and never
-  /// double-gate. Returns the gate-failure status when the gates fail, a nonzero
-  /// status when `SWIFT_BUILD_CMD` is unset, or the build command's exit status.
+  /// forwarded live. This is the single place every `make build` gates off-CI, so
+  /// the build command and any `toolchain build` it calls stay pure compilers and
+  /// never double-gate. On CI the gates run as their own decoupled job, so this
+  /// skips them. Returns the gate-failure status when the gates fail off-CI, a
+  /// nonzero status when `SWIFT_BUILD_CMD` is unset, or the build command's exit
+  /// status.
   public static func gateAndBuild() -> Int32 {
-    if !Lint.runBuildCheck(context: PathContext.current()) {
-      guard
-        Env.get("GITHUB_ACTIONS") == "true",
-        !Env.get("GITHUB_RUN_ID").isEmpty,
-        !Env.get("RELEASE_TAG").isEmpty
-      else {
+    let inlineGates = runsInlineGates(
+      githubActions: Env.get("GITHUB_ACTIONS"), githubRunId: Env.get("GITHUB_RUN_ID"))
+    if inlineGates {
+      if !Lint.runBuildCheck(context: PathContext.current()) {
         return Toolchain.gateFailureStatus
       }
-      Output.log("build: continuing with reported gate failures")
+    } else {
+      Output.log("build: gates run in the CI gate job; skipping inline gates")
     }
     let command = Env.get("SWIFT_BUILD_CMD")
     guard !command.isEmpty else {

@@ -41,7 +41,7 @@ func swiftlintRunsJsonReporterAndDecodesFindings() throws {
     removeTemporaryScript(scriptPath)
   }
 
-  let findings = FindingsSource.swiftlint(executable: scriptPath, arguments: [])
+  let findings = try FindingsSource.swiftlint(executable: scriptPath, arguments: [])
   let finding = try #require(findings.first)
 
   #expect(findings.count == 1)
@@ -71,7 +71,7 @@ func peripheryRunsJsonFormatAndDecodesFindings() throws {
     removeTemporaryScript(scriptPath)
   }
 
-  let findings = FindingsSource.periphery(executable: scriptPath, arguments: [])
+  let findings = try FindingsSource.periphery(executable: scriptPath, arguments: [])
   let finding = try #require(findings.first)
 
   #expect(findings.count == 1)
@@ -80,7 +80,7 @@ func peripheryRunsJsonFormatAndDecodesFindings() throws {
 }
 
 @Test
-func invalidSwiftlintJsonReturnsEmptyFindings() throws {
+func nonEmptyUndecodableSwiftlintOutputThrows() throws {
   let scriptPath = try makeTemporaryScript(
     contents: """
       #!/bin/sh
@@ -91,9 +91,41 @@ func invalidSwiftlintJsonReturnsEmptyFindings() throws {
     removeTemporaryScript(scriptPath)
   }
 
-  let findings = FindingsSource.swiftlint(executable: scriptPath, arguments: [])
+  // A non-empty body that does not decode is unknown, not clean: it must throw so
+  // the gate fails loud rather than passing on zero findings.
+  #expect(throws: FindingsDecodeError.self) {
+    try FindingsSource.swiftlint(executable: scriptPath, arguments: [])
+  }
+}
 
+@Test
+func emptySwiftlintOutputReturnsNoFindings() throws {
+  let scriptPath = try makeTemporaryScript(
+    contents: """
+      #!/bin/sh
+      printf ''
+      """
+  )
+  defer {
+    removeTemporaryScript(scriptPath)
+  }
+
+  // No output is genuinely no findings; the caller's exit-status check governs.
+  let findings = try FindingsSource.swiftlint(executable: scriptPath, arguments: [])
   #expect(findings.isEmpty)
+}
+
+@Test
+func decodeSwiftlintJsonTreatsWhitespaceAsNoFindings() throws {
+  #expect(try FindingsSource.decodeSwiftlintJSON("").isEmpty)
+  #expect(try FindingsSource.decodeSwiftlintJSON("\n  \n").isEmpty)
+}
+
+@Test
+func decodeSwiftlintJsonThrowsOnNonEmptyGarbage() {
+  #expect(throws: FindingsDecodeError.self) {
+    try FindingsSource.decodeSwiftlintJSON("not json")
+  }
 }
 
 private func makeTemporaryScript(contents: String) throws -> String {
