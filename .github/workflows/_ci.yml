@@ -117,7 +117,12 @@ jobs:
           if [ -n "${TEAM_ID:-}" ]; then sign_args="DEVELOPMENT_TEAM=$TEAM_ID"; fi
           make build-check ${{ inputs.make-args }} $sign_args
 
+  # The display name is set to the matrix target alone so the reusable-workflow
+  # status check reads `<workflow> / <caller-job> / build` instead of the default
+  # `<workflow> / <caller-job> / ci (build)`. The job id stays `ci`; no job
+  # references it via `needs`, so the rename is display-only.
   ci:
+    name: ${{ matrix.target }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     strategy:
