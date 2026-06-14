@@ -31,6 +31,19 @@ SWIFT_MK_VERIFY_XCCONFIG_ARGS = $(if $(strip $(SWIFT_MK_VERIFY_XCCONFIG)),--xcco
 SWIFT_MK_VERIFY_SETTINGS_CMD = $(if $(and $(strip $(SWIFT_MK_VERIFY_WORKSPACE)),$(strip $(SWIFT_MK_VERIFY_SCHEME))),"$(SWIFT_MK_BIN)" verify-signing settings --workspace "$(SWIFT_MK_VERIFY_WORKSPACE)" --scheme "$(SWIFT_MK_VERIFY_SCHEME)" $(if $(strip $(SWIFT_MK_VERIFY_CONFIGURATION)),--configuration "$(SWIFT_MK_VERIFY_CONFIGURATION)") $(SWIFT_MK_VERIFY_XCCONFIG_ARGS) &&,)
 SWIFT_MK_VERIFY_ARTIFACTS_CMD = $(if $(strip $(SWIFT_MK_VERIFY_SIGNING_PATHS)),"$(SWIFT_MK_BIN)" verify-signing artifacts $(SWIFT_MK_VERIFY_SIGNING_PATHS) $(SWIFT_MK_VERIFY_XCCONFIG_ARGS),true)
 
+# Post-build code signing for products the xcconfig override cannot reach. The
+# override only affects xcodebuild; a bare SwiftPM binary from `swift build` is
+# never signed by it. A consumer declares the built product paths in
+# SWIFT_MK_SIGN_PRODUCTS (and a bundle id in SWIFT_MK_SIGN_IDENTIFIER), and swift-mk
+# signs them through the same canonical codesign channel and identity resolution as
+# the build override. It runs only when an identity is set (CODE_SIGN_IDENTITY or
+# SWIFT_MK_SIGN_IDENTITY), so an unsigned build (no cert, the common local and fork
+# case) is left untouched. The paths must be literal, not a wildcard, since the
+# products do not exist at make parse time.
+SWIFT_MK_SIGN_PRODUCTS ?=
+SWIFT_MK_SIGN_IDENTIFIER ?=
+SWIFT_MK_POST_BUILD_SIGN_CMD = $(if $(strip $(SWIFT_MK_SIGN_PRODUCTS)),$(if $(strip $(CODE_SIGN_IDENTITY))$(strip $(SWIFT_MK_SIGN_IDENTITY)),&& "$(SWIFT_MK_BIN)" codesign-run --mode binary $(if $(strip $(SWIFT_MK_SIGN_IDENTIFIER)),--identifier $(SWIFT_MK_SIGN_IDENTIFIER),) $(SWIFT_MK_SIGN_PRODUCTS),),)
+
 # `swift-mk build` is the chokepoint: it runs the lint gates in-process and then
 # the configured SWIFT_BUILD_CMD, so there is no separate recipe step that compiles
 # without gating. It depends only on the binary; the gates run inside it, not as a
@@ -40,6 +53,7 @@ build: swift-mk-bin
 		$(if $(strip $(SWIFT_GENERATE_CMD)),$(SWIFT_GENERATE_CMD) &&,) \
 		$(SWIFT_MK_VERIFY_SETTINGS_CMD) \
 		"$(SWIFT_MK_BIN)" build \
+		$(SWIFT_MK_POST_BUILD_SIGN_CMD) \
 		&& $(SWIFT_MK_VERIFY_ARTIFACTS_CMD)
 
 # Consumers that define their own `run` set SWIFT_MK_OWN_RUN := 1 before include,
