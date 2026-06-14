@@ -66,6 +66,47 @@ env:
   GH_TOKEN: ${{ github.token }}
 
 jobs:
+  # The decoupled, always-run lint/audit/deadcode gate. swift-mk owns it, so it
+  # runs on every consumer PR regardless of `targets` and cannot be dropped. It
+  # runs `build-check` (the exact set the inline `build` gate ran before), so the
+  # `build` matrix job below skips its inline gates on CI and never double-gates.
+  # The deadcode coverage build disables signing itself, so this job imports no
+  # cert; DEVELOPMENT_TEAM still flows for project generation when set.
+  gate:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: ${{ inputs.fetch-depth }}
+
+      - name: Install brew packages
+        if: inputs.brew-packages != ''
+        run: brew install ${{ inputs.brew-packages }}
+
+      - uses: agoodkind/swift-makefile/.github/actions/setup-build-env@main
+        with:
+          xcode-version: ${{ inputs.xcode-version }}
+          github-token: ${{ github.token }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+
+      - name: Run setup target
+        if: inputs.setup-target != ''
+        env:
+          TEAM_ID: ${{ inputs.apple-team-id }}
+        run: |
+          sign_args=""
+          if [ -n "${TEAM_ID:-}" ]; then sign_args="DEVELOPMENT_TEAM=$TEAM_ID"; fi
+          make ${{ inputs.setup-target }} ${{ inputs.make-args }} $sign_args
+
+      - name: Run build-check gate
+        env:
+          TEAM_ID: ${{ inputs.apple-team-id }}
+        run: |
+          sign_args=""
+          if [ -n "${TEAM_ID:-}" ]; then sign_args="DEVELOPMENT_TEAM=$TEAM_ID"; fi
+          make build-check ${{ inputs.make-args }} $sign_args
+
   ci:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}

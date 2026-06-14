@@ -14,5 +14,7 @@ jobs:
   ci:
     uses: ./.github/workflows/_ci.yml
     with:
-      targets: '["smoke-fetch","lint","build","test","audit"]'
+      # lint/audit/deadcode run once in the reusable workflow's mandatory gate
+      # job, so the matrix only carries the smoke fetch, the build, and tests.
+      targets: '["smoke-fetch","build","test"]'
     secrets: inherit
