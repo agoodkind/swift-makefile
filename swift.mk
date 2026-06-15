@@ -299,7 +299,9 @@ OSV_SCANNER_ARGS ?= --recursive --allow-no-lockfiles
 LINT_CONCURRENCY ?= auto
 
 SWIFT_MK_XCODE_VERSION_MAJOR := $(shell xcodebuild_path=$$(command -v xcodebuild || printf ''); if [ -n "$$xcodebuild_path" ]; then version_output=$$("$$xcodebuild_path" -version 2>/dev/null); printf '%s\n' "$$version_output" | awk '/^Xcode / { split($$2, version_parts, "."); print version_parts[1]; exit }'; else printf 0; fi)
-SWIFT_MK_XCODE_CACHE ?= auto
+SWIFT_MK_SWIFT_CACHE ?= auto
+SWIFT_MK_SWIFTPM_CACHE ?= $(SWIFT_MK_SWIFT_CACHE)
+SWIFT_MK_XCODE_CACHE ?= $(SWIFT_MK_SWIFT_CACHE)
 SWIFT_MK_XCODE_CACHE_DIAGNOSTICS ?= false
 SWIFT_MK_XCODE_CACHE_AUTO_ENABLED := $(shell awk 'BEGIN { version = "$(SWIFT_MK_XCODE_VERSION_MAJOR)" + 0; if (version >= 26) print "YES"; else print "NO"; }')
 SWIFT_MK_XCODE_CACHE_ENABLED := NO
@@ -320,7 +322,13 @@ SWIFT_MK_XCODEBUILD_NO_CACHE_ARGS := COMPILATION_CACHE_ENABLE_CACHING=NO COMPILA
 # `xcodebuild -derivedDataPath` here, and the dead-code gate reads the index store
 # from the same place, so coverage analysis is deterministic across repos.
 SWIFT_MK_DERIVED_DATA ?= $(CURDIR)/.derived-data
-SWIFT_MK_SWIFTPM_CACHE_ARGS_AUTO := $(shell swift_path=$$(command -v swift || printf ''); if [ -n "$$swift_path" ]; then build_help=$$("$$swift_path" build --help || true); args=""; printf '%s\n' "$$build_help" | grep -q -- '--enable-dependency-cache' && args="$$args --enable-dependency-cache"; printf '%s\n' "$$build_help" | grep -q -- '--enable-build-manifest-caching' && args="$$args --enable-build-manifest-caching"; printf '%s\n' "$$build_help" | grep -q -- '--manifest-cache' && args="$$args --manifest-cache shared"; printf '%s\n' "$$args" | awk '{$$1=$$1; print}'; fi)
+SWIFT_MK_SWIFTPM_CACHE_ENABLED := NO
+ifneq ($(filter $(SWIFT_MK_SWIFTPM_CACHE),1 true TRUE yes YES on ON auto AUTO),)
+SWIFT_MK_SWIFTPM_CACHE_ENABLED := YES
+else ifneq ($(filter $(SWIFT_MK_SWIFTPM_CACHE),0 false FALSE no NO off OFF),)
+SWIFT_MK_SWIFTPM_CACHE_ENABLED := NO
+endif
+SWIFT_MK_SWIFTPM_CACHE_ARGS_AUTO := $(if $(filter YES,$(SWIFT_MK_SWIFTPM_CACHE_ENABLED)),$(shell swift_path=$$(command -v swift || printf ''); if [ -n "$$swift_path" ]; then build_help=$$("$$swift_path" build --help || true); args=""; printf '%s\n' "$$build_help" | grep -q -- '--enable-dependency-cache' && args="$$args --enable-dependency-cache"; printf '%s\n' "$$build_help" | grep -q -- '--enable-build-manifest-caching' && args="$$args --enable-build-manifest-caching"; printf '%s\n' "$$build_help" | grep -q -- '--manifest-cache' && args="$$args --manifest-cache shared"; printf '%s\n' "$$args" | awk '{$$1=$$1; print}'; fi),)
 SWIFT_MK_SWIFTPM_CACHE_ARGS ?= $(SWIFT_MK_SWIFTPM_CACHE_ARGS_AUTO)
 
 SWIFT_MK_GATE_TOKEN_CMD ?= curl -fsSL "https://en.wikipedia.org/api/rest_v1/feed/featured/$$(date -u +%Y/%m/%d)" | jq -r '.tfa.titles.canonical'
@@ -353,7 +361,7 @@ SWIFT_XCODE_CONTAINER_ARG := $(if $(filter xcodegen,$(SWIFT_XCODE_GENERATOR)),--
 # Generate installs external dependencies first; Tuist cannot generate a project
 # whose external SPM packages are unresolved, and xcodegen install is a no-op.
 SWIFT_GENERATE_CMD ?= "$(SWIFT_MK_BIN)" toolchain install --generator $(SWIFT_XCODE_GENERATOR) && "$(SWIFT_MK_BIN)" toolchain generate --generator $(SWIFT_XCODE_GENERATOR)
-SWIFT_BUILD_CMD ?= "$(SWIFT_MK_BIN)" toolchain build --generator $(SWIFT_XCODE_GENERATOR) $(SWIFT_XCODE_CONTAINER_ARG) --scheme $(SWIFT_XCODE_SCHEME) --configuration $(SWIFT_XCODE_CONFIGURATION) --derived-data-path $(SWIFT_MK_DERIVED_DATA) $(SWIFT_XCODE_BUILD_SETTINGS)
+SWIFT_BUILD_CMD ?= "$(SWIFT_MK_BIN)" toolchain build --generator $(SWIFT_XCODE_GENERATOR) $(SWIFT_XCODE_CONTAINER_ARG) --scheme $(SWIFT_XCODE_SCHEME) --configuration $(SWIFT_XCODE_CONFIGURATION) --derived-data-path $(SWIFT_MK_DERIVED_DATA) $(SWIFT_XCODE_BUILD_SETTINGS) $(SWIFT_MK_XCODEBUILD_ARGS)
 # Test runner is decoupled from the generator. An Xcode consumer defaults to the
 # scheme-driven `toolchain test` path, but a hybrid consumer whose tests run as a
 # SwiftPM package (a Tuist overlay used only for generate and a metallib, with the
@@ -365,9 +373,9 @@ SWIFT_TEST_MODE ?= xcode
 ifeq ($(strip $(SWIFT_TEST_MODE)),spm)
 SWIFT_TEST_CMD ?= swift test $(SWIFT_MK_SWIFTPM_CACHE_ARGS)
 else
-SWIFT_TEST_CMD ?= "$(SWIFT_MK_BIN)" toolchain test --generator $(SWIFT_XCODE_GENERATOR) $(SWIFT_XCODE_CONTAINER_ARG) --scheme $(SWIFT_XCODE_SCHEME) --configuration Debug --derived-data-path $(SWIFT_MK_DERIVED_DATA)
+SWIFT_TEST_CMD ?= "$(SWIFT_MK_BIN)" toolchain test --generator $(SWIFT_XCODE_GENERATOR) $(SWIFT_XCODE_CONTAINER_ARG) --scheme $(SWIFT_XCODE_SCHEME) --configuration Debug --derived-data-path $(SWIFT_MK_DERIVED_DATA) $(SWIFT_MK_XCODEBUILD_ARGS)
 endif
-SWIFT_DEADCODE_BUILD_CMD ?= rm -rf "$(SWIFT_MK_DERIVED_DATA)" && "$(SWIFT_MK_BIN)" toolchain install --generator $(SWIFT_XCODE_GENERATOR) && "$(SWIFT_MK_BIN)" toolchain generate --generator $(SWIFT_XCODE_GENERATOR) && "$(SWIFT_MK_BIN)" toolchain build-for-testing --generator $(SWIFT_XCODE_GENERATOR) $(SWIFT_XCODE_CONTAINER_ARG) --scheme $(SWIFT_XCODE_SCHEME) --configuration $(SWIFT_XCODE_COVERAGE_CONFIGURATION) --derived-data-path $(SWIFT_MK_DERIVED_DATA) COMPILER_INDEX_STORE_ENABLE=YES ONLY_ACTIVE_ARCH=YES $(SWIFT_XCODE_BUILD_SETTINGS)
+SWIFT_DEADCODE_BUILD_CMD ?= rm -rf "$(SWIFT_MK_DERIVED_DATA)" && "$(SWIFT_MK_BIN)" toolchain install --generator $(SWIFT_XCODE_GENERATOR) && "$(SWIFT_MK_BIN)" toolchain generate --generator $(SWIFT_XCODE_GENERATOR) && "$(SWIFT_MK_BIN)" toolchain build-for-testing --generator $(SWIFT_XCODE_GENERATOR) $(SWIFT_XCODE_CONTAINER_ARG) --scheme $(SWIFT_XCODE_SCHEME) --configuration $(SWIFT_XCODE_COVERAGE_CONFIGURATION) --derived-data-path $(SWIFT_MK_DERIVED_DATA) COMPILER_INDEX_STORE_ENABLE=YES ONLY_ACTIVE_ARCH=YES $(SWIFT_XCODE_BUILD_SETTINGS) $(SWIFT_MK_XCODEBUILD_NO_CACHE_ARGS)
 endif
 
 SWIFT_BUILD_CMD ?= swift build $(SWIFT_MK_SWIFTPM_CACHE_ARGS)
@@ -446,6 +454,8 @@ export OSV_SCANNER
 export OSV_SCANNER_ARGS
 export LINT_CONCURRENCY
 export SWIFT_MK_XCODE_VERSION_MAJOR
+export SWIFT_MK_SWIFT_CACHE
+export SWIFT_MK_SWIFTPM_CACHE
 export SWIFT_MK_XCODE_CACHE
 export SWIFT_MK_XCODE_CACHE_DIAGNOSTICS
 export SWIFT_MK_XCODEBUILD_ARGS
@@ -523,7 +533,9 @@ help:
 	@printf '  %-40s %s\n' 'SWIFT_PREFLIGHT_CHECK_CMD=...' 'assert a build requirement before the gate chain'
 	@printf '  %-40s %s\n' 'SWIFT_PREFLIGHT_ENSURE_CMD=...' 'establish the requirement when the check misses'
 	@printf '\n%s\n' 'Build caching:'
-	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE=auto|1|0' 'default local Xcode 26 compilation cache behavior'
+	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFT_CACHE=auto|1|0' 'default local SwiftPM and Xcode cache policy'
+	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE=auto|1|0' 'override SwiftPM cache policy'
+	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE=auto|1|0' 'override local Xcode compilation cache policy'
 	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_DIAGNOSTICS=1' 'emit Xcode compilation cache diagnostic remarks'
 	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE_ARGS=...' 'override shared SwiftPM cache flags'
 	@printf '  %-40s %s\n' 'ccache/sccache' 'C-family cache tools; not Swift compilation caches'

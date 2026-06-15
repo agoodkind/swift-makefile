@@ -114,10 +114,15 @@ The multi-rule `swiftlint` gate supports scoping to one rule. Set `RULE=<rule_id
 
 ## Build caching
 
-- `SWIFT_MK_XCODE_CACHE` defaults to `auto` and enables local Xcode compilation caching on Xcode 26 or newer.
+- `SWIFT_MK_SWIFT_CACHE` defaults to `auto` and is the shared local Swift cache policy for SwiftPM and Xcode builds.
+- A standard SwiftPM consumer gets zero-shot cache adoption because the default `SWIFT_BUILD_CMD` and `SWIFT_TEST_CMD` include `SWIFT_MK_SWIFTPM_CACHE_ARGS`.
+- A standard Xcode consumer gets zero-shot cache adoption because the canonical `SWIFT_XCODE_SCHEME` path adds `SWIFT_MK_XCODEBUILD_ARGS` to build and test commands.
+- A custom SwiftPM consumer gets one-shot adoption by appending `$(SWIFT_MK_SWIFTPM_CACHE_ARGS)` to its `swift build` and `swift test` commands.
+- A custom Xcode consumer gets one-shot adoption by appending `$(SWIFT_MK_XCODEBUILD_ARGS)` to normal `swift-mk toolchain build` or `toolchain test` calls, and `$(SWIFT_MK_XCODEBUILD_NO_CACHE_ARGS)` to dead-code, analyzer, or compiler-log builds that need fresh index/log output.
+- `SWIFT_MK_SWIFTPM_CACHE` and `SWIFT_MK_XCODE_CACHE` override the SwiftPM-specific and Xcode-specific cache policies when one build surface needs different behavior.
 - `SWIFT_MK_XCODE_CACHE_DIAGNOSTICS=1` enables compilation-cache diagnostic remarks for `xcodebuild` paths.
 - `SWIFT_MK_SWIFTPM_CACHE_ARGS` defaults to the supported shared SwiftPM cache flags exposed by the local toolchain.
-- `ccache` and `sccache` are not treated as Swift compilation caches in `swift-makefile`.
+- `ccache` and `sccache` are C-family compiler-wrapper tools. They are not Swift compilation caches in `swift-makefile`.
 - Shared GitHub Actions CI and release jobs default to `cache-profile: safe`. The safe profile restores dependency caches and build intermediates, including SwiftPM, Tuist, mise, ccache/sccache, `.build`, and Xcode intermediate paths under `build`, `.derived-data`, `DerivedData`, or `Derived`. It does not cache `Products`, `dist`, keychains, provisioning profiles, notarization files, or signed final artifacts.
 - `cache-profile: dependencies` restores only dependency caches. `cache-profile: off` disables the shared cache setup.
 - `cache-version` defaults to `v1` and is the manual namespace for invalidating all canonical caches. Build-intermediate caches also include the selected Xcode version, Swift version, runner OS/arch, build configuration hash, and a weekly epoch.
