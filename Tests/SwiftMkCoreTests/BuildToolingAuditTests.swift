@@ -133,3 +133,17 @@ func codesignDetectorPassesSanctionedLines() {
   #expect(!BuildToolingAudit.lineRunsCodesign(#"  codesign --force --sign - "$out" || true"#))
   #expect(!BuildToolingAudit.lineRunsCodesign("  let unrelated = 1"))
 }
+
+@Test
+func codesignScanExcludesVendoredCheckouts() {
+  // A dev-tool SPM package under Tools/ vendors swift-mk into
+  // Tools/.build/checkouts/, whose engine source spawns codesign legitimately.
+  // The scan must skip that subtree but keep real consumer sources.
+  #expect(
+    BuildToolingAudit.pathIsInExcludedDirectory(
+      ".build/checkouts/swift-makefile/Sources/SwiftMkCore/Codesign.swift"))
+  #expect(BuildToolingAudit.pathIsInExcludedDirectory("CellTunnelDev/.build/x.swift"))
+  #expect(BuildToolingAudit.pathIsInExcludedDirectory("DerivedData/Build/x.swift"))
+  #expect(!BuildToolingAudit.pathIsInExcludedDirectory("CellTunnelDev/BuildActions.swift"))
+  #expect(!BuildToolingAudit.pathIsInExcludedDirectory("lmd-dev/Signing.swift"))
+}

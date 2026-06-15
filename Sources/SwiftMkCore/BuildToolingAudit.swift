@@ -157,8 +157,19 @@ public enum BuildToolingAudit {
     return trimmed.hasPrefix("codesign ")
   }
 
+  /// Build-output and vendored-dependency directory names excluded from the
+  /// codesign scan. A dev-tool SPM package under Tools/ checks its dependencies
+  /// out into Tools/.build/checkouts/, which contains swift-mk's own source; that
+  /// source legitimately spawns `codesign`, so scanning it would flag the engine
+  /// as a consumer violation. These are never consumer-authored sources.
+  static let scanExcludedDirectories: Set<String> = [
+    ".build", ".swiftpm", "SourcePackages", "checkouts", "DerivedData",
+    "Products", ".git",
+  ]
+
   /// The default codesign scan set: the entry Makefile, the project manifests,
-  /// and every script or dev-tool source under Scripts/ and Tools/.
+  /// and every script or dev-tool source under Scripts/ and Tools/, skipping
+  /// build output and vendored SPM dependency checkouts.
   public static func codesignScanPaths(makefile: String) -> [String] {
     var paths = [makefile, "project.yml", "Project.swift", "Workspace.swift"]
     let fileManager = FileManager.default
@@ -166,13 +177,26 @@ public enum BuildToolingAudit {
       guard let enumerator = fileManager.enumerator(atPath: root) else {
         continue
       }
-      for case let relative as String in enumerator
-      where relative.hasSuffix(".swift") || relative.hasSuffix(".sh") || relative.hasSuffix(".yml")
-      {
-        paths.append(root + "/" + relative)
+      for case let relative as String in enumerator {
+        if pathIsInExcludedDirectory(relative) {
+          // Skip the whole vendored or build subtree, not just this entry.
+          enumerator.skipDescendants()
+          continue
+        }
+        if relative.hasSuffix(".swift") || relative.hasSuffix(".sh")
+          || relative.hasSuffix(".yml")
+        {
+          paths.append(root + "/" + relative)
+        }
       }
     }
     return paths
+  }
+
+  /// Whether a Scripts/Tools-relative path lies inside an excluded build or
+  /// vendored-dependency directory, so the codesign scan skips it.
+  static func pathIsInExcludedDirectory(_ relative: String) -> Bool {
+    relative.split(separator: "/").contains { scanExcludedDirectories.contains(String($0)) }
   }
 
   /// Whether a make recipe line invokes the toolchain, as opposed to naming it as
