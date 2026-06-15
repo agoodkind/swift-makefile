@@ -98,14 +98,8 @@ public enum Capture {
     guard !paths.isEmpty else {
       return findings
     }
-    Output.debug("capture: checking \(paths.count) finding path(s) against git ignore")
-    let result = Shell.run("git", ["check-ignore"] + Array(paths))
-    let ignored = Set(
-      result.stdout
-        .split(separator: "\n")
-        .map { $0.trimmingCharacters(in: .whitespaces) }
-        .filter { !$0.isEmpty }
-    )
+    // Batched so a large finding set never overflows the process argument limit.
+    let ignored = Lint.gitIgnoredPaths(Array(paths))
     guard !ignored.isEmpty else {
       return findings
     }

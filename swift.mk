@@ -171,6 +171,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/GateProof.swift \
 	Sources/SwiftMkCore/AdHocSigningAllowlist.swift \
 	Sources/SwiftMkCore/Lint.swift \
+	Sources/SwiftMkCore/Lint+GitIgnore.swift \
 	Sources/SwiftMkCore/Lint+Run.swift \
 	Sources/SwiftMkCore/BaselineRunner.swift \
 	Sources/SwiftMkCore/Notice.swift \
@@ -186,6 +187,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/SwiftMkCoreTests.swift \
 	Tests/SwiftMkCoreTests/BuildTests.swift \
 	Tests/SwiftMkCoreTests/GateProofTests.swift \
+	Tests/SwiftMkCoreTests/GitIgnoreBatchTests.swift \
 	Tests/SwiftMkCoreTests/DeadcodeBuildConfigTests.swift \
 	Tests/SwiftMkCoreTests/IndexCompletenessTests.swift \
 	Tests/SwiftMkCoreTests/WitnessFilterTests.swift \
