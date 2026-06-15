@@ -112,10 +112,10 @@ func refusalReturnsStatusWithoutStamp() {
 }
 
 @Test
-func helperBuildAcceptsFreshStampWithoutLiveAncestor() {
-  // A secondary/helper build (a Metal compile, an install/deploy step) runs after
-  // the gated build process exits. A fresh stamp with a now-dead gate pid must
-  // pass the lenient check but fail the strict product-leaf check.
+func staleAnchorIsRefused() {
+  // A fresh stamp whose anchor pid is not a live ancestor (a prior `make` that has
+  // exited) must not authorize: bind-to-make requires the anchor be a live
+  // ancestor, which is what stops a direct compile after an earlier build.
   let context = makeTemporarySourceTree(files: [:])
   defer { removeTree(context) }
   let stamp = GateProof.Stamp(
@@ -125,14 +125,14 @@ func helperBuildAcceptsFreshStampWithoutLiveAncestor() {
     gateStartTime: 0,
     createdAt: Date().timeIntervalSince1970)
   writeStamp(stamp, to: context)
-  #expect(GateProof.isGated(context: context, requireLiveAncestor: false))
-  #expect(!GateProof.isGated(context: context, requireLiveAncestor: true))
+  #expect(!GateProof.isGated(context: context))
 }
 
 @Test
-func helperBuildStillRefusedWithoutAnyStamp() {
-  let context = emptyContext()
-  #expect(!GateProof.isGated(context: context, requireLiveAncestor: false))
+func processIsGateAnchorRejectsNonBuildProcess() {
+  // pid 1 (launchd) is not a make/swift-mk gate process, so it cannot anchor a
+  // proof; only an orchestrating build process qualifies.
+  #expect(!GateProof.processIsGateAnchor(1))
 }
 
 // MARK: helpers

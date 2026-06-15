@@ -79,11 +79,19 @@ public enum GateProof {
     }
     markedPid = myPid
 
+    // Anchor the proof to the outermost `make` process orchestrating this build,
+    // not to this swift-mk process. A build/deploy is one `make` invocation that
+    // runs several compiles as separate children (the product build, then a
+    // metallib or install step). The gated `swift-mk build` child exits, but the
+    // make process stays alive and an ancestor of every later compile, so binding
+    // to it keeps the check strict while spanning the whole flow. With no make
+    // ancestor (a direct `swift-mk build`), anchor to this process.
+    let anchor = outermostMakeAncestor() ?? myPid
     let stamp = Stamp(
       nonce: randomNonce(),
       sourceHash: sourceDigest(context: context),
-      gatePid: myPid,
-      gateStartTime: processStartTime(of: myPid) ?? 0,
+      gatePid: anchor,
+      gateStartTime: processStartTime(of: anchor) ?? 0,
       createdAt: nowSeconds())
     writeStamp(stamp, context: context)
   }
@@ -94,10 +102,8 @@ public enum GateProof {
   /// proof holds. Emits the loud cause before returning a status, so a
   /// status-returning caller (the toolchain build) reports it without an
   /// `exit()` inside the library. Returns `refusedExitStatus` when ungated.
-  public static func refusal(
-    entry: String, context: PathContext = .current(), requireLiveAncestor: Bool = true
-  ) -> Int32? {
-    if isGated(context: context, requireLiveAncestor: requireLiveAncestor) {
+  public static func refusal(entry: String, context: PathContext = .current()) -> Int32? {
+    if isGated(context: context) {
       return nil
     }
     Output.error(
@@ -113,20 +119,17 @@ public enum GateProof {
   /// Whether a valid gate proof covers this process. Pure of side effects so it
   /// is testable; `refusal` wraps it with the loud message and a status.
   ///
-  /// With `requireLiveAncestor` (the default, for a product-compile leaf), three
-  /// factors are enforced: freshness, a live swift-mk ancestor, and that
-  /// ancestor's process identity (start time). A secondary or helper build (a
-  /// Metal or resource compile, an install/deploy step) runs after the gated
-  /// `make build` process has exited, so it passes `false` and only freshness is
-  /// enforced: a recent gate proves the build flow ran, while a cold standalone
-  /// compile with no gate at all still has no stamp and is refused. The recorded
-  /// source digest is diagnostic only, not enforced: mid-build code generation
-  /// can legitimately rewrite a tracked source between the gate and the compile,
-  /// and the forgery resistance comes from the live-ancestor and identity factors,
-  /// which a file or env write cannot satisfy.
-  static func isGated(
-    context: PathContext = .current(), requireLiveAncestor: Bool = true
-  ) -> Bool {
+  /// Three factors are enforced, all strict: freshness, a live gate-orchestration
+  /// ancestor (the `make` process the gate ran under, or the swift-mk gate itself
+  /// when there is no make), and that ancestor's process identity (start time).
+  /// Anchoring to the orchestrating make process keeps the check strict while
+  /// spanning a multi-step build/deploy flow: the make process is alive and an
+  /// ancestor of every compile in the flow, including a metallib or install step
+  /// that runs after the gated `swift-mk build` child exits. A direct dev-tool
+  /// compile has no such live ancestor and is refused. The recorded source digest
+  /// is diagnostic only, not enforced, since mid-build code generation can
+  /// legitimately rewrite a tracked source between the gate and the compile.
+  static func isGated(context: PathContext = .current()) -> Bool {
     guard let stamp = readStamp(context: context) else {
       return false
     }
@@ -134,13 +137,8 @@ public enum GateProof {
     guard nowSeconds() - stamp.createdAt <= freshnessWindowSeconds else {
       return false
     }
-    // A helper build cannot require a live gate ancestor: the gated build that
-    // produced the fresh stamp has already exited by the time it runs.
-    guard requireLiveAncestor else {
-      return true
-    }
-    // (B) The gate pid is a live swift-mk process in this process's ancestry.
-    guard ancestorPids().contains(stamp.gatePid), processIsSwiftMk(stamp.gatePid) else {
+    // (B) The anchor is a live make/swift-mk process in this process's ancestry.
+    guard ancestorPids().contains(stamp.gatePid), processIsGateAnchor(stamp.gatePid) else {
       return false
     }
     // (C) The live ancestor is the same process instance that wrote the stamp:
@@ -166,14 +164,16 @@ public enum GateProof {
     let fresh = nowSeconds() - stamp.createdAt <= freshnessWindowSeconds
     let sourceMatch = stamp.sourceHash == sourceDigest(context: context)
     let ancestor = ancestorPids().contains(stamp.gatePid)
-    let isSwiftMk = processIsSwiftMk(stamp.gatePid)
+    let anchor = processIsGateAnchor(stamp.gatePid)
     let startMatch =
       stamp.gateStartTime == 0
       || processStartTime(of: stamp.gatePid) == stamp.gateStartTime
-    let gated = fresh && sourceMatch && ancestor && isSwiftMk && startMatch
+    // The source digest is reported but not part of the verdict (advisory), so
+    // this matches `isGated`.
+    let gated = fresh && ancestor && anchor && startMatch
     return
       "gated=\(gated) fresh=\(fresh) source=\(sourceMatch) ancestor=\(ancestor) "
-      + "swiftmk=\(isSwiftMk) startMatch=\(startMatch) gatePid=\(stamp.gatePid)"
+      + "anchor=\(anchor) startMatch=\(startMatch) anchorPid=\(stamp.gatePid)"
   }
 
   /// Mark this process as a gate, then spawn the same binary running
@@ -385,17 +385,15 @@ public enum GateProof {
       return info.kp_eproc.e_ppid
     }
 
-    /// Whether the process with `pid` is alive and its executable basename is
-    /// `swift-mk`. A dead pid or a non-swift-mk process fails the ancestry factor.
-    static func processIsSwiftMk(_ pid: Int32) -> Bool {
+    /// The executable basename of the live process with `pid`, or empty when it
+    /// cannot be read (a dead pid). Used to confirm an anchor is a build process.
+    static func processName(of pid: Int32) -> String {
       var pathBuffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
       let length = proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count))
       guard length > 0 else {
-        return false
+        return ""
       }
-      let path = String(cString: pathBuffer)
-      let basename = (path as NSString).lastPathComponent
-      return basename == "swift-mk"
+      return (String(cString: pathBuffer) as NSString).lastPathComponent
     }
 
     /// The start time of the process with `pid` in seconds since the epoch, or nil
@@ -413,9 +411,37 @@ public enum GateProof {
     }
   #else
     static func parentPid(of _: Int32) -> Int32 { -1 }
-    static func processIsSwiftMk(_: Int32) -> Bool { false }
+    static func processName(of _: Int32) -> String { "" }
     static func processStartTime(of _: Int32) -> Double? { nil }
   #endif
+
+  /// Whether the live process with `pid` is a gate-orchestration process: the
+  /// `make` that ran the gate, or the swift-mk gate itself. A dead pid or any
+  /// other process fails, so the anchor cannot be an arbitrary long-lived ancestor
+  /// such as the user's shell.
+  static func processIsGateAnchor(_ pid: Int32) -> Bool {
+    switch processName(of: pid) {
+    case "make", "gmake", "swift-mk":
+      return true
+    default:
+      return false
+    }
+  }
+
+  /// The outermost `make` process in this process's ancestry, or nil when none.
+  /// Outermost (the last `make` found walking from this process up) so a recursive
+  /// sub-make spawned for one build step is not chosen over the top-level
+  /// `make deploy` that also runs the later install step.
+  static func outermostMakeAncestor() -> Int32? {
+    var result: Int32?
+    for pid in ancestorPids() {
+      let name = processName(of: pid)
+      if name == "make" || name == "gmake" {
+        result = pid
+      }
+    }
+    return result
+  }
 
   // MARK: Primitives
 
