@@ -123,7 +123,19 @@ jobs:
         if: inputs.brew-packages != ''
         run: brew install ${{ inputs.brew-packages }}
 
-      - uses: agoodkind/swift-makefile/.github/actions/setup-build-env@main
+      - name: Setup Swift build env
+        if: github.repository == 'agoodkind/swift-makefile'
+        uses: ./.github/actions/setup-build-env
+        with:
+          xcode-version: ${{ inputs.xcode-version }}
+          github-token: ${{ github.token }}
+          cache-profile: ${{ inputs.cache-profile }}
+          cache-version: ${{ inputs.cache-version }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+
+      - name: Setup Swift build env
+        if: github.repository != 'agoodkind/swift-makefile'
+        uses: agoodkind/swift-makefile/.github/actions/setup-build-env@main
         with:
           xcode-version: ${{ inputs.xcode-version }}
           github-token: ${{ github.token }}
