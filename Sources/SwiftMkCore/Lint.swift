@@ -110,27 +110,6 @@ public enum Lint {
       Env.get("SWIFTLINT_DEFAULT_EXCLUDE_PATHS"), Env.get("SWIFTLINT_EXCLUDE_PATHS"))
   }
 
-  /// Drops paths that git ignores, so generated or otherwise untracked files are
-  /// never linted. `git check-ignore` prints the ignored subset of its argument
-  /// paths; outside a git work tree it reports none and every path is kept.
-  static func dropGitIgnored(_ paths: [String]) -> [String] {
-    guard !paths.isEmpty else {
-      return paths
-    }
-    Output.debug("lint: checking \(paths.count) path(s) against git ignore")
-    let result = Shell.run("git", ["check-ignore"] + paths)
-    let ignored = Set(
-      result.stdout
-        .split(separator: "\n")
-        .map { $0.trimmingCharacters(in: .whitespaces) }
-        .filter { !$0.isEmpty }
-    )
-    guard !ignored.isEmpty else {
-      return paths
-    }
-    return paths.filter { !ignored.contains($0) }
-  }
-
   static func captureSwiftlint(
     rawPath: String, findingsPath: String, onlyRules: [String], context: PathContext
   ) {
