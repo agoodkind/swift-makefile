@@ -187,12 +187,17 @@ public enum Toolchain {
   /// blocked for agents by agent-gate, the same backstop as a raw `swift build`.
   @discardableResult
   public static func build(_ request: Request) -> Int32 {
-    // Refuse a product build that did not run inside the swift-mk lint gate, so a
-    // consumer `make <sub-target>` or a dev tool that reaches this directly cannot
-    // produce an ungated artifact. The dead-code coverage build uses
-    // `buildForTesting`, which is left unguarded because it runs only inside the
-    // already-gated lint chain.
-    if let refusal = GateProof.refusal(entry: "toolchain build") {
+    // Refuse a product build with no swift-mk lint gate in this repo at all, so a
+    // cold `make <sub-target>` or a dev tool that reaches this directly cannot
+    // produce an ungated artifact. This is the lenient check (a fresh gate stamp,
+    // not a live gate ancestor): `Toolchain.build` is also the path a secondary
+    // helper build takes (a Metal/resource compile, an install/deploy step) after
+    // the gated `make build` process has exited, so requiring a live ancestor here
+    // would refuse a legitimate post-build helper. The strict live-ancestor guard
+    // stays on the dev tool's product-compile leaf, where a direct bypass matters.
+    // The dead-code coverage build uses `buildForTesting`, left unguarded because
+    // it runs only inside the already-gated lint chain.
+    if let refusal = GateProof.refusal(entry: "toolchain build", requireLiveAncestor: false) {
       return refusal
     }
     if let rejection = rejectionForSigningOverride(request) {

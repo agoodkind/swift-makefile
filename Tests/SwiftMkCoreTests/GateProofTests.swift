@@ -111,7 +111,42 @@ func refusalReturnsStatusWithoutStamp() {
   #expect(status == GateProof.refusedExitStatus)
 }
 
+@Test
+func helperBuildAcceptsFreshStampWithoutLiveAncestor() {
+  // A secondary/helper build (a Metal compile, an install/deploy step) runs after
+  // the gated build process exits. A fresh stamp with a now-dead gate pid must
+  // pass the lenient check but fail the strict product-leaf check.
+  let context = makeTemporarySourceTree(files: [:])
+  defer { removeTree(context) }
+  let stamp = GateProof.Stamp(
+    nonce: "n",
+    sourceHash: "h",
+    gatePid: 999_999,
+    gateStartTime: 0,
+    createdAt: Date().timeIntervalSince1970)
+  writeStamp(stamp, to: context)
+  #expect(GateProof.isGated(context: context, requireLiveAncestor: false))
+  #expect(!GateProof.isGated(context: context, requireLiveAncestor: true))
+}
+
+@Test
+func helperBuildStillRefusedWithoutAnyStamp() {
+  let context = emptyContext()
+  #expect(!GateProof.isGated(context: context, requireLiveAncestor: false))
+}
+
 // MARK: helpers
+
+private func writeStamp(_ stamp: GateProof.Stamp, to context: PathContext) {
+  let url = GateProof.stampURL(context: context)
+  do {
+    try FileManager.default.createDirectory(
+      at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try stamp.serialized().write(to: url, atomically: true, encoding: .utf8)
+  } catch {
+    Output.error("test: could not write stamp: \(error)")
+  }
+}
 
 private func emptyContext() -> PathContext {
   let path = NSTemporaryDirectory() + "gate-proof-empty-" + UUID().uuidString + "/"

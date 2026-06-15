@@ -94,8 +94,10 @@ public enum GateProof {
   /// proof holds. Emits the loud cause before returning a status, so a
   /// status-returning caller (the toolchain build) reports it without an
   /// `exit()` inside the library. Returns `refusedExitStatus` when ungated.
-  public static func refusal(entry: String, context: PathContext = .current()) -> Int32? {
-    if isGated(context: context) {
+  public static func refusal(
+    entry: String, context: PathContext = .current(), requireLiveAncestor: Bool = true
+  ) -> Int32? {
+    if isGated(context: context, requireLiveAncestor: requireLiveAncestor) {
       return nil
     }
     Output.error(
@@ -111,19 +113,31 @@ public enum GateProof {
   /// Whether a valid gate proof covers this process. Pure of side effects so it
   /// is testable; `refusal` wraps it with the loud message and a status.
   ///
-  /// Three factors are enforced: freshness, a live swift-mk ancestor, and that
-  /// ancestor's process identity (start time). The recorded source digest is
-  /// diagnostic only, not enforced: mid-build code generation can legitimately
-  /// rewrite a tracked source between the gate and the compile, and the forgery
-  /// resistance comes from the live-ancestor and identity factors, which a file
-  /// or env write cannot satisfy.
-  static func isGated(context: PathContext = .current()) -> Bool {
+  /// With `requireLiveAncestor` (the default, for a product-compile leaf), three
+  /// factors are enforced: freshness, a live swift-mk ancestor, and that
+  /// ancestor's process identity (start time). A secondary or helper build (a
+  /// Metal or resource compile, an install/deploy step) runs after the gated
+  /// `make build` process has exited, so it passes `false` and only freshness is
+  /// enforced: a recent gate proves the build flow ran, while a cold standalone
+  /// compile with no gate at all still has no stamp and is refused. The recorded
+  /// source digest is diagnostic only, not enforced: mid-build code generation
+  /// can legitimately rewrite a tracked source between the gate and the compile,
+  /// and the forgery resistance comes from the live-ancestor and identity factors,
+  /// which a file or env write cannot satisfy.
+  static func isGated(
+    context: PathContext = .current(), requireLiveAncestor: Bool = true
+  ) -> Bool {
     guard let stamp = readStamp(context: context) else {
       return false
     }
     // (A) Freshness: a gate wrote the stamp within the window.
     guard nowSeconds() - stamp.createdAt <= freshnessWindowSeconds else {
       return false
+    }
+    // A helper build cannot require a live gate ancestor: the gated build that
+    // produced the fresh stamp has already exited by the time it runs.
+    guard requireLiveAncestor else {
+      return true
     }
     // (B) The gate pid is a live swift-mk process in this process's ancestry.
     guard ancestorPids().contains(stamp.gatePid), processIsSwiftMk(stamp.gatePid) else {
