@@ -187,6 +187,14 @@ public enum Toolchain {
   /// blocked for agents by agent-gate, the same backstop as a raw `swift build`.
   @discardableResult
   public static func build(_ request: Request) -> Int32 {
+    // Refuse a product build that did not run inside the swift-mk lint gate, so a
+    // consumer `make <sub-target>` or a dev tool that reaches this directly cannot
+    // produce an ungated artifact. The dead-code coverage build uses
+    // `buildForTesting`, which is left unguarded because it runs only inside the
+    // already-gated lint chain.
+    if let refusal = GateProof.refusal(entry: "toolchain build") {
+      return refusal
+    }
     if let rejection = rejectionForSigningOverride(request) {
       return rejection
     }
