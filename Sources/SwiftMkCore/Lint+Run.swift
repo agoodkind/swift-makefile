@@ -134,6 +134,10 @@ extension Lint {
 
   @discardableResult
   public static func runTest(context _: PathContext) -> Bool {
+    // Mark the gated invocation so the test compile (and any `toolchain build`
+    // it runs) carries the gate proof. `make test` does not route through
+    // `build`, so it marks here.
+    GateProof.mark()
     guard ensureGenerated() else {
       Output.emitStandardError("test: SWIFT_GENERATE_CMD failed; not compiling\n")
       return false
@@ -210,6 +214,10 @@ extension Lint {
 
   @discardableResult
   public static func runLint(context: PathContext) -> Bool {
+    // Mark the gated invocation so the dead-code coverage build (and any
+    // `toolchain build` it runs) carries the gate proof. Idempotent when `build`
+    // already marked. Covers `make lint`, `make check`, and `make build-check`.
+    GateProof.mark(context: context)
     Output.info("lint: running gate chain")
     let preflightResult = Preflight.checkFiles(preflightRequirements())
     guard preflightResult.ok else {

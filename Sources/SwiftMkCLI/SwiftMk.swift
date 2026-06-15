@@ -25,6 +25,7 @@ struct SwiftMk: ParsableCommand {
       Fmt.self, TestCommand.self, Audit.self, LogAudit.self,
       BaselineCommand.self, NoticeCommand.self, Render.self, RenderBatch.self,
       XcodeFileHeader.self, BuildCheck.self, BuildCommand.self, GateToken.self,
+      GateProofCommand.self,
       SigningXcconfig.self, SigningIdentity.self, VerifySigning.self, CodesignRun.self,
       NotarizeCommand.self,
       TraceCommand.self, ToolchainCommand.self, BuildToolingAuditCommand.self,

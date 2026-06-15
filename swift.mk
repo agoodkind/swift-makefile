@@ -131,6 +131,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkRenderCore/TemplateRenderer.swift \
 	Sources/SwiftMkRenderCLI/main.swift \
 	Sources/SwiftMkCLI/SwiftMk.swift \
+	Sources/SwiftMkCLI/GateProofCommand.swift \
 	Sources/SwiftMkCLI/CodesignRun.swift \
 	Sources/SwiftMkCLI/NotarizeCommand.swift \
 	Sources/SwiftMkCLI/ToolchainCommand.swift \
@@ -167,6 +168,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/Toolchain.swift \
 	Sources/SwiftMkCore/BuildToolingAudit.swift \
 	Sources/SwiftMkCore/Build.swift \
+	Sources/SwiftMkCore/GateProof.swift \
 	Sources/SwiftMkCore/AdHocSigningAllowlist.swift \
 	Sources/SwiftMkCore/Lint.swift \
 	Sources/SwiftMkCore/Lint+Run.swift \
@@ -183,6 +185,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkRenderCoreTests/TemplateRendererTests.swift \
 	Tests/SwiftMkCoreTests/SwiftMkCoreTests.swift \
 	Tests/SwiftMkCoreTests/BuildTests.swift \
+	Tests/SwiftMkCoreTests/GateProofTests.swift \
 	Tests/SwiftMkCoreTests/DeadcodeBuildConfigTests.swift \
 	Tests/SwiftMkCoreTests/IndexCompletenessTests.swift \
 	Tests/SwiftMkCoreTests/WitnessFilterTests.swift \

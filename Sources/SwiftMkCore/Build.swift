@@ -37,6 +37,11 @@ public enum Build {
   /// nonzero status when `SWIFT_BUILD_CMD` is unset, or the build command's exit
   /// status.
   public static func gateAndBuild() -> Int32 {
+    // Mark this gated invocation before any compile so the configured build
+    // command, and any `toolchain build` it calls, carry the gate proof. On CI
+    // the inline gates skip, but the proof must still be set so the downstream
+    // compile is not refused.
+    GateProof.mark()
     let inlineGates = runsInlineGates(
       githubActions: Env.get("GITHUB_ACTIONS"), githubRunId: Env.get("GITHUB_RUN_ID"))
     if inlineGates {
@@ -52,6 +57,20 @@ public enum Build {
       return missingBuildCommandStatus
     }
     Output.info("build: running configured build command")
+    let cacheEnvironment = BuildCache.environment() ?? [:]
+    return Shell.runForwardingOutput("/bin/sh", ["-c", command], environment: cacheEnvironment)
+  }
+
+  /// Run a compile command under the gate proof: refuse loud when this process is
+  /// not inside a swift-mk gated invocation, else run the command with its output
+  /// forwarded. This is the single engine compile entry a Swift dev tool calls
+  /// instead of a raw `swift build`, so a SwiftPM product (which the xcodebuild
+  /// `Toolchain` chokepoint does not cover) has no ungated leaf to invoke
+  /// directly. `entry` names the dev-tool subcommand for the refusal message.
+  public static func gatedCompile(_ command: String, entry: String) -> Int32 {
+    if let refusal = GateProof.refusal(entry: entry) {
+      return refusal
+    }
     let cacheEnvironment = BuildCache.environment() ?? [:]
     return Shell.runForwardingOutput("/bin/sh", ["-c", command], environment: cacheEnvironment)
   }
