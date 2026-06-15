@@ -29,6 +29,12 @@ on:
       brew-packages:
         type: string
         default: ""
+      cache-profile:
+        type: string
+        default: safe
+      cache-version:
+        type: string
+        default: v1
       notarize:
         type: boolean
         default: true
@@ -121,6 +127,8 @@ jobs:
         with:
           xcode-version: ${{ inputs.xcode-version }}
           github-token: ${{ github.token }}
+          cache-profile: ${{ inputs.cache-profile }}
+          cache-version: ${{ inputs.cache-version }}
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
 
       - name: Install signing certificate
@@ -162,6 +170,7 @@ jobs:
             sign_args="CODE_SIGN_IDENTITY=$CERT_SHA1 DMG_SIGN_IDENTITY=$CERT_SHA1"
           fi
           if [ -n "${TEAM_ID:-}" ]; then sign_args="$sign_args DEVELOPMENT_TEAM=$TEAM_ID"; fi
+          # shellcheck disable=SC2086
           make ${{ inputs.build-target }} ${{ inputs.make-args }} $sign_args
 
       - name: Generate SBOM

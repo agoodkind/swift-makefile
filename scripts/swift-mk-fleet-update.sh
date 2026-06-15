@@ -16,14 +16,33 @@ discover_repos_from_manifest() {
     cat "${MANIFEST_PATH}"
 }
 
+is_generated_checkout_path() {
+    local repo_path="$1"
+
+    case "${repo_path}" in
+        */.build/*|*/.swiftpm/*|*/Derived/*|*/DerivedData/*|*/Products/*|*/dist/*)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 discover_repos_from_roots() {
     local root_path
     local makefile_path
     local repo_path
 
     for root_path in ${ROOTS_TEXT}; do
-        find "${root_path}" -name Makefile | while IFS= read -r makefile_path; do
+        find "${root_path}" \
+            \( -path "*/.build" -o -path "*/.swiftpm" -o -path "*/Derived" -o -path "*/DerivedData" -o -path "*/Products" -o -path "*/dist" \) -prune \
+            -o -type f -name Makefile -print | while IFS= read -r makefile_path; do
+            [[ -f "${makefile_path}" ]] || continue
             repo_path=$(dirname "${makefile_path}")
+            if is_generated_checkout_path "${repo_path}"; then
+                continue
+            fi
             if grep -Eq '^(include|-include) bootstrap\.mk$' "${makefile_path}" && [[ -f "${repo_path}/bootstrap.mk" ]] && grep -q 'swift-makefile' "${repo_path}/bootstrap.mk"; then
                 printf "%s\n" "${repo_path}"
             fi

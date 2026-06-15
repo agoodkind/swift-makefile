@@ -26,6 +26,12 @@ on:
       brew-packages:
         type: string
         default: ""
+      cache-profile:
+        type: string
+        default: safe
+      cache-version:
+        type: string
+        default: v1
       # Import a real Developer ID certificate before building (requires the
       # APPLE_DEVELOPER_ID_P12_* secrets; silently skipped when absent).
       import-signing-cert:
@@ -98,6 +104,8 @@ jobs:
         with:
           xcode-version: ${{ inputs.xcode-version }}
           github-token: ${{ github.token }}
+          cache-profile: ${{ inputs.cache-profile }}
+          cache-version: ${{ inputs.cache-version }}
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
 
       - name: Run setup target
@@ -107,6 +115,7 @@ jobs:
         run: |
           sign_args=""
           if [ -n "${TEAM_ID:-}" ]; then sign_args="DEVELOPMENT_TEAM=$TEAM_ID"; fi
+          # shellcheck disable=SC2086
           make ${{ inputs.setup-target }} ${{ inputs.make-args }} $sign_args
 
       - name: Run build-check gate
@@ -115,6 +124,7 @@ jobs:
         run: |
           sign_args=""
           if [ -n "${TEAM_ID:-}" ]; then sign_args="DEVELOPMENT_TEAM=$TEAM_ID"; fi
+          # shellcheck disable=SC2086
           make build-check ${{ inputs.make-args }} $sign_args
 
   # The display name is set to the matrix target alone so the reusable-workflow
@@ -145,6 +155,8 @@ jobs:
         with:
           xcode-version: ${{ inputs.xcode-version }}
           github-token: ${{ github.token }}
+          cache-profile: ${{ inputs.cache-profile }}
+          cache-version: ${{ inputs.cache-version }}
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
 
       - name: Install signing certificate
@@ -185,6 +197,7 @@ jobs:
           sign_args=""
           if [ -n "${CERT_SHA1:-}" ]; then sign_args="CODE_SIGN_IDENTITY=$CERT_SHA1"; fi
           if [ -n "${TEAM_ID:-}" ]; then sign_args="$sign_args DEVELOPMENT_TEAM=$TEAM_ID"; fi
+          # shellcheck disable=SC2086
           make ${{ inputs.setup-target }} ${{ inputs.make-args }} $sign_args
 
       - name: Run ${{ matrix.target }}
@@ -199,4 +212,5 @@ jobs:
           sign_args=""
           if [ -n "${CERT_SHA1:-}" ]; then sign_args="CODE_SIGN_IDENTITY=$CERT_SHA1"; fi
           if [ -n "${TEAM_ID:-}" ]; then sign_args="$sign_args DEVELOPMENT_TEAM=$TEAM_ID"; fi
+          # shellcheck disable=SC2086
           make ${{ matrix.target }} ${{ inputs.make-args }} $sign_args
