@@ -118,6 +118,10 @@ The multi-rule `swiftlint` gate supports scoping to one rule. Set `RULE=<rule_id
 - `SWIFT_MK_XCODE_CACHE_DIAGNOSTICS=1` enables compilation-cache diagnostic remarks for `xcodebuild` paths.
 - `SWIFT_MK_SWIFTPM_CACHE_ARGS` defaults to the supported shared SwiftPM cache flags exposed by the local toolchain.
 - `ccache` and `sccache` are not treated as Swift compilation caches in `swift-makefile`.
+- Shared GitHub Actions CI and release jobs default to `cache-profile: safe`. The safe profile restores dependency caches and build intermediates, including SwiftPM, Tuist, mise, ccache/sccache, `.build`, and Xcode intermediate paths under `build`, `.derived-data`, `DerivedData`, or `Derived`. It does not cache `Products`, `dist`, keychains, provisioning profiles, notarization files, or signed final artifacts.
+- `cache-profile: dependencies` restores only dependency caches. `cache-profile: off` disables the shared cache setup.
+- `cache-version` defaults to `v1` and is the manual namespace for invalidating all canonical caches. Build-intermediate caches also include the selected Xcode version, Swift version, runner OS/arch, build configuration hash, and a weekly epoch.
+- `extra-cache-paths` is additive and should contain only non-secret, non-final-artifact paths that are safe to restore into later CI jobs.
 - Tuist remote cache is opt-in for Tuist consumers. It is not enabled by default here. Projects that want it should configure their Tuist `fullHandle`, enable Xcode caching in `Tuist.swift`, and run `tuist setup cache`.
 
 ## Bootstrap
@@ -147,7 +151,7 @@ jobs:
     secrets: inherit
 ```
 
-Key `_ci.yml` inputs: `targets` (JSON array of make targets, one matrix job each), `setup-target` (make target run before each), `make-args`, `brew-packages`, `runner`, `import-signing-cert` + `signing-identity-name` + `apple-team-id` (real Developer ID builds), `extra-cache-paths`.
+Key `_ci.yml` inputs: `targets` (JSON array of make targets, one matrix job each), `setup-target` (make target run before each), `make-args`, `brew-packages`, `runner`, `cache-profile`, `cache-version`, `import-signing-cert` + `signing-identity-name` + `apple-team-id` (real Developer ID builds), `extra-cache-paths`.
 
 Release (`.github/workflows/release.yml` in the consumer):
 

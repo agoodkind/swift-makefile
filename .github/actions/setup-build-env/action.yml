@@ -1,5 +1,5 @@
 name: Setup Swift build env
-description: Select Xcode and install the generator and analysis tools a consumer declares, with shared Tuist/SwiftPM and build caches.
+description: Select Xcode and install the generator and analysis tools a consumer declares, with shared dependency and build-intermediate caches.
 
 inputs:
   xcode-version:
@@ -24,8 +24,20 @@ inputs:
     description: Install swift-format, swiftlint, periphery, and osv-scanner.
     required: false
     default: "true"
+  cache-profile:
+    description: >-
+      Cache profile. "safe" restores dependencies and build intermediates,
+      "dependencies" restores only dependency caches, and "off" disables caches.
+    required: false
+    default: safe
+  cache-version:
+    description: Manual namespace for canonical cache invalidation.
+    required: false
+    default: v1
   extra-cache-paths:
-    description: Newline-separated extra paths appended to the build cache.
+    description: >-
+      Newline-separated non-secret, non-final-artifact paths appended to the
+      safe build-intermediate cache.
     required: false
     default: ""
 
@@ -36,28 +48,32 @@ runs:
       with:
         xcode-version: ${{ inputs.xcode-version }}
 
-    - name: Restore Tuist and SwiftPM caches
-      uses: actions/cache@v5
-      with:
-        path: |
-          ~/.cache/tuist
-          ~/.local/share/mise/downloads
-          ~/.local/share/mise/installs
-          ~/.local/share/mise/plugins
-          Tuist/.build
-        key: ${{ runner.os }}-tuist-${{ hashFiles('Tuist/Package.swift', 'Tuist/Package.resolved', '.tool-versions') }}
-        restore-keys: |
-          ${{ runner.os }}-tuist-
+    - name: Compute cache plan
+      id: cache-plan
+      shell: bash
+      env:
+        CACHE_PROFILE: ${{ inputs.cache-profile }}
+        CACHE_VERSION: ${{ inputs.cache-version }}
+        DEPENDENCY_HASH: ${{ hashFiles('Package.swift', 'Package.resolved', 'Tuist/Package.swift', 'Tuist/Package.resolved', 'Tools/Package.swift', 'Tools/Package.resolved', 'swiftcheck/Package.swift', 'swiftcheck/Package.resolved', '.tool-versions', 'mise.toml', '.config/mise/conf.d/*.toml', 'project.yml') }}
+        BUILD_HASH: ${{ hashFiles('Package.swift', 'Package.resolved', 'Project.swift', 'Workspace.swift', 'Tuist.swift', 'Tuist/Package.swift', 'Tuist/Package.resolved', 'Tools/Package.swift', 'Tools/Package.resolved', 'swiftcheck/Package.swift', 'swiftcheck/Package.resolved', 'project.yml', 'Makefile') }}
+        EXTRA_CACHE_PATHS: ${{ inputs.extra-cache-paths }}
+      run: bash "${GITHUB_ACTION_PATH}/cache-plan.sh"
 
-    - name: Restore build cache
+    - name: Restore dependency cache
+      if: steps.cache-plan.outputs.dependency-cache-enabled == 'true'
       uses: actions/cache@v5
       with:
-        path: |
-          build
-          ${{ inputs.extra-cache-paths }}
-        key: ${{ runner.os }}-build-${{ hashFiles('Sources/**', 'Tests/**', 'Project.swift', 'Workspace.swift', 'Tuist.swift', 'Tuist/Package.swift', 'Tuist/Package.resolved', 'Config/**', 'Scripts/**', 'Templates/**', 'Makefile') }}
-        restore-keys: |
-          ${{ runner.os }}-build-
+        path: ${{ steps.cache-plan.outputs.dependency-paths }}
+        key: ${{ steps.cache-plan.outputs.dependency-key }}
+        restore-keys: ${{ steps.cache-plan.outputs.dependency-restore-keys }}
+
+    - name: Restore build intermediate cache
+      if: steps.cache-plan.outputs.build-cache-enabled == 'true'
+      uses: actions/cache@v5
+      with:
+        path: ${{ steps.cache-plan.outputs.build-paths }}
+        key: ${{ steps.cache-plan.outputs.build-key }}
+        restore-keys: ${{ steps.cache-plan.outputs.build-restore-keys }}
 
     # Tuist arrives through mise, so it only applies to repos that declare a
     # toolchain; an xcodegen-only consumer has no .tool-versions and must not
