@@ -52,104 +52,12 @@ runs:
       id: cache-plan
       shell: bash
       env:
+        CACHE_PROFILE: ${{ inputs.cache-profile }}
+        CACHE_VERSION: ${{ inputs.cache-version }}
+        DEPENDENCY_HASH: ${{ hashFiles('Package.swift', 'Package.resolved', 'Tuist/Package.swift', 'Tuist/Package.resolved', 'Tools/Package.swift', 'Tools/Package.resolved', 'swiftcheck/Package.swift', 'swiftcheck/Package.resolved', '.tool-versions', 'mise.toml', '.config/mise/conf.d/*.toml', 'project.yml') }}
+        BUILD_HASH: ${{ hashFiles('Package.swift', 'Package.resolved', 'Project.swift', 'Workspace.swift', 'Tuist.swift', 'Tuist/Package.swift', 'Tuist/Package.resolved', 'Tools/Package.swift', 'Tools/Package.resolved', 'swiftcheck/Package.swift', 'swiftcheck/Package.resolved', 'project.yml', 'Makefile') }}
         EXTRA_CACHE_PATHS: ${{ inputs.extra-cache-paths }}
-      run: |
-        set -euo pipefail
-
-        sanitize_key_part() {
-            local raw_value="$1"
-
-            printf '%s' "${raw_value}" | tr -cs '[:alnum:]_.-' '-'
-        }
-
-        cache_profile=$(printf '%s' "${{ inputs.cache-profile }}" | tr '[:upper:]' '[:lower:]')
-        cache_version=$(sanitize_key_part "${{ inputs.cache-version }}")
-        dependency_hash="${{ hashFiles('Package.swift', 'Package.resolved', 'Tuist/Package.swift', 'Tuist/Package.resolved', 'Tools/Package.swift', 'Tools/Package.resolved', 'swiftcheck/Package.swift', 'swiftcheck/Package.resolved', '.tool-versions', 'mise.toml', '.config/mise/conf.d/*.toml', 'project.yml') }}"
-        build_hash="${{ hashFiles('Package.swift', 'Package.resolved', 'Project.swift', 'Workspace.swift', 'Tuist.swift', 'Tuist/Package.swift', 'Tuist/Package.resolved', 'Tools/Package.swift', 'Tools/Package.resolved', 'swiftcheck/Package.swift', 'swiftcheck/Package.resolved', 'project.yml', 'Makefile') }}"
-        runner_os=$(sanitize_key_part "${RUNNER_OS:-$(uname -s)}")
-        runner_arch=$(sanitize_key_part "${RUNNER_ARCH:-$(uname -m)}")
-        xcode_version=$(sanitize_key_part "$(xcodebuild -version 2>/dev/null || printf 'xcode-unavailable')")
-        swift_version=$(sanitize_key_part "$(swift --version 2>/dev/null || printf 'swift-unavailable')")
-        weekly_epoch=$(date -u '+%Yw%U')
-
-        if [[ -z "${cache_version}" ]]; then
-            cache_version="v1"
-        fi
-        if [[ -z "${dependency_hash}" ]]; then
-            dependency_hash="no-dependencies"
-        fi
-        if [[ -z "${build_hash}" ]]; then
-            build_hash="no-build-config"
-        fi
-
-        dependency_cache_enabled=false
-        build_cache_enabled=false
-        case "${cache_profile}" in
-            safe)
-                dependency_cache_enabled=true
-                build_cache_enabled=true
-                ;;
-            dependencies|dependency|deps)
-                dependency_cache_enabled=true
-                ;;
-            off|none|false|0)
-                ;;
-            *)
-                printf 'setup-build-env: unknown cache-profile %s\n' "${cache_profile}" >&2
-                exit 2
-                ;;
-        esac
-
-        cache_prefix="${runner_os}-${runner_arch}-swift-mk-${cache_version}-${xcode_version}-${swift_version}"
-
-        {
-            printf 'dependency-cache-enabled=%s\n' "${dependency_cache_enabled}"
-            printf 'build-cache-enabled=%s\n' "${build_cache_enabled}"
-            printf 'dependency-key=%s-deps-%s\n' "${cache_prefix}" "${dependency_hash}"
-            printf 'dependency-restore-keys<<CACHE_KEYS\n'
-            printf '%s-deps-\n' "${cache_prefix}"
-            printf 'CACHE_KEYS\n'
-            printf 'build-key=%s-build-%s-%s\n' "${cache_prefix}" "${weekly_epoch}" "${build_hash}"
-            printf 'build-restore-keys<<CACHE_KEYS\n'
-            printf '%s-build-%s-\n' "${cache_prefix}" "${weekly_epoch}"
-            printf '%s-build-\n' "${cache_prefix}"
-            printf 'CACHE_KEYS\n'
-            printf 'dependency-paths<<CACHE_PATHS\n'
-            printf '%s\n' \
-                '~/.cache/tuist' \
-                '~/.local/share/mise/downloads' \
-                '~/.local/share/mise/installs' \
-                '~/.local/share/mise/plugins' \
-                '~/Library/Caches/org.swift.swiftpm' \
-                '~/Library/Caches/ccache' \
-                '~/Library/Caches/Mozilla.sccache' \
-                '~/.cache/sccache' \
-                'Tuist/.build'
-            printf 'CACHE_PATHS\n'
-            printf 'build-paths<<CACHE_PATHS\n'
-            printf '%s\n' \
-                '.build' \
-                'swiftcheck/.build' \
-                'Tools/.build' \
-                '.make/swift-mk-build' \
-                '.make/swiftcheck/.build' \
-                'build/Build/Intermediates.noindex' \
-                'build/Index.noindex' \
-                'build/SourcePackages' \
-                '.derived-data/Build/Intermediates.noindex' \
-                '.derived-data/Index.noindex' \
-                '.derived-data/SourcePackages' \
-                'DerivedData/Build/Intermediates.noindex' \
-                'DerivedData/Index.noindex' \
-                'DerivedData/SourcePackages' \
-                'Derived/Build/Intermediates.noindex' \
-                'Derived/Index.noindex' \
-                'Derived/SourcePackages'
-            if [[ -n "${EXTRA_CACHE_PATHS}" ]]; then
-                printf '%s\n' "${EXTRA_CACHE_PATHS}"
-            fi
-            printf 'CACHE_PATHS\n'
-        } >> "${GITHUB_OUTPUT}"
+      run: bash "${GITHUB_ACTION_PATH}/cache-plan.sh"
 
     - name: Restore dependency cache
       if: steps.cache-plan.outputs.dependency-cache-enabled == 'true'
