@@ -8,7 +8,7 @@ on:
     inputs:
       merge-method:
         type: string
-        default: squash
+        default: merge
 
 jobs:
   automerge:
@@ -19,12 +19,9 @@ jobs:
       pull-requests: write
 
     steps:
-      # gh pr merge --delete-branch shells out to git to clean up the local
-      # branch, so it needs a checkout; without one it aborts with
-      # "fatal: not a git repository" before the merge happens.
       - uses: actions/checkout@v6
 
-      - name: Merge passing Dependabot pull request
+      - name: Approve and merge passing Dependabot pull request
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
@@ -41,4 +38,5 @@ jobs:
               exit 0
           fi
 
+          gh pr review "$pr_number" --approve
           gh pr merge "$pr_number" "--${MERGE_METHOD}" --delete-branch
