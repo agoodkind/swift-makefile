@@ -1,20 +1,27 @@
 name: Install provisioning profile
-description: Install a Developer ID provisioning profile into the user keychain location and resolve its profile-specifier name.
+description: Install one or more Developer ID provisioning profiles into the user keychain location and resolve the first profile's specifier name.
 
 inputs:
   profile-base64:
-    description: Base64-encoded `.provisionprofile`.
+    description: >-
+      Base64-encoded `.provisionprofile`. One profile per non-empty line, so a
+      multi-target app (a NetworkExtension app plus its extension) can install
+      several profiles from a single newline-separated secret. Each line must be
+      single-line base64. A single profile is the common case and stays unchanged.
     required: true
 
 outputs:
   profile-specifier:
-    description: The profile's Name, for PROVISIONING_PROFILE_SPECIFIER.
+    description: >-
+      The first profile's Name, for PROVISIONING_PROFILE_SPECIFIER. With several
+      profiles a consumer maps each target to a profile by name in its project;
+      this single value still signals that Developer ID provisioning is active.
     value: ${{ steps.install.outputs.profile-specifier }}
 
 runs:
   using: composite
   steps:
-    - name: Install profile
+    - name: Install profiles
       id: install
       shell: bash
       env:
@@ -22,14 +29,27 @@ runs:
       run: |
         set -euo pipefail
 
-        profile_path="$RUNNER_TEMP/developer-id.provisionprofile"
         profile_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
-        printf '%s' "$PROFILE_BASE64" | base64 --decode > "$profile_path"
-
-        profile_uuid="$(security cms -D -i "$profile_path" | plutil -extract UUID raw -o - -)"
-        profile_name="$(security cms -D -i "$profile_path" | plutil -extract Name raw -o - -)"
-
         mkdir -p "$profile_dir"
-        cp "$profile_path" "$profile_dir/$profile_uuid.provisionprofile"
 
-        printf 'profile-specifier=%s\n' "$profile_name" >> "$GITHUB_OUTPUT"
+        first_name=""
+        index=0
+        # One base64 profile per non-empty line; install each by its UUID.
+        while IFS= read -r line; do
+          [ -n "$line" ] || continue
+          profile_path="$RUNNER_TEMP/developer-id-$index.provisionprofile"
+          printf '%s' "$line" | base64 --decode > "$profile_path"
+
+          profile_uuid="$(security cms -D -i "$profile_path" | plutil -extract UUID raw -o - -)"
+          profile_name="$(security cms -D -i "$profile_path" | plutil -extract Name raw -o - -)"
+
+          cp "$profile_path" "$profile_dir/$profile_uuid.provisionprofile"
+          echo "installed provisioning profile '$profile_name' ($profile_uuid)"
+
+          if [ -z "$first_name" ]; then
+            first_name="$profile_name"
+          fi
+          index=$((index + 1))
+        done <<< "$PROFILE_BASE64"
+
+        printf 'profile-specifier=%s\n' "$first_name" >> "$GITHUB_OUTPUT"
