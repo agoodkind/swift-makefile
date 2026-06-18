@@ -4,10 +4,9 @@ description: Install one or more Developer ID provisioning profiles into the use
 inputs:
   profile-base64:
     description: >-
-      Base64-encoded `.provisionprofile`. One profile per non-empty line, so a
-      multi-target app (a NetworkExtension app plus its extension) can install
-      several profiles from a single newline-separated secret. Each line must be
-      single-line base64. A single profile is the common case and stays unchanged.
+      Base64-encoded `.provisionprofile`. A single profile may be wrapped across
+      several lines. Multiple profiles must use one single-line base64 profile
+      per non-empty line.
     required: true
 
 outputs:
@@ -32,16 +31,81 @@ runs:
         profile_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
         mkdir -p "$profile_dir"
 
-        first_name=""
-        index=0
-        # One base64 profile per non-empty line; install each by its UUID.
-        while IFS= read -r line; do
-          [ -n "$line" ] || continue
-          profile_path="$RUNNER_TEMP/developer-id-$index.provisionprofile"
-          printf '%s' "$line" | base64 --decode > "$profile_path"
+        profile_paths=()
+        profile_uuids=()
+        profile_names=()
 
-          profile_uuid="$(security cms -D -i "$profile_path" | plutil -extract UUID raw -o - -)"
-          profile_name="$(security cms -D -i "$profile_path" | plutil -extract Name raw -o - -)"
+        read_profile_metadata() {
+          local profile_path="$1"
+
+          PROFILE_UUID="$(security cms -D -i "$profile_path" | plutil -extract UUID raw -o - -)" || return 1
+          PROFILE_NAME="$(security cms -D -i "$profile_path" | plutil -extract Name raw -o - -)" || return 1
+        }
+
+        add_profile() {
+          local encoded_profile="$1"
+          local profile_path="$2"
+
+          printf '%s' "$encoded_profile" | base64 --decode > "$profile_path" || return 1
+          read_profile_metadata "$profile_path" || return 1
+
+          profile_paths+=("$profile_path")
+          profile_uuids+=("$PROFILE_UUID")
+          profile_names+=("$PROFILE_NAME")
+        }
+
+        load_line_profiles() {
+          local line
+          local index
+          local profile_path
+
+          profile_paths=()
+          profile_uuids=()
+          profile_names=()
+          index=0
+
+          while IFS= read -r line; do
+            if [ -z "$line" ]; then
+              continue
+            fi
+
+            profile_path="$RUNNER_TEMP/developer-id-line-$index.provisionprofile"
+            add_profile "$line" "$profile_path" || return 1
+            index=$((index + 1))
+          done <<< "$PROFILE_BASE64"
+
+          [ "${#profile_paths[@]}" -gt 0 ]
+        }
+
+        load_wrapped_profile() {
+          local compact_profile
+          local profile_path
+
+          profile_paths=()
+          profile_uuids=()
+          profile_names=()
+          compact_profile="$(printf '%s' "$PROFILE_BASE64" | tr -d '[:space:]')"
+
+          if [ -z "$compact_profile" ]; then
+            return 1
+          fi
+
+          profile_path="$RUNNER_TEMP/developer-id-wrapped.provisionprofile"
+          add_profile "$compact_profile" "$profile_path"
+        }
+
+        if ! load_line_profiles; then
+          if ! load_wrapped_profile; then
+            echo "Could not decode APPLE_DEVELOPER_ID_PROFILE_BASE64 as provisioning profile data" >&2
+            exit 1
+          fi
+        fi
+
+        first_name=""
+        for index in "${!profile_paths[@]}"; do
+          profile_path="${profile_paths[$index]}"
+          profile_uuid="${profile_uuids[$index]}"
+          profile_name="${profile_names[$index]}"
 
           cp "$profile_path" "$profile_dir/$profile_uuid.provisionprofile"
           echo "installed provisioning profile '$profile_name' ($profile_uuid)"
@@ -49,7 +113,6 @@ runs:
           if [ -z "$first_name" ]; then
             first_name="$profile_name"
           fi
-          index=$((index + 1))
-        done <<< "$PROFILE_BASE64"
+        done
 
         printf 'profile-specifier=%s\n' "$first_name" >> "$GITHUB_OUTPUT"
