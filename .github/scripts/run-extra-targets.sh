@@ -29,5 +29,12 @@ fi
 
 for target in "${extra_target_array[@]}"; do
     printf 'extra-targets: running %s\n' "${target}"
-    make "${target}" "${make_argument_array[@]}" "${sign_argument_array[@]}"
+    make_command=("make" "${target}")
+    if [[ ${#make_argument_array[@]} -gt 0 ]]; then
+        make_command+=("${make_argument_array[@]}")
+    fi
+    if [[ ${#sign_argument_array[@]} -gt 0 ]]; then
+        make_command+=("${sign_argument_array[@]}")
+    fi
+    "${make_command[@]}"
 done

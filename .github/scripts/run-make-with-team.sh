@@ -21,4 +21,12 @@ if [[ -n "${team_id}" ]]; then
     sign_argument_array=("DEVELOPMENT_TEAM=${team_id}")
 fi
 
-make "${make_target}" "${make_argument_array[@]}" "${sign_argument_array[@]}"
+make_command=("make" "${make_target}")
+if [[ ${#make_argument_array[@]} -gt 0 ]]; then
+    make_command+=("${make_argument_array[@]}")
+fi
+if [[ ${#sign_argument_array[@]} -gt 0 ]]; then
+    make_command+=("${sign_argument_array[@]}")
+fi
+
+"${make_command[@]}"
