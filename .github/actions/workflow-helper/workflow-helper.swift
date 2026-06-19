@@ -3,8 +3,9 @@
 import Foundation
 
 // Keep the reusable workflow's non-trivial argument plumbing in one typed
-// helper. The shell still launches the script, but Swift handles JSON decoding,
-// optional signing arguments, and argv construction with explicit types.
+// helper action. Swift handles JSON decoding, optional signing arguments, and
+// argv construction with explicit types, while the composite action handles
+// distribution to consumer repositories.
 
 private enum WorkflowMode: String {
   case resolveExtraTargets = "resolve-extra-targets"
