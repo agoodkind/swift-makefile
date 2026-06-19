@@ -98,7 +98,7 @@ jobs:
       build_version: ${{ steps.meta.outputs.build_version }}
       marketing_version: ${{ steps.meta.outputs.marketing_version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Compute release metadata
@@ -115,7 +115,7 @@ jobs:
       HAS_SIGNING: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
       HAS_PROFILE: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 != '' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -266,7 +266,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: actions/download-artifact@v8
