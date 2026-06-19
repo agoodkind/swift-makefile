@@ -255,7 +255,9 @@ SWIFT_MK_FETCHED_SWIFT_FORMAT := $(call swift-mk-fetch-path,.swift-format,$(SWIF
 SWIFT_MK_FETCHED_PERIPHERY := $(call swift-mk-fetch-path,.periphery.yml,$(SWIFT_MK_PERIPHERY_CONFIG))
 endif
 ifeq ($(SWIFT_MK_OSV_CONFIG),.make/osv-scanner.toml)
-ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
+ifneq ($(wildcard $(SWIFT_MK_OSV_CONFIG)),)
+SWIFT_MK_FETCHED_OSV := 1
+else ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
 SWIFT_MK_FETCHED_OSV := $(call swift-mk-require-one,$(SWIFT_MK_OSV_CONFIG))
 else
 SWIFT_MK_FETCHED_OSV := $(call swift-mk-fetch-path,osv-scanner.toml,$(SWIFT_MK_OSV_CONFIG))
