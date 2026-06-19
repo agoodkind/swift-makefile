@@ -4,7 +4,7 @@
 	lint-deadcode lint-deadcode-baseline lint-deadcode-baseline-prune-fixed lint-deadcode-baseline-remove-fixed lint-deadcode-baseline-accept-new \
 	swiftcheck-extra swiftcheck-extra-baseline swiftcheck-extra-baseline-prune-fixed swiftcheck-extra-baseline-remove-fixed swiftcheck-extra-baseline-accept-new swiftcheck-extra-bin \
 	baseline baseline-prune-fixed baseline-remove-fixed baseline-accept-new baseline-add-new \
-	swift-mk-bin swift-mk-notice lint-swiftlint-scope lint-swiftlint-baseline-scope lint-swiftlint-baseline-scope-accept-new \
+	swift-mk-bin swift-mk-notice quality-guard lint-swiftlint-scope lint-swiftlint-baseline-scope lint-swiftlint-baseline-scope-accept-new \
 	swift-mk-sync update-swift-mk smoke-fetch update-consumers update-consumers-dry-run log-audit install-hooks xcode-file-header
 
 SWIFT_MK_BASE_URL ?= https://raw.githubusercontent.com/agoodkind/swift-makefile/main
@@ -578,6 +578,9 @@ lint: lint-tools | swift-mk-notice
 
 lint-tools: swift-mk-bin
 	@"$(SWIFT_MK_BIN)" lint-tools
+
+quality-guard: swift-mk-bin
+	@"$(SWIFT_MK_BIN)" quality-guard
 
 lint-swiftlint: lint-tools
 	@"$(SWIFT_MK_BIN)" lint-swiftlint
