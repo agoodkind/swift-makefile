@@ -235,6 +235,16 @@ jobs:
           cache-version: ${{ inputs.cache-version }}
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
 
+      - name: Validate signing inputs
+        if: ${{ inputs.import-signing-cert || inputs.install-provisioning-profile }}
+        env:
+          IMPORT_SIGNING_CERT: ${{ inputs.import-signing-cert }}
+          INSTALL_PROVISIONING_PROFILE: ${{ inputs.install-provisioning-profile }}
+          HAS_SIGNING_CERT: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
+          HAS_SIGNING_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD != '' }}
+          HAS_PROVISIONING_PROFILE: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 != '' }}
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" validate-signing-inputs
+
       - name: Install signing certificate
         id: cert
         if: ${{ inputs.import-signing-cert }}
@@ -326,6 +336,16 @@ jobs:
           cache-profile: ${{ inputs.cache-profile }}
           cache-version: ${{ inputs.cache-version }}
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
+
+      - name: Validate signing inputs
+        if: ${{ inputs.import-signing-cert || inputs.install-provisioning-profile }}
+        env:
+          IMPORT_SIGNING_CERT: ${{ inputs.import-signing-cert }}
+          INSTALL_PROVISIONING_PROFILE: ${{ inputs.install-provisioning-profile }}
+          HAS_SIGNING_CERT: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
+          HAS_SIGNING_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD != '' }}
+          HAS_PROVISIONING_PROFILE: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 != '' }}
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" validate-signing-inputs
 
       - name: Install signing certificate
         id: cert
@@ -428,6 +448,16 @@ jobs:
           cache-profile: ${{ inputs.cache-profile }}
           cache-version: ${{ inputs.cache-version }}
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
+
+      - name: Validate signing inputs
+        if: ${{ steps.resolve_targets.outputs.count != '0' && (inputs.import-signing-cert || inputs.install-provisioning-profile) }}
+        env:
+          IMPORT_SIGNING_CERT: ${{ inputs.import-signing-cert }}
+          INSTALL_PROVISIONING_PROFILE: ${{ inputs.install-provisioning-profile }}
+          HAS_SIGNING_CERT: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
+          HAS_SIGNING_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD != '' }}
+          HAS_PROVISIONING_PROFILE: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 != '' }}
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" validate-signing-inputs
 
       - name: Install signing certificate
         id: cert
