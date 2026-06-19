@@ -260,6 +260,10 @@ jobs:
           MAKE_ARGS: ${{ inputs.make-args }}
           CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
           TEAM_ID: ${{ inputs.apple-team-id }}
+          PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile.outputs.profile-specifier }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
         run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
 
       - name: Run build
@@ -268,6 +272,10 @@ jobs:
           MAKE_ARGS: ${{ inputs.make-args }}
           CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
           TEAM_ID: ${{ inputs.apple-team-id }}
+          PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile.outputs.profile-specifier }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
         run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
 
   test:
@@ -346,6 +354,10 @@ jobs:
           MAKE_ARGS: ${{ inputs.make-args }}
           CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
           TEAM_ID: ${{ inputs.apple-team-id }}
+          PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile.outputs.profile-specifier }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
         run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
 
       - name: Run test
@@ -354,6 +366,10 @@ jobs:
           MAKE_ARGS: ${{ inputs.make-args }}
           CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
           TEAM_ID: ${{ inputs.apple-team-id }}
+          PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile.outputs.profile-specifier }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
         run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
 
   extra-targets:
@@ -441,6 +457,10 @@ jobs:
           MAKE_ARGS: ${{ inputs.make-args }}
           CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
           TEAM_ID: ${{ inputs.apple-team-id }}
+          PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile.outputs.profile-specifier }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
         run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
 
       - name: Run extra targets
@@ -449,5 +469,9 @@ jobs:
           MAKE_ARGS: ${{ inputs.make-args }}
           CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
           TEAM_ID: ${{ inputs.apple-team-id }}
+          PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile.outputs.profile-specifier }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
           EXTRA_TARGETS_SHELL: ${{ steps.resolve_targets.outputs.targets_shell }}
         run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-extra-targets
