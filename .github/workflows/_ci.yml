@@ -40,14 +40,14 @@ on:
       cache-version:
         type: string
         default: v1
-      # Import a real Developer ID certificate before building (requires the
-      # APPLE_DEVELOPER_ID_P12_* secrets; silently skipped when absent).
+      # Import a real Developer ID certificate before building. Requires the
+      # APPLE_DEVELOPER_ID_P12_* secrets when enabled.
       import-signing-cert:
         type: boolean
         default: false
       # Install a Developer ID provisioning profile before building, for apps
       # with entitlements that require one (iCloud). Requires the
-      # APPLE_DEVELOPER_ID_PROFILE_BASE64 secret; silently skipped when absent.
+      # APPLE_DEVELOPER_ID_PROFILE_BASE64 secret when enabled.
       install-provisioning-profile:
         type: boolean
         default: false
@@ -191,8 +191,6 @@ jobs:
     permissions:
       contents: read
     env:
-      HAS_SIGNING: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
-      HAS_PROFILE: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 != '' }}
       SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
     steps:
       - uses: actions/checkout@v7
@@ -237,9 +235,19 @@ jobs:
           cache-version: ${{ inputs.cache-version }}
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
 
+      - name: Validate signing inputs
+        if: ${{ inputs.import-signing-cert || inputs.install-provisioning-profile }}
+        env:
+          IMPORT_SIGNING_CERT: ${{ inputs.import-signing-cert }}
+          INSTALL_PROVISIONING_PROFILE: ${{ inputs.install-provisioning-profile }}
+          HAS_SIGNING_CERT: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
+          HAS_SIGNING_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD != '' }}
+          HAS_PROVISIONING_PROFILE: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 != '' }}
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" validate-signing-inputs
+
       - name: Install signing certificate
         id: cert
-        if: ${{ inputs.import-signing-cert && env.HAS_SIGNING == 'true' }}
+        if: ${{ inputs.import-signing-cert }}
         uses: agoodkind/swift-makefile/.github/actions/import-signing-cert@main
         with:
           p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
@@ -248,7 +256,7 @@ jobs:
 
       - name: Install provisioning profile
         id: profile
-        if: ${{ inputs.install-provisioning-profile && env.HAS_PROFILE == 'true' }}
+        if: ${{ inputs.install-provisioning-profile }}
         uses: agoodkind/swift-makefile/.github/actions/install-provisioning-profile@main
         with:
           profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
@@ -285,8 +293,6 @@ jobs:
     permissions:
       contents: read
     env:
-      HAS_SIGNING: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
-      HAS_PROFILE: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 != '' }}
       SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
     steps:
       - uses: actions/checkout@v7
@@ -331,9 +337,19 @@ jobs:
           cache-version: ${{ inputs.cache-version }}
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
 
+      - name: Validate signing inputs
+        if: ${{ inputs.import-signing-cert || inputs.install-provisioning-profile }}
+        env:
+          IMPORT_SIGNING_CERT: ${{ inputs.import-signing-cert }}
+          INSTALL_PROVISIONING_PROFILE: ${{ inputs.install-provisioning-profile }}
+          HAS_SIGNING_CERT: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
+          HAS_SIGNING_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD != '' }}
+          HAS_PROVISIONING_PROFILE: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 != '' }}
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" validate-signing-inputs
+
       - name: Install signing certificate
         id: cert
-        if: ${{ inputs.import-signing-cert && env.HAS_SIGNING == 'true' }}
+        if: ${{ inputs.import-signing-cert }}
         uses: agoodkind/swift-makefile/.github/actions/import-signing-cert@main
         with:
           p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
@@ -342,7 +358,7 @@ jobs:
 
       - name: Install provisioning profile
         id: profile
-        if: ${{ inputs.install-provisioning-profile && env.HAS_PROFILE == 'true' }}
+        if: ${{ inputs.install-provisioning-profile }}
         uses: agoodkind/swift-makefile/.github/actions/install-provisioning-profile@main
         with:
           profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
@@ -381,8 +397,6 @@ jobs:
     permissions:
       contents: read
     env:
-      HAS_SIGNING: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
-      HAS_PROFILE: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 != '' }}
       SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
     steps:
       - uses: actions/checkout@v7
@@ -435,9 +449,19 @@ jobs:
           cache-version: ${{ inputs.cache-version }}
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
 
+      - name: Validate signing inputs
+        if: ${{ steps.resolve_targets.outputs.count != '0' && (inputs.import-signing-cert || inputs.install-provisioning-profile) }}
+        env:
+          IMPORT_SIGNING_CERT: ${{ inputs.import-signing-cert }}
+          INSTALL_PROVISIONING_PROFILE: ${{ inputs.install-provisioning-profile }}
+          HAS_SIGNING_CERT: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
+          HAS_SIGNING_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD != '' }}
+          HAS_PROVISIONING_PROFILE: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 != '' }}
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" validate-signing-inputs
+
       - name: Install signing certificate
         id: cert
-        if: ${{ steps.resolve_targets.outputs.count != '0' && inputs.import-signing-cert && env.HAS_SIGNING == 'true' }}
+        if: ${{ steps.resolve_targets.outputs.count != '0' && inputs.import-signing-cert }}
         uses: agoodkind/swift-makefile/.github/actions/import-signing-cert@main
         with:
           p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
@@ -446,7 +470,7 @@ jobs:
 
       - name: Install provisioning profile
         id: profile
-        if: ${{ steps.resolve_targets.outputs.count != '0' && inputs.install-provisioning-profile && env.HAS_PROFILE == 'true' }}
+        if: ${{ steps.resolve_targets.outputs.count != '0' && inputs.install-provisioning-profile }}
         uses: agoodkind/swift-makefile/.github/actions/install-provisioning-profile@main
         with:
           profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}

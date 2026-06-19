@@ -12,6 +12,7 @@ private enum WorkflowMode: String {
   case runMakeWithTeam = "run-make-with-team"
   case runMakeWithSigning = "run-make-with-signing"
   case runExtraTargets = "run-extra-targets"
+  case validateSigningInputs = "validate-signing-inputs"
 }
 
 private enum WorkflowHelperError: LocalizedError {
@@ -22,6 +23,7 @@ private enum WorkflowHelperError: LocalizedError {
   case invalidJSONShape(label: String)
   case invalidJSONElement(label: String)
   case failedCommand(command: String, exitStatus: Int32)
+  case missingSigningSecret(String)
 
   var errorDescription: String? {
     switch self {
@@ -39,6 +41,11 @@ private enum WorkflowHelperError: LocalizedError {
       return "\(label) must contain only strings"
     case let .failedCommand(command, exitStatus):
       return "\(command) exited with status \(exitStatus)"
+    case let .missingSigningSecret(name):
+      return
+        "workflow-helper: \(name) is required for signed CI; "
+        + "if this fails in a Dependabot run, check that the same secret name "
+        + "is available as a Dependabot secret"
     }
   }
 }
@@ -52,6 +59,10 @@ private struct Environment {
 
   func optional(_ key: String) -> String {
     values[key] ?? ""
+  }
+
+  func bool(_ key: String) -> Bool {
+    ["1", "true", "yes"].contains(optional(key).lowercased())
   }
 
   func required(_ key: String) throws -> String {
@@ -103,6 +114,32 @@ private func makeArguments(
   commandArguments.append(contentsOf: splitWords(makeArgs))
   commandArguments.append(contentsOf: signingArguments)
   return commandArguments
+}
+
+private func requireSigningSecret(_ present: Bool, name: String) throws {
+  guard present else {
+    throw WorkflowHelperError.missingSigningSecret(name)
+  }
+}
+
+private func validateSigningInputs(environment: Environment) throws {
+  if environment.bool("IMPORT_SIGNING_CERT") {
+    try requireSigningSecret(
+      environment.bool("HAS_SIGNING_CERT"),
+      name: "APPLE_DEVELOPER_ID_P12_BASE64"
+    )
+    try requireSigningSecret(
+      environment.bool("HAS_SIGNING_PASSWORD"),
+      name: "APPLE_DEVELOPER_ID_P12_PASSWORD"
+    )
+  }
+
+  if environment.bool("INSTALL_PROVISIONING_PROFILE") {
+    try requireSigningSecret(
+      environment.bool("HAS_PROVISIONING_PROFILE"),
+      name: "APPLE_DEVELOPER_ID_PROFILE_BASE64"
+    )
+  }
 }
 
 private func runMakeWithTeam(environment: Environment) throws {
@@ -301,6 +338,8 @@ private func main() throws {
     try runMakeWithSigning(environment: environment)
   case .runExtraTargets:
     try runExtraTargets(environment: environment)
+  case .validateSigningInputs:
+    try validateSigningInputs(environment: environment)
   }
 }
 
