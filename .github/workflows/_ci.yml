@@ -1,5 +1,6 @@
-# Reusable Swift CI. Consumers call this with their make targets; all logic
-# stays in make. Triggers live in the caller (GitHub does not allow them here).
+# Reusable Swift CI. Consumers declare setup plus optional bespoke extra
+# targets; the required Build, Test, and Quality gates live here. Triggers live
+# in the caller (GitHub does not allow them here).
 name: CI
 
 on:
@@ -11,11 +12,17 @@ on:
       xcode-version:
         type: string
         default: latest-stable
-      # JSON array of make targets; one matrix job per target.
+      # Legacy JSON array alias for bespoke extra targets. Required Build, Test,
+      # and Quality jobs now run unconditionally here.
       targets:
         type: string
         default: '["lint","build","test","audit"]'
-      # Optional make target run before each matrix target (e.g. install-dependencies).
+      # Optional JSON array of bespoke make targets that run after the shared
+      # required jobs.
+      extra-targets:
+        type: string
+        default: '[]'
+      # Optional make target run before each required job and each extra target.
       setup-target:
         type: string
         default: ""
@@ -37,8 +44,8 @@ on:
       import-signing-cert:
         type: boolean
         default: false
-      # Install a Developer ID provisioning profile before building, for apps with
-      # entitlements that require one (iCloud). Requires the
+      # Install a Developer ID provisioning profile before building, for apps
+      # with entitlements that require one (iCloud). Requires the
       # APPLE_DEVELOPER_ID_PROFILE_BASE64 secret; silently skipped when absent.
       install-provisioning-profile:
         type: boolean
@@ -66,9 +73,10 @@ on:
       APPLE_DEVELOPER_ID_PROFILE_BASE64:
         required: false
       # App Store Connect API key for iOS automatic signing
-      # (`xcodebuild -allowProvisioningUpdates`). The consumer's build reads these
-      # from the environment, the same names `_release.yml` uses for notarization.
-      # Absent, the build does no automatic signing, which a simulator build never needs.
+      # (`xcodebuild -allowProvisioningUpdates`). The consumer's build reads
+      # these from the environment, the same names `_release.yml` uses for
+      # notarization. Absent, the build does no automatic signing, which a
+      # simulator build never needs.
       APPLE_NOTARY_KEY_BASE64:
         required: false
       APPLE_NOTARY_KEY_ID:
@@ -82,15 +90,32 @@ env:
   GH_TOKEN: ${{ github.token }}
 
 jobs:
-  # The decoupled, always-run lint/audit/deadcode gate. swift-mk owns it, so it
-  # runs on every consumer PR regardless of `targets` and cannot be dropped. It
-  # runs `build-check` (the exact set the inline `build` gate ran before), so the
-  # `build` matrix job below skips its inline gates on CI and never double-gates.
-  # The deadcode coverage build disables signing itself, so this job imports no
-  # cert; DEVELOPMENT_TEAM still flows for project generation when set.
-  gate:
+  # The required read-only gates run here so consumer workflows stay thin and do
+  # not opt in or out one target at a time. The deadcode coverage build disables
+  # signing itself, so these jobs import no cert; DEVELOPMENT_TEAM still flows
+  # for project generation when set.
+  quality:
+    name: Quality / ${{ matrix.name }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: SwiftLint
+            target: lint-swiftlint
+          - name: Format
+            target: lint-format
+          - name: Complexity
+            target: lint-complexity
+          - name: Deadcode
+            target: lint-deadcode
+          - name: Swiftcheck Extra
+            target: swiftcheck-extra
+          - name: Audit
+            target: audit
     steps:
       - uses: actions/checkout@v6
         with:
@@ -98,7 +123,9 @@ jobs:
 
       - name: Install brew packages
         if: inputs.brew-packages != ''
-        run: brew install ${{ inputs.brew-packages }}
+        env:
+          BREW_PACKAGES: ${{ inputs.brew-packages }}
+        run: ./.github/scripts/install-brew-packages.sh
 
       - name: Setup Swift build env
         if: github.repository == 'agoodkind/swift-makefile'
@@ -123,34 +150,24 @@ jobs:
       - name: Run setup target
         if: inputs.setup-target != ''
         env:
+          MAKE_TARGET: ${{ inputs.setup-target }}
+          MAKE_ARGS: ${{ inputs.make-args }}
           TEAM_ID: ${{ inputs.apple-team-id }}
-        run: |
-          sign_args=""
-          if [ -n "${TEAM_ID:-}" ]; then sign_args="DEVELOPMENT_TEAM=$TEAM_ID"; fi
-          # shellcheck disable=SC2086
-          make ${{ inputs.setup-target }} ${{ inputs.make-args }} $sign_args
+        run: ./.github/scripts/run-make-with-team.sh
 
-      - name: Run build-check gate
+      - name: Run ${{ matrix.name }}
         env:
+          MAKE_TARGET: ${{ matrix.target }}
+          MAKE_ARGS: ${{ inputs.make-args }}
           TEAM_ID: ${{ inputs.apple-team-id }}
-        run: |
-          sign_args=""
-          if [ -n "${TEAM_ID:-}" ]; then sign_args="DEVELOPMENT_TEAM=$TEAM_ID"; fi
-          # shellcheck disable=SC2086
-          make build-check ${{ inputs.make-args }} $sign_args
+        run: ./.github/scripts/run-make-with-team.sh
 
-  # The display name is set to the matrix target alone so the reusable-workflow
-  # status check reads `<workflow> / <caller-job> / build` instead of the default
-  # `<workflow> / <caller-job> / ci (build)`. The job id stays `ci`; no job
-  # references it via `needs`, so the rename is display-only.
-  ci:
-    name: ${{ matrix.target }}
+  build:
+    name: Build
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
-    strategy:
-      fail-fast: false
-      matrix:
-        target: ${{ fromJSON(inputs.targets) }}
+    permissions:
+      contents: read
     env:
       HAS_SIGNING: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
       HAS_PROFILE: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 != '' }}
@@ -161,7 +178,9 @@ jobs:
 
       - name: Install brew packages
         if: inputs.brew-packages != ''
-        run: brew install ${{ inputs.brew-packages }}
+        env:
+          BREW_PACKAGES: ${{ inputs.brew-packages }}
+        run: ./.github/scripts/install-brew-packages.sh
 
       - name: Setup Swift build env
         if: github.repository == 'agoodkind/swift-makefile'
@@ -199,42 +218,197 @@ jobs:
         with:
           profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
 
-      # Signing values pass as make command-line variables only when present, so
-      # an absent cert never clobbers a consumer's ?= defaults with empty values.
-      # PROVISIONING_PROFILE_SPECIFIER goes in the environment, not as a build
-      # setting (swift-mk forbids that key), so the consumer's project resolves
-      # `$(PROVISIONING_PROFILE_SPECIFIER)` from it; it is empty for profile-less
-      # consumers and has no effect there.
-      # The notary key flows in the environment under the names the consumer's
-      # build reads for `-allowProvisioningUpdates` automatic signing. It is empty
-      # for consumers that do not sign iOS and has no effect there.
       - name: Run setup target
         if: inputs.setup-target != ''
         env:
+          MAKE_TARGET: ${{ inputs.setup-target }}
+          MAKE_ARGS: ${{ inputs.make-args }}
           CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
           TEAM_ID: ${{ inputs.apple-team-id }}
           PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile.outputs.profile-specifier }}
           APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-        run: |
-          sign_args=""
-          if [ -n "${CERT_SHA1:-}" ]; then sign_args="CODE_SIGN_IDENTITY=$CERT_SHA1"; fi
-          if [ -n "${TEAM_ID:-}" ]; then sign_args="$sign_args DEVELOPMENT_TEAM=$TEAM_ID"; fi
-          # shellcheck disable=SC2086
-          make ${{ inputs.setup-target }} ${{ inputs.make-args }} $sign_args
+        run: ./.github/scripts/run-make-with-signing.sh
 
-      - name: Run ${{ matrix.target }}
+      - name: Run build
         env:
+          MAKE_TARGET: build
+          MAKE_ARGS: ${{ inputs.make-args }}
           CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
           TEAM_ID: ${{ inputs.apple-team-id }}
           PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile.outputs.profile-specifier }}
           APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-        run: |
-          sign_args=""
-          if [ -n "${CERT_SHA1:-}" ]; then sign_args="CODE_SIGN_IDENTITY=$CERT_SHA1"; fi
-          if [ -n "${TEAM_ID:-}" ]; then sign_args="$sign_args DEVELOPMENT_TEAM=$TEAM_ID"; fi
-          # shellcheck disable=SC2086
-          make ${{ matrix.target }} ${{ inputs.make-args }} $sign_args
+        run: ./.github/scripts/run-make-with-signing.sh
+
+  test:
+    name: Test
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    env:
+      HAS_SIGNING: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
+      HAS_PROFILE: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: ${{ inputs.fetch-depth }}
+
+      - name: Install brew packages
+        if: inputs.brew-packages != ''
+        env:
+          BREW_PACKAGES: ${{ inputs.brew-packages }}
+        run: ./.github/scripts/install-brew-packages.sh
+
+      - name: Setup Swift build env
+        if: github.repository == 'agoodkind/swift-makefile'
+        uses: ./.github/actions/setup-build-env
+        with:
+          xcode-version: ${{ inputs.xcode-version }}
+          github-token: ${{ github.token }}
+          cache-profile: ${{ inputs.cache-profile }}
+          cache-version: ${{ inputs.cache-version }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+
+      - name: Setup Swift build env
+        if: github.repository != 'agoodkind/swift-makefile'
+        uses: agoodkind/swift-makefile/.github/actions/setup-build-env@main
+        with:
+          xcode-version: ${{ inputs.xcode-version }}
+          github-token: ${{ github.token }}
+          cache-profile: ${{ inputs.cache-profile }}
+          cache-version: ${{ inputs.cache-version }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+
+      - name: Install signing certificate
+        id: cert
+        if: ${{ inputs.import-signing-cert && env.HAS_SIGNING == 'true' }}
+        uses: agoodkind/swift-makefile/.github/actions/import-signing-cert@main
+        with:
+          p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          identity-name: ${{ inputs.signing-identity-name }}
+
+      - name: Install provisioning profile
+        id: profile
+        if: ${{ inputs.install-provisioning-profile && env.HAS_PROFILE == 'true' }}
+        uses: agoodkind/swift-makefile/.github/actions/install-provisioning-profile@main
+        with:
+          profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
+
+      - name: Run setup target
+        if: inputs.setup-target != ''
+        env:
+          MAKE_TARGET: ${{ inputs.setup-target }}
+          MAKE_ARGS: ${{ inputs.make-args }}
+          CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+          PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile.outputs.profile-specifier }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: ./.github/scripts/run-make-with-signing.sh
+
+      - name: Run test
+        env:
+          MAKE_TARGET: test
+          MAKE_ARGS: ${{ inputs.make-args }}
+          CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+          PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile.outputs.profile-specifier }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: ./.github/scripts/run-make-with-signing.sh
+
+  extra-targets:
+    name: Extra Targets
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    env:
+      HAS_SIGNING: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
+      HAS_PROFILE: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: ${{ inputs.fetch-depth }}
+
+      - name: Resolve extra targets
+        id: resolve_targets
+        env:
+          EXTRA_TARGETS: ${{ inputs.extra-targets }}
+          LEGACY_TARGETS: ${{ inputs.targets }}
+        run: ruby .github/scripts/resolve-extra-targets.rb
+
+      - name: Install brew packages
+        if: steps.resolve_targets.outputs.count != '0' && inputs.brew-packages != ''
+        env:
+          BREW_PACKAGES: ${{ inputs.brew-packages }}
+        run: ./.github/scripts/install-brew-packages.sh
+
+      - name: Setup Swift build env
+        if: steps.resolve_targets.outputs.count != '0' && github.repository == 'agoodkind/swift-makefile'
+        uses: ./.github/actions/setup-build-env
+        with:
+          xcode-version: ${{ inputs.xcode-version }}
+          github-token: ${{ github.token }}
+          cache-profile: ${{ inputs.cache-profile }}
+          cache-version: ${{ inputs.cache-version }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+
+      - name: Setup Swift build env
+        if: steps.resolve_targets.outputs.count != '0' && github.repository != 'agoodkind/swift-makefile'
+        uses: agoodkind/swift-makefile/.github/actions/setup-build-env@main
+        with:
+          xcode-version: ${{ inputs.xcode-version }}
+          github-token: ${{ github.token }}
+          cache-profile: ${{ inputs.cache-profile }}
+          cache-version: ${{ inputs.cache-version }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+
+      - name: Install signing certificate
+        id: cert
+        if: ${{ steps.resolve_targets.outputs.count != '0' && inputs.import-signing-cert && env.HAS_SIGNING == 'true' }}
+        uses: agoodkind/swift-makefile/.github/actions/import-signing-cert@main
+        with:
+          p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          identity-name: ${{ inputs.signing-identity-name }}
+
+      - name: Install provisioning profile
+        id: profile
+        if: ${{ steps.resolve_targets.outputs.count != '0' && inputs.install-provisioning-profile && env.HAS_PROFILE == 'true' }}
+        uses: agoodkind/swift-makefile/.github/actions/install-provisioning-profile@main
+        with:
+          profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
+
+      - name: Run setup target
+        if: steps.resolve_targets.outputs.count != '0' && inputs.setup-target != ''
+        env:
+          MAKE_TARGET: ${{ inputs.setup-target }}
+          MAKE_ARGS: ${{ inputs.make-args }}
+          CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+          PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile.outputs.profile-specifier }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: ./.github/scripts/run-make-with-signing.sh
+
+      - name: Run extra targets
+        if: steps.resolve_targets.outputs.count != '0'
+        env:
+          MAKE_ARGS: ${{ inputs.make-args }}
+          CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+          PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile.outputs.profile-specifier }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          EXTRA_TARGETS_SHELL: ${{ steps.resolve_targets.outputs.targets_shell }}
+        run: ./.github/scripts/run-extra-targets.sh
