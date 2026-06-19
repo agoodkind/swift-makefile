@@ -374,6 +374,7 @@ jobs:
 
   extra-targets:
     name: Extra Targets
+    if: ${{ inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]' }}
     needs: [quality, build, test]
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
