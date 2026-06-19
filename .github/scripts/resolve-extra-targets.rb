@@ -1,6 +1,10 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
+# Resolve the shared workflow's optional bespoke targets.
+# Ruby has no verifiable static typing source in this repo, so every boundary
+# validates JSON shape and element types before the workflow consumes the data.
+
 require "json"
 require "set"
 
@@ -51,25 +55,33 @@ def append_output(name, value)
   end
 end
 
-explicit_targets = parse_targets(ENV.fetch("EXTRA_TARGETS", "[]"), "EXTRA_TARGETS")
-legacy_targets = parse_targets(ENV.fetch("LEGACY_TARGETS", "[]"), "LEGACY_TARGETS")
+def collect_extra_targets(explicit_targets, legacy_targets)
+  combined_targets = []
+  seen_targets = Set.new
 
-combined_targets = []
-seen_targets = Set.new
+  (explicit_targets + legacy_targets).each do |target|
+    next if BUILTIN_TARGETS.include?(target.downcase)
+    next if seen_targets.include?(target)
 
-(explicit_targets + legacy_targets).each do |target|
-  next if BUILTIN_TARGETS.include?(target.downcase)
-  next if seen_targets.include?(target)
+    combined_targets << target
+    seen_targets << target
+  end
 
-  combined_targets << target
-  seen_targets << target
+  combined_targets
 end
 
-targets_json = JSON.generate(combined_targets)
-targets_shell = combined_targets.join(" ")
+def main
+  explicit_targets = parse_targets(ENV.fetch("EXTRA_TARGETS", "[]"), "EXTRA_TARGETS")
+  legacy_targets = parse_targets(ENV.fetch("LEGACY_TARGETS", "[]"), "LEGACY_TARGETS")
+  combined_targets = collect_extra_targets(explicit_targets, legacy_targets)
+  targets_json = JSON.generate(combined_targets)
+  targets_shell = combined_targets.join(" ")
 
-append_output("targets", targets_json)
-append_output("targets_shell", targets_shell)
-append_output("count", combined_targets.length.to_s)
+  append_output("targets", targets_json)
+  append_output("targets_shell", targets_shell)
+  append_output("count", combined_targets.length.to_s)
 
-puts("extra-targets: resolved #{targets_json}")
+  puts("extra-targets: resolved #{targets_json}")
+end
+
+main
