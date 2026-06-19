@@ -44,7 +44,8 @@ private enum WorkflowHelperError: LocalizedError {
     case let .missingSigningSecret(name):
       return
         "workflow-helper: \(name) is required for signed CI; "
-        + "add the same name as a Dependabot secret for Dependabot pull requests"
+        + "if this fails in a Dependabot run, check that the same secret name "
+        + "is available as a Dependabot secret"
     }
   }
 }
