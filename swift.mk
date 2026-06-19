@@ -233,6 +233,7 @@ endif
 SWIFT_MK_SWIFTLINT_CONFIG ?= .make/swiftlint.yml
 SWIFT_MK_SWIFT_FORMAT_CONFIG ?= .make/swift-format.json
 SWIFT_MK_PERIPHERY_CONFIG ?= .make/periphery.yml
+SWIFT_MK_OSV_CONFIG ?= $(if $(wildcard osv-scanner.toml),osv-scanner.toml,.make/osv-scanner.toml)
 # mise loads every file under .config/mise/conf.d/ automatically and has no
 # env var for an arbitrary config path, so the shared tool pins fetch into
 # that documented additive location. Consumers gitignore the fetched file and
@@ -252,6 +253,13 @@ else
 SWIFT_MK_FETCHED_SWIFTLINT := $(call swift-mk-fetch-path,.swiftlint.yml,$(SWIFT_MK_SWIFTLINT_CONFIG))
 SWIFT_MK_FETCHED_SWIFT_FORMAT := $(call swift-mk-fetch-path,.swift-format,$(SWIFT_MK_SWIFT_FORMAT_CONFIG))
 SWIFT_MK_FETCHED_PERIPHERY := $(call swift-mk-fetch-path,.periphery.yml,$(SWIFT_MK_PERIPHERY_CONFIG))
+endif
+ifeq ($(SWIFT_MK_OSV_CONFIG),.make/osv-scanner.toml)
+ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
+SWIFT_MK_FETCHED_OSV := $(call swift-mk-require-one,$(SWIFT_MK_OSV_CONFIG))
+else
+SWIFT_MK_FETCHED_OSV := $(call swift-mk-fetch-path,osv-scanner.toml,$(SWIFT_MK_OSV_CONFIG))
+endif
 endif
 
 # swift.mk owns the shared mise config outright: it is fetched here, not by the
@@ -294,7 +302,7 @@ PERIPHERY_DEFAULT_EXCLUDE_PATHS ?=
 PERIPHERY_EXCLUDE_PATHS ?=
 
 OSV_SCANNER ?= osv-scanner
-OSV_SCANNER_ARGS ?= --recursive --allow-no-lockfiles
+OSV_SCANNER_ARGS ?= --recursive --allow-no-lockfiles --config $(SWIFT_MK_OSV_CONFIG)
 
 LINT_CONCURRENCY ?= auto
 
@@ -429,6 +437,7 @@ export SWIFT_MK_API_REF
 export SWIFT_MK_SWIFTLINT_CONFIG
 export SWIFT_MK_SWIFT_FORMAT_CONFIG
 export SWIFT_MK_PERIPHERY_CONFIG
+export SWIFT_MK_OSV_CONFIG
 export SWIFT_MK_MISE_CONFIG
 export SWIFT_MK_BUILD_CACHE
 export SWIFTLINT
