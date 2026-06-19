@@ -114,8 +114,8 @@ write_cache_plan() {
         printf 'CACHE_KEYS\n'
         printf 'build-key=%s-build-%s-%s\n' "${cache_prefix}" "${weekly_epoch}" "${build_hash}"
         printf 'build-restore-keys<<CACHE_KEYS\n'
-        printf '%s-build-%s-\n' "${cache_prefix}" "${weekly_epoch}"
-        printf '%s-build-\n' "${cache_prefix}"
+        # Build caches contain compiled SwiftPM modules from .build and DerivedData.
+        # Restoring them across a different build hash can mix incompatible module maps.
         printf 'CACHE_KEYS\n'
     } >> "${output_file}"
 
