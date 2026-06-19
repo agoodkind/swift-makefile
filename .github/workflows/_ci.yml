@@ -120,13 +120,13 @@ jobs:
           - name: Audit
             target: audit
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: ${{ inputs.fetch-depth }}
 
       - name: Checkout swift-makefile helpers
         if: github.repository != 'agoodkind/swift-makefile'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: agoodkind/swift-makefile
           # The caller's github.sha names the consumer repo commit, not a
@@ -195,13 +195,13 @@ jobs:
       HAS_PROFILE: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 != '' }}
       SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: ${{ inputs.fetch-depth }}
 
       - name: Checkout swift-makefile helpers
         if: github.repository != 'agoodkind/swift-makefile'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: agoodkind/swift-makefile
           # The caller's github.sha names the consumer repo commit, not a
@@ -289,13 +289,13 @@ jobs:
       HAS_PROFILE: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 != '' }}
       SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: ${{ inputs.fetch-depth }}
 
       - name: Checkout swift-makefile helpers
         if: github.repository != 'agoodkind/swift-makefile'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: agoodkind/swift-makefile
           # The caller's github.sha names the consumer repo commit, not a
@@ -385,13 +385,13 @@ jobs:
       HAS_PROFILE: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 != '' }}
       SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: ${{ inputs.fetch-depth }}
 
       - name: Checkout swift-makefile helpers
         if: github.repository != 'agoodkind/swift-makefile'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: agoodkind/swift-makefile
           # The caller's github.sha names the consumer repo commit, not a
