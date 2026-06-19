@@ -95,16 +95,14 @@ env:
   HOMEBREW_NO_REQUIRE_TAP_TRUST: "1"
 
 jobs:
-  # The required read-only gates run here so consumer workflows stay thin and do
-  # not opt in or out one target at a time. The deadcode coverage build disables
-  # signing itself, so these jobs import no cert; DEVELOPMENT_TEAM still flows
-  # for project generation when set.
   quality:
     name: Quality / ${{ matrix.name }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
+    env:
+      SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
     strategy:
       fail-fast: false
       matrix:
@@ -126,17 +124,20 @@ jobs:
         with:
           fetch-depth: ${{ inputs.fetch-depth }}
 
-      - name: Install brew packages
-        if: inputs.brew-packages != '' && github.repository == 'agoodkind/swift-makefile'
-        uses: ./.github/actions/install-brew-packages
+      - name: Checkout swift-makefile helpers
+        if: github.repository != 'agoodkind/swift-makefile'
+        uses: actions/checkout@v6
         with:
-          brew-packages: ${{ inputs.brew-packages }}
+          repository: agoodkind/swift-makefile
+          ref: ${{ github.sha }}
+          path: .swift-makefile
+          fetch-depth: 1
 
       - name: Install brew packages
-        if: inputs.brew-packages != '' && github.repository != 'agoodkind/swift-makefile'
-        uses: agoodkind/swift-makefile/.github/actions/install-brew-packages@main
-        with:
-          brew-packages: ${{ inputs.brew-packages }}
+        if: inputs.brew-packages != ''
+        env:
+          BREW_PACKAGES: ${{ inputs.brew-packages }}
+        run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/install-brew-packages/install-brew-packages.sh"
 
       - name: Setup Swift build env
         if: github.repository == 'agoodkind/swift-makefile'
@@ -159,58 +160,26 @@ jobs:
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
 
       - name: Run setup target
-        if: inputs.setup-target != '' && github.repository == 'agoodkind/swift-makefile'
-        uses: ./.github/actions/workflow-helper
-        with:
-          mode: run-make-with-team
-          make-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          team-id: ${{ inputs.apple-team-id }}
-
-      - name: Run setup target
-        if: inputs.setup-target != '' && github.repository != 'agoodkind/swift-makefile'
-        uses: agoodkind/swift-makefile/.github/actions/workflow-helper@main
-        with:
-          mode: run-make-with-team
-          make-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          team-id: ${{ inputs.apple-team-id }}
+        if: inputs.setup-target != ''
+        env:
+          MAKE_TARGET: ${{ inputs.setup-target }}
+          MAKE_ARGS: ${{ inputs.make-args }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-team
 
       - name: Run shared quality guard
-        if: github.repository == 'agoodkind/swift-makefile'
-        uses: ./.github/actions/workflow-helper
-        with:
-          mode: run-make-with-team
-          make-target: quality-guard
-          make-args: ${{ inputs.make-args }}
-          team-id: ${{ inputs.apple-team-id }}
-
-      - name: Run shared quality guard
-        if: github.repository != 'agoodkind/swift-makefile'
-        uses: agoodkind/swift-makefile/.github/actions/workflow-helper@main
-        with:
-          mode: run-make-with-team
-          make-target: quality-guard
-          make-args: ${{ inputs.make-args }}
-          team-id: ${{ inputs.apple-team-id }}
+        env:
+          MAKE_TARGET: quality-guard
+          MAKE_ARGS: ${{ inputs.make-args }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-team
 
       - name: Run ${{ matrix.name }}
-        if: github.repository == 'agoodkind/swift-makefile'
-        uses: ./.github/actions/workflow-helper
-        with:
-          mode: run-make-with-team
-          make-target: ${{ matrix.target }}
-          make-args: ${{ inputs.make-args }}
-          team-id: ${{ inputs.apple-team-id }}
-
-      - name: Run ${{ matrix.name }}
-        if: github.repository != 'agoodkind/swift-makefile'
-        uses: agoodkind/swift-makefile/.github/actions/workflow-helper@main
-        with:
-          mode: run-make-with-team
-          make-target: ${{ matrix.target }}
-          make-args: ${{ inputs.make-args }}
-          team-id: ${{ inputs.apple-team-id }}
+        env:
+          MAKE_TARGET: ${{ matrix.target }}
+          MAKE_ARGS: ${{ inputs.make-args }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-team
 
   build:
     name: Build
@@ -221,22 +190,26 @@ jobs:
     env:
       HAS_SIGNING: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
       HAS_PROFILE: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 != '' }}
+      SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: ${{ inputs.fetch-depth }}
 
-      - name: Install brew packages
-        if: inputs.brew-packages != '' && github.repository == 'agoodkind/swift-makefile'
-        uses: ./.github/actions/install-brew-packages
+      - name: Checkout swift-makefile helpers
+        if: github.repository != 'agoodkind/swift-makefile'
+        uses: actions/checkout@v6
         with:
-          brew-packages: ${{ inputs.brew-packages }}
+          repository: agoodkind/swift-makefile
+          ref: ${{ github.sha }}
+          path: .swift-makefile
+          fetch-depth: 1
 
       - name: Install brew packages
-        if: inputs.brew-packages != '' && github.repository != 'agoodkind/swift-makefile'
-        uses: agoodkind/swift-makefile/.github/actions/install-brew-packages@main
-        with:
-          brew-packages: ${{ inputs.brew-packages }}
+        if: inputs.brew-packages != ''
+        env:
+          BREW_PACKAGES: ${{ inputs.brew-packages }}
+        run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/install-brew-packages/install-brew-packages.sh"
 
       - name: Setup Swift build env
         if: github.repository == 'agoodkind/swift-makefile'
@@ -275,44 +248,21 @@ jobs:
           profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
 
       - name: Run setup target
-        if: inputs.setup-target != '' && github.repository == 'agoodkind/swift-makefile'
-        uses: ./.github/actions/workflow-helper
-        with:
-          mode: run-make-with-signing
-          make-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          cert-sha1: ${{ steps.cert.outputs.identity-sha1 }}
-          team-id: ${{ inputs.apple-team-id }}
-
-      - name: Run setup target
-        if: inputs.setup-target != '' && github.repository != 'agoodkind/swift-makefile'
-        uses: agoodkind/swift-makefile/.github/actions/workflow-helper@main
-        with:
-          mode: run-make-with-signing
-          make-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          cert-sha1: ${{ steps.cert.outputs.identity-sha1 }}
-          team-id: ${{ inputs.apple-team-id }}
+        if: inputs.setup-target != ''
+        env:
+          MAKE_TARGET: ${{ inputs.setup-target }}
+          MAKE_ARGS: ${{ inputs.make-args }}
+          CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
 
       - name: Run build
-        if: github.repository == 'agoodkind/swift-makefile'
-        uses: ./.github/actions/workflow-helper
-        with:
-          mode: run-make-with-signing
-          make-target: build
-          make-args: ${{ inputs.make-args }}
-          cert-sha1: ${{ steps.cert.outputs.identity-sha1 }}
-          team-id: ${{ inputs.apple-team-id }}
-
-      - name: Run build
-        if: github.repository != 'agoodkind/swift-makefile'
-        uses: agoodkind/swift-makefile/.github/actions/workflow-helper@main
-        with:
-          mode: run-make-with-signing
-          make-target: build
-          make-args: ${{ inputs.make-args }}
-          cert-sha1: ${{ steps.cert.outputs.identity-sha1 }}
-          team-id: ${{ inputs.apple-team-id }}
+        env:
+          MAKE_TARGET: build
+          MAKE_ARGS: ${{ inputs.make-args }}
+          CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
 
   test:
     name: Test
@@ -323,22 +273,26 @@ jobs:
     env:
       HAS_SIGNING: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
       HAS_PROFILE: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 != '' }}
+      SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: ${{ inputs.fetch-depth }}
 
-      - name: Install brew packages
-        if: inputs.brew-packages != '' && github.repository == 'agoodkind/swift-makefile'
-        uses: ./.github/actions/install-brew-packages
+      - name: Checkout swift-makefile helpers
+        if: github.repository != 'agoodkind/swift-makefile'
+        uses: actions/checkout@v6
         with:
-          brew-packages: ${{ inputs.brew-packages }}
+          repository: agoodkind/swift-makefile
+          ref: ${{ github.sha }}
+          path: .swift-makefile
+          fetch-depth: 1
 
       - name: Install brew packages
-        if: inputs.brew-packages != '' && github.repository != 'agoodkind/swift-makefile'
-        uses: agoodkind/swift-makefile/.github/actions/install-brew-packages@main
-        with:
-          brew-packages: ${{ inputs.brew-packages }}
+        if: inputs.brew-packages != ''
+        env:
+          BREW_PACKAGES: ${{ inputs.brew-packages }}
+        run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/install-brew-packages/install-brew-packages.sh"
 
       - name: Setup Swift build env
         if: github.repository == 'agoodkind/swift-makefile'
@@ -377,44 +331,21 @@ jobs:
           profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
 
       - name: Run setup target
-        if: inputs.setup-target != '' && github.repository == 'agoodkind/swift-makefile'
-        uses: ./.github/actions/workflow-helper
-        with:
-          mode: run-make-with-signing
-          make-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          cert-sha1: ${{ steps.cert.outputs.identity-sha1 }}
-          team-id: ${{ inputs.apple-team-id }}
-
-      - name: Run setup target
-        if: inputs.setup-target != '' && github.repository != 'agoodkind/swift-makefile'
-        uses: agoodkind/swift-makefile/.github/actions/workflow-helper@main
-        with:
-          mode: run-make-with-signing
-          make-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          cert-sha1: ${{ steps.cert.outputs.identity-sha1 }}
-          team-id: ${{ inputs.apple-team-id }}
+        if: inputs.setup-target != ''
+        env:
+          MAKE_TARGET: ${{ inputs.setup-target }}
+          MAKE_ARGS: ${{ inputs.make-args }}
+          CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
 
       - name: Run test
-        if: github.repository == 'agoodkind/swift-makefile'
-        uses: ./.github/actions/workflow-helper
-        with:
-          mode: run-make-with-signing
-          make-target: test
-          make-args: ${{ inputs.make-args }}
-          cert-sha1: ${{ steps.cert.outputs.identity-sha1 }}
-          team-id: ${{ inputs.apple-team-id }}
-
-      - name: Run test
-        if: github.repository != 'agoodkind/swift-makefile'
-        uses: agoodkind/swift-makefile/.github/actions/workflow-helper@main
-        with:
-          mode: run-make-with-signing
-          make-target: test
-          make-args: ${{ inputs.make-args }}
-          cert-sha1: ${{ steps.cert.outputs.identity-sha1 }}
-          team-id: ${{ inputs.apple-team-id }}
+        env:
+          MAKE_TARGET: test
+          MAKE_ARGS: ${{ inputs.make-args }}
+          CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
 
   extra-targets:
     name: Extra Targets
@@ -426,36 +357,34 @@ jobs:
     env:
       HAS_SIGNING: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
       HAS_PROFILE: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 != '' }}
+      SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: ${{ inputs.fetch-depth }}
 
+      - name: Checkout swift-makefile helpers
+        if: github.repository != 'agoodkind/swift-makefile'
+        uses: actions/checkout@v6
+        with:
+          repository: agoodkind/swift-makefile
+          ref: ${{ github.sha }}
+          path: .swift-makefile
+          fetch-depth: 1
+
       - name: Resolve extra targets
         id: resolve_targets
-        if: github.repository == 'agoodkind/swift-makefile'
-        uses: ./.github/actions/workflow-helper
-        with:
-          mode: resolve-extra-targets
-          extra-targets: ${{ inputs.extra-targets }}
-          legacy-targets: ${{ inputs.targets }}
-          builtin-targets-json: '["build","test","lint","audit","build-check","quality-guard","lint-swiftlint","lint-format","lint-complexity","lint-deadcode","swiftcheck-extra"]'
-
-      - name: Resolve extra targets
-        id: resolve_targets_remote
-        if: github.repository != 'agoodkind/swift-makefile'
-        uses: agoodkind/swift-makefile/.github/actions/workflow-helper@main
-        with:
-          mode: resolve-extra-targets
-          extra-targets: ${{ inputs.extra-targets }}
-          legacy-targets: ${{ inputs.targets }}
-          builtin-targets-json: '["build","test","lint","audit","build-check","quality-guard","lint-swiftlint","lint-format","lint-complexity","lint-deadcode","swiftcheck-extra"]'
+        env:
+          EXTRA_TARGETS: ${{ inputs.extra-targets }}
+          LEGACY_TARGETS: ${{ inputs.targets }}
+          BUILTIN_TARGETS_JSON: '["build","test","lint","audit","build-check","quality-guard","lint-swiftlint","lint-format","lint-complexity","lint-deadcode","swiftcheck-extra"]'
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" resolve-extra-targets
 
       - name: Install brew packages
-        if: github.repository == 'agoodkind/swift-makefile' && steps.resolve_targets.outputs.count != '0' && inputs.brew-packages != ''
-        uses: ./.github/actions/install-brew-packages
-        with:
-          brew-packages: ${{ inputs.brew-packages }}
+        if: steps.resolve_targets.outputs.count != '0' && inputs.brew-packages != ''
+        env:
+          BREW_PACKAGES: ${{ inputs.brew-packages }}
+        run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/install-brew-packages/install-brew-packages.sh"
 
       - name: Setup Swift build env
         if: steps.resolve_targets.outputs.count != '0' && github.repository == 'agoodkind/swift-makefile'
@@ -467,14 +396,8 @@ jobs:
           cache-version: ${{ inputs.cache-version }}
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
 
-      - name: Install brew packages
-        if: github.repository != 'agoodkind/swift-makefile' && steps.resolve_targets_remote.outputs.count != '0' && inputs.brew-packages != ''
-        uses: agoodkind/swift-makefile/.github/actions/install-brew-packages@main
-        with:
-          brew-packages: ${{ inputs.brew-packages }}
-
       - name: Setup Swift build env
-        if: steps.resolve_targets_remote.outputs.count != '0' && github.repository != 'agoodkind/swift-makefile'
+        if: steps.resolve_targets.outputs.count != '0' && github.repository != 'agoodkind/swift-makefile'
         uses: agoodkind/swift-makefile/.github/actions/setup-build-env@main
         with:
           xcode-version: ${{ inputs.xcode-version }}
@@ -494,47 +417,25 @@ jobs:
 
       - name: Install provisioning profile
         id: profile
-        if: ${{ (steps.resolve_targets.outputs.count != '0' || steps.resolve_targets_remote.outputs.count != '0') && inputs.install-provisioning-profile && env.HAS_PROFILE == 'true' }}
+        if: ${{ steps.resolve_targets.outputs.count != '0' && inputs.install-provisioning-profile && env.HAS_PROFILE == 'true' }}
         uses: agoodkind/swift-makefile/.github/actions/install-provisioning-profile@main
         with:
           profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
 
       - name: Run setup target
-        if: github.repository == 'agoodkind/swift-makefile' && steps.resolve_targets.outputs.count != '0' && inputs.setup-target != ''
-        uses: ./.github/actions/workflow-helper
-        with:
-          mode: run-make-with-signing
-          make-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          cert-sha1: ${{ steps.cert.outputs.identity-sha1 }}
-          team-id: ${{ inputs.apple-team-id }}
-
-      - name: Run setup target
-        if: github.repository != 'agoodkind/swift-makefile' && steps.resolve_targets_remote.outputs.count != '0' && inputs.setup-target != ''
-        uses: agoodkind/swift-makefile/.github/actions/workflow-helper@main
-        with:
-          mode: run-make-with-signing
-          make-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          cert-sha1: ${{ steps.cert.outputs.identity-sha1 }}
-          team-id: ${{ inputs.apple-team-id }}
+        if: steps.resolve_targets.outputs.count != '0' && inputs.setup-target != ''
+        env:
+          MAKE_TARGET: ${{ inputs.setup-target }}
+          MAKE_ARGS: ${{ inputs.make-args }}
+          CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
 
       - name: Run extra targets
-        if: github.repository == 'agoodkind/swift-makefile' && steps.resolve_targets.outputs.count != '0'
-        uses: ./.github/actions/workflow-helper
-        with:
-          mode: run-extra-targets
-          make-args: ${{ inputs.make-args }}
-          cert-sha1: ${{ steps.cert.outputs.identity-sha1 }}
-          team-id: ${{ inputs.apple-team-id }}
-          extra-targets-shell: ${{ steps.resolve_targets.outputs.targets_shell }}
-
-      - name: Run extra targets
-        if: github.repository != 'agoodkind/swift-makefile' && steps.resolve_targets_remote.outputs.count != '0'
-        uses: agoodkind/swift-makefile/.github/actions/workflow-helper@main
-        with:
-          mode: run-extra-targets
-          make-args: ${{ inputs.make-args }}
-          cert-sha1: ${{ steps.cert.outputs.identity-sha1 }}
-          team-id: ${{ inputs.apple-team-id }}
-          extra-targets-shell: ${{ steps.resolve_targets_remote.outputs.targets_shell }}
+        if: steps.resolve_targets.outputs.count != '0'
+        env:
+          MAKE_ARGS: ${{ inputs.make-args }}
+          CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+          EXTRA_TARGETS_SHELL: ${{ steps.resolve_targets.outputs.targets_shell }}
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-extra-targets
