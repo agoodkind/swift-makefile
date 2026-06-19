@@ -129,7 +129,10 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: agoodkind/swift-makefile
-          ref: ${{ github.sha }}
+          # The caller's github.sha names the consumer repo commit, not a
+          # commit in swift-makefile, so the helper checkout follows the
+          # same `@main` contract the reusable workflow already advertises.
+          ref: main
           path: .swift-makefile
           fetch-depth: 1
 
@@ -201,7 +204,10 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: agoodkind/swift-makefile
-          ref: ${{ github.sha }}
+          # The caller's github.sha names the consumer repo commit, not a
+          # commit in swift-makefile, so the helper checkout follows the
+          # same `@main` contract the reusable workflow already advertises.
+          ref: main
           path: .swift-makefile
           fetch-depth: 1
 
@@ -284,7 +290,10 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: agoodkind/swift-makefile
-          ref: ${{ github.sha }}
+          # The caller's github.sha names the consumer repo commit, not a
+          # commit in swift-makefile, so the helper checkout follows the
+          # same `@main` contract the reusable workflow already advertises.
+          ref: main
           path: .swift-makefile
           fetch-depth: 1
 
@@ -368,7 +377,10 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: agoodkind/swift-makefile
-          ref: ${{ github.sha }}
+          # The caller's github.sha names the consumer repo commit, not a
+          # commit in swift-makefile, so the helper checkout follows the
+          # same `@main` contract the reusable workflow already advertises.
+          ref: main
           path: .swift-makefile
           fetch-depth: 1
 
