@@ -112,11 +112,15 @@ write_cache_plan() {
         printf 'dependency-restore-keys<<CACHE_KEYS\n'
         printf '%s-deps-\n' "${cache_prefix}"
         printf 'CACHE_KEYS\n'
-        printf 'build-key=%s-build-%s-%s\n' "${cache_prefix}" "${weekly_epoch}" "${build_hash}"
+        printf 'build-key=%s-build-%s-deps-%s-build-%s\n' \
+            "${cache_prefix}" \
+            "${weekly_epoch}" \
+            "${dependency_hash}" \
+            "${build_hash}"
         printf 'build-restore-keys<<CACHE_KEYS\n'
         # The empty restore-key block is deliberate. Build caches contain compiled
         # SwiftPM modules from .build and DerivedData, and fallback restores can
-        # mix incompatible module maps across different build hashes.
+        # mix incompatible module maps across different dependency or build hashes.
         printf 'CACHE_KEYS\n'
     } >> "${output_file}"
 
