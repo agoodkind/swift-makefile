@@ -22,7 +22,8 @@ on:
       extra-targets:
         type: string
         default: '[]'
-      # Optional make target run before each required job and each extra target.
+      # Optional make target run before each required job and once before the
+      # extra-target batch.
       setup-target:
         type: string
         default: ""
@@ -157,14 +158,21 @@ jobs:
           MAKE_TARGET: ${{ inputs.setup-target }}
           MAKE_ARGS: ${{ inputs.make-args }}
           TEAM_ID: ${{ inputs.apple-team-id }}
-        run: ./.github/scripts/run-make-with-team.sh
+        run: swift .github/scripts/workflow-helper.swift run-make-with-team
+
+      - name: Run shared quality guard
+        env:
+          MAKE_TARGET: quality-guard
+          MAKE_ARGS: ${{ inputs.make-args }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+        run: swift .github/scripts/workflow-helper.swift run-make-with-team
 
       - name: Run ${{ matrix.name }}
         env:
           MAKE_TARGET: ${{ matrix.target }}
           MAKE_ARGS: ${{ inputs.make-args }}
           TEAM_ID: ${{ inputs.apple-team-id }}
-        run: ./.github/scripts/run-make-with-team.sh
+        run: swift .github/scripts/workflow-helper.swift run-make-with-team
 
   build:
     name: Build
@@ -233,7 +241,7 @@ jobs:
           APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-        run: ./.github/scripts/run-make-with-signing.sh
+        run: swift .github/scripts/workflow-helper.swift run-make-with-signing
 
       - name: Run build
         env:
@@ -245,7 +253,7 @@ jobs:
           APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-        run: ./.github/scripts/run-make-with-signing.sh
+        run: swift .github/scripts/workflow-helper.swift run-make-with-signing
 
   test:
     name: Test
@@ -314,7 +322,7 @@ jobs:
           APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-        run: ./.github/scripts/run-make-with-signing.sh
+        run: swift .github/scripts/workflow-helper.swift run-make-with-signing
 
       - name: Run test
         env:
@@ -326,10 +334,11 @@ jobs:
           APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-        run: ./.github/scripts/run-make-with-signing.sh
+        run: swift .github/scripts/workflow-helper.swift run-make-with-signing
 
   extra-targets:
     name: Extra Targets
+    needs: [quality, build, test]
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
@@ -347,7 +356,8 @@ jobs:
         env:
           EXTRA_TARGETS: ${{ inputs.extra-targets }}
           LEGACY_TARGETS: ${{ inputs.targets }}
-        run: ruby .github/scripts/resolve-extra-targets.rb
+          BUILTIN_TARGETS_JSON: '["build","test","lint","audit","build-check","quality-guard","lint-swiftlint","lint-format","lint-complexity","lint-deadcode","swiftcheck-extra"]'
+        run: swift .github/scripts/workflow-helper.swift resolve-extra-targets
 
       - name: Install brew packages
         if: steps.resolve_targets.outputs.count != '0' && inputs.brew-packages != ''
@@ -402,7 +412,7 @@ jobs:
           APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-        run: ./.github/scripts/run-make-with-signing.sh
+        run: swift .github/scripts/workflow-helper.swift run-make-with-signing
 
       - name: Run extra targets
         if: steps.resolve_targets.outputs.count != '0'
@@ -415,4 +425,4 @@ jobs:
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
           EXTRA_TARGETS_SHELL: ${{ steps.resolve_targets.outputs.targets_shell }}
-        run: ./.github/scripts/run-extra-targets.sh
+        run: swift .github/scripts/workflow-helper.swift run-extra-targets

@@ -38,6 +38,7 @@ CHECK_SWIFT_MK := $(MAKE) -C swiftcheck -f ../$(SWIFT_MK) $(CHECK_ARGS)
 .DEFAULT_GOAL := check
 
 .PHONY: build check lint fmt test analyze audit build-check lint-tools \
+	quality-guard \
 	lint-swiftlint lint-format lint-complexity lint-deadcode swiftcheck-extra \
 	lint-swiftlint-baseline lint-swiftlint-baseline-prune-fixed lint-swiftlint-baseline-remove-fixed lint-swiftlint-baseline-accept-new \
 	lint-swiftlint-scope lint-swiftlint-baseline-scope lint-swiftlint-baseline-scope-accept-new \
@@ -62,6 +63,10 @@ lint:
 
 lint-tools:
 	$(ROOT_SWIFT_MK) lint-tools
+
+quality-guard:
+	$(ROOT_SWIFT_MK) quality-guard
+	$(CHECK_SWIFT_MK) quality-guard
 
 lint-swiftlint:
 	$(ROOT_SWIFT_MK) lint-swiftlint

@@ -156,7 +156,7 @@ jobs:
 
 `Build`, `Test`, and the shared `Quality / ...` gates run automatically. Consumers only pass repo-specific setup plus optional `extra-targets` when they need bespoke checks such as `smoke-fetch`.
 
-Key `_ci.yml` inputs: `extra-targets` (JSON array of optional bespoke make targets run after the shared required jobs), `targets` (legacy alias for `extra-targets`; built-in `build`, `test`, `lint`, `audit`, `build-check`, and quality subtargets are filtered out), `setup-target` (make target run before each required job and each extra target), `make-args`, `brew-packages`, `runner`, `cache-profile`, `cache-version`, `import-signing-cert` + `signing-identity-name` + `apple-team-id` (real Developer ID builds), `extra-cache-paths`.
+Key `_ci.yml` inputs: `extra-targets` (JSON array of optional bespoke make targets run after the shared required jobs), `targets` (legacy alias for `extra-targets`; built-in `build`, `test`, `lint`, `audit`, `build-check`, `quality-guard`, and quality subtargets are filtered out), `setup-target` (make target run before each required job and once before the extra-target batch), `make-args`, `brew-packages`, `runner`, `cache-profile`, `cache-version`, `import-signing-cert` + `signing-identity-name` + `apple-team-id` (real Developer ID builds), `extra-cache-paths`.
 
 Release (`.github/workflows/release.yml` in the consumer):
 

@@ -21,6 +21,7 @@ struct SwiftMk: ParsableCommand {
     subcommands: [
       LintCommand.self, LintTools.self, LintSwiftlint.self, LintFormat.self,
       LintComplexity.self, LintDeadcode.self, LintFiles.self, LintDiff.self,
+      QualityGuard.self,
       LintSwiftlintScope.self, SwiftcheckExtra.self, SwiftcheckExtraBin.self,
       Fmt.self, TestCommand.self, Audit.self, LogAudit.self,
       BaselineCommand.self, NoticeCommand.self, Render.self, RenderBatch.self,
@@ -118,6 +119,14 @@ struct LintDiff: ParsableCommand {
   static let configuration = CommandConfiguration(commandName: "lint-diff")
 
   func run() throws { try gate(Lint.runLintDiff) }
+}
+
+// MARK: - QualityGuard
+
+struct QualityGuard: ParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "quality-guard")
+
+  func run() throws { try gate(Lint.runQualityGuard) }
 }
 
 // MARK: - LintSwiftlintScope

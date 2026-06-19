@@ -210,15 +210,15 @@ extension Lint {
     return false
   }
 
-  // MARK: gate chain
+  // MARK: shared quality guard
 
+  /// Shared preflight and build-tooling checks that every required quality job
+  /// should run before its gate-specific target. This preserves the old
+  /// `build-check` workflow's preflight, generation, and tooling-audit behavior
+  /// without collapsing the visible gate list back into one combined job.
   @discardableResult
-  public static func runLint(context: PathContext) -> Bool {
-    // Mark the gated invocation so the dead-code coverage build (and any
-    // `toolchain build` it runs) carries the gate proof. Idempotent when `build`
-    // already marked. Covers `make lint`, `make check`, and `make build-check`.
+  public static func runQualityGuard(context: PathContext) -> Bool {
     GateProof.mark(context: context)
-    Output.info("lint: running gate chain")
     let preflightResult = Preflight.checkFiles(preflightRequirements())
     guard preflightResult.ok else {
       Output.log("\n1 check failed: preflight")
@@ -232,13 +232,19 @@ extension Lint {
       Output.log("\n1 check failed: preflight")
       return false
     }
-    // Generate once before the gates. setenv marks SWIFT_MK_GENERATED so a gate
-    // that still recurses through make inherits it; a failure here is surfaced and
-    // stops the chain rather than letting each compile gate fail on missing sources.
     guard ensureGenerated() else {
       Output.log("\n1 check failed: generate")
       return false
     }
+    return runBuildToolingAudit(context: context)
+  }
+
+  // MARK: gate chain
+
+  @discardableResult
+  public static func runLint(context: PathContext) -> Bool {
+    Output.info("lint: running gate chain")
+    guard runQualityGuard(context: context) else { return false }
     let gates = Env.words(
       Env.get(
         "LINT_GATES",
@@ -246,10 +252,6 @@ extension Lint {
     var failed: [String] = []
     for gate in gates where !runGate(named: gate, context: context) {
       failed.append(gate)
-    }
-    // Framework-owned, not part of LINT_GATES, so a consumer cannot drop it.
-    if !runBuildToolingAudit(context: context) {
-      failed.append("build-tooling-audit")
     }
     if failed.isEmpty { return true }
 
