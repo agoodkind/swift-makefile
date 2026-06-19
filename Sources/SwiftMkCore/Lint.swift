@@ -237,6 +237,9 @@ public enum Lint {
 
   @discardableResult
   public static func runDeadcode(context: PathContext) -> Bool {
+    // The Xcode coverage build is analysis-only, but it still routes through the
+    // guarded toolchain path, so the deadcode gate must carry the gate proof.
+    GateProof.mark(context: context)
     Capture.ensureMakeDir()
     Output.debug("lint-deadcode: running gate")
     let raw = ".make/periphery.raw.out"
