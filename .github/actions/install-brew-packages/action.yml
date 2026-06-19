@@ -1,0 +1,16 @@
+name: Install brew packages
+description: Install the caller-provided Homebrew packages for a reusable Swift CI job.
+
+inputs:
+  brew-packages:
+    description: Space-delimited Homebrew packages to install.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install brew packages
+      shell: bash
+      env:
+        BREW_PACKAGES: ${{ inputs.brew-packages }}
+      run: bash "${GITHUB_ACTION_PATH}/install-brew-packages.sh"

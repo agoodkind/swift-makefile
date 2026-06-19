@@ -1,0 +1,67 @@
+name: Workflow helper
+description: Run typed helper operations for the reusable Swift CI workflow.
+
+inputs:
+  mode:
+    description: Helper subcommand to execute.
+    required: true
+  make-target:
+    description: Make target to run when the helper mode needs one.
+    required: false
+    default: ""
+  make-args:
+    description: Optional space-delimited make arguments.
+    required: false
+    default: ""
+  team-id:
+    description: Optional development team override.
+    required: false
+    default: ""
+  cert-sha1:
+    description: Optional signing identity SHA-1.
+    required: false
+    default: ""
+  extra-targets-shell:
+    description: Optional space-delimited resolved extra targets.
+    required: false
+    default: ""
+  extra-targets:
+    description: Optional JSON array of bespoke extra targets.
+    required: false
+    default: "[]"
+  legacy-targets:
+    description: Optional legacy JSON array alias for extra targets.
+    required: false
+    default: "[]"
+  builtin-targets-json:
+    description: JSON array of built-in targets that should be filtered out.
+    required: false
+    default: "[]"
+
+outputs:
+  targets:
+    description: JSON array of resolved bespoke extra targets.
+    value: ${{ steps.helper.outputs.targets }}
+  targets_shell:
+    description: Space-delimited resolved bespoke extra targets.
+    value: ${{ steps.helper.outputs.targets_shell }}
+  count:
+    description: Number of resolved bespoke extra targets.
+    value: ${{ steps.helper.outputs.count }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run workflow helper
+      id: helper
+      shell: bash
+      env:
+        MAKE_TARGET: ${{ inputs.make-target }}
+        MAKE_ARGS: ${{ inputs.make-args }}
+        TEAM_ID: ${{ inputs.team-id }}
+        CERT_SHA1: ${{ inputs.cert-sha1 }}
+        EXTRA_TARGETS_SHELL: ${{ inputs.extra-targets-shell }}
+        EXTRA_TARGETS: ${{ inputs.extra-targets }}
+        LEGACY_TARGETS: ${{ inputs.legacy-targets }}
+        BUILTIN_TARGETS_JSON: ${{ inputs.builtin-targets-json }}
+      run: swift "${GITHUB_ACTION_PATH}/workflow-helper.swift" "${{ inputs.mode }}"
