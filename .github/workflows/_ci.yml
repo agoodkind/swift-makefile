@@ -88,6 +88,10 @@ env:
   # The swift-makefile bootstrap fetches swift.mk via `gh api`; unauthenticated
   # fetches fail silently, so every consumer needs this token.
   GH_TOKEN: ${{ github.token }}
+  # GitHub's macOS runners currently ship with untrusted third-party taps
+  # preinstalled, which makes unrelated `brew install` and `brew update` calls
+  # fail closed unless the job disables the new trust gate explicitly.
+  HOMEBREW_NO_REQUIRE_TAP_TRUST: "1"
 
 jobs:
   # The required read-only gates run here so consumer workflows stay thin and do
