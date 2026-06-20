@@ -416,11 +416,13 @@ enum ToolchainSharedCacheTests {
   }
 
   private static func withSharedCacheEnv(module: String?, spm: String?, _ run: () -> Void) {
+    let priorModule = ProcessInfo.processInfo.environment["SWIFT_MK_MODULE_CACHE"]
+    let priorSpm = ProcessInfo.processInfo.environment["SWIFT_MK_SPM_CACHE"]
     setOrUnset("SWIFT_MK_MODULE_CACHE", module)
     setOrUnset("SWIFT_MK_SPM_CACHE", spm)
     defer {
-      unsetenv("SWIFT_MK_MODULE_CACHE")
-      unsetenv("SWIFT_MK_SPM_CACHE")
+      setOrUnset("SWIFT_MK_MODULE_CACHE", priorModule)
+      setOrUnset("SWIFT_MK_SPM_CACHE", priorSpm)
     }
     run()
   }
@@ -492,8 +494,15 @@ enum ToolchainGuiDerivedDataTests {
 
   @Test
   static func resolvedDerivedDataHonorsAbsoluteEnv() {
+    let prior = ProcessInfo.processInfo.environment["SWIFT_MK_DERIVED_DATA"]
     setenv("SWIFT_MK_DERIVED_DATA", "/custom/.derived-data", 1)
-    defer { unsetenv("SWIFT_MK_DERIVED_DATA") }
+    defer {
+      if let prior {
+        setenv("SWIFT_MK_DERIVED_DATA", prior, 1)
+      } else {
+        unsetenv("SWIFT_MK_DERIVED_DATA")
+      }
+    }
     #expect(Toolchain.resolvedDerivedDataPath() == "/custom/.derived-data")
   }
 

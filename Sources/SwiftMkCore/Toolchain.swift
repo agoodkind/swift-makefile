@@ -566,7 +566,7 @@ extension Toolchain {
       fromPropertyList: derivedDataRedirectSettings(derivedDataPath: derivedDataPath),
       format: .xml,
       options: 0)
-    try data.write(to: URL(fileURLWithPath: settingsPath))
+    try data.write(to: URL(fileURLWithPath: settingsPath), options: .atomic)
   }
 
   /// The plist keys Xcode reads for a custom DerivedData location. `AbsolutePath`
@@ -594,9 +594,10 @@ extension Toolchain {
   }
 
   /// Locate the generated container in `directory`: the `.xcworkspace` a Tuist generate
-  /// emits, or the xcodegen project's embedded `project.xcworkspace`.
+  /// emits, or the xcodegen project's embedded `project.xcworkspace`. Entries are sorted
+  /// so the choice is deterministic when more than one container is present.
   static func generatedWorkspacePath(generator: Generator, in directory: String) -> String? {
-    let entries = (try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? []
+    let entries = ((try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? []).sorted()
     switch generator {
     case .tuist:
       guard let workspace = entries.first(where: { $0.hasSuffix(".xcworkspace") }) else {
