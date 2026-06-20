@@ -27,7 +27,8 @@ struct SwiftMk: ParsableCommand {
       BaselineCommand.self, NoticeCommand.self, Render.self, RenderBatch.self,
       XcodeFileHeader.self, BuildCheck.self, BuildCommand.self, GateToken.self,
       GateProofCommand.self,
-      SigningXcconfig.self, SigningIdentity.self, VerifySigning.self, CodesignRun.self,
+      SigningXcconfig.self, SigningPreflight.self, SigningIdentity.self, VerifySigning.self,
+      CodesignRun.self,
       NotarizeCommand.self,
       TraceCommand.self, ToolchainCommand.self, BuildToolingAuditCommand.self,
     ]
@@ -248,6 +249,23 @@ struct SigningXcconfig: ParsableCommand {
   func run() {
     if let path = SigningBuildConfig.write() {
       Output.log(path)
+    }
+  }
+}
+
+// MARK: - SigningPreflight
+
+/// Fail early when a consumer declares that signing is required but no team can be
+/// resolved from the environment or the configured local xcconfig.
+struct SigningPreflight: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "signing-preflight",
+    abstract: "Verify that a required signing team is available."
+  )
+
+  func run() throws {
+    if !SigningBuildConfig.checkSigningPreflight() {
+      throw ExitCode(1)
     }
   }
 }

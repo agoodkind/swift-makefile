@@ -16,8 +16,6 @@ import Testing
 @Suite(.serialized)
 enum PreflightTests {
   private static let verifyXcconfigKey = "SWIFT_MK_VERIFY_XCCONFIG"
-  private static let verifyXcconfigHint =
-    "copy Config/local.xcconfig.example and fill in DEVELOPMENT_TEAM"
 
   @Test
   static func missingReturnsAbsentRequirementsInOrder() {
@@ -57,7 +55,7 @@ enum PreflightTests {
   }
 
   @Test
-  static func preflightRequirementsIncludeDeclaredXcconfigPath() {
+  static func preflightRequirementsDoNotRequireDeclaredXcconfigPath() {
     let originalValue = savedEnvironmentValue(verifyXcconfigKey)
     defer {
       restoreEnvironmentValue(originalValue, forKey: verifyXcconfigKey)
@@ -65,13 +63,7 @@ enum PreflightTests {
 
     setenv(verifyXcconfigKey, "Config/local.xcconfig", 1)
 
-    let requirements = Lint.preflightRequirements()
-    let expected = [
-      Preflight.Requirement(
-        path: "Config/local.xcconfig",
-        hint: verifyXcconfigHint)
-    ]
-    #expect(requirements == expected)
+    #expect(Lint.preflightRequirements().isEmpty)
   }
 
   @Test

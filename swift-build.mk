@@ -13,6 +13,8 @@
 # expands an undefined variable to empty, which yields no override. SWIFT_MK_SIGN_*
 # names from the real environment still win inside the binary.
 SWIFT_MK_SIGNING_PRELUDE = xcc=""; if [ -n "$(strip $(SWIFT_MK_BIN))" ] && [ -x "$(SWIFT_MK_BIN)" ]; then xcc="$$(DEVELOPMENT_TEAM="$(DEVELOPMENT_TEAM)" CODE_SIGN_IDENTITY="$(CODE_SIGN_IDENTITY)" CODE_SIGN_STYLE="$(CODE_SIGN_STYLE)" "$(SWIFT_MK_BIN)" signing-xcconfig 2>/dev/null || true)"; fi; if [ -n "$$xcc" ]; then if [ -n "$${XCODE_XCCONFIG_FILE:-}" ]; then echo "swift-build.mk: XCODE_XCCONFIG_FILE already set ($${XCODE_XCCONFIG_FILE}); leaving it, not applying swift-mk signing" >&2; else export XCODE_XCCONFIG_FILE="$$xcc"; fi; fi;
+SWIFT_MK_SIGNING_PREFLIGHT = "$(SWIFT_MK_BIN)" signing-preflight
+SWIFT_MK_SIGNING_REQUIRED = $(strip $(SWIFT_MK_VERIFY_XCCONFIG)$(if $(filter 1,$(SWIFT_MK_REQUIRE_SIGNING)),1,))
 
 # Optional signature verification. A consumer opts in by setting the variables.
 # Unset means no verification, so these never disturb an existing build. The
@@ -61,6 +63,7 @@ SWIFT_MK_POST_BUILD_SIGN_CMD = $(if $(SWIFT_MK_HAS_SIGN_WORK),$(if $(strip $(COD
 # make prerequisite.
 build: swift-mk-bin
 	@$(SWIFT_MK_SIGNING_PRELUDE) \
+		$(SWIFT_MK_SIGNING_PREFLIGHT) && \
 		$(if $(strip $(SWIFT_GENERATE_CMD)),$(SWIFT_GENERATE_CMD) &&,) \
 		$(SWIFT_MK_VERIFY_SETTINGS_CMD) \
 		"$(SWIFT_MK_BIN)" build \
@@ -78,11 +81,11 @@ else
 endif
 endif
 
-generate:
+generate: $(if $(SWIFT_MK_SIGNING_REQUIRED),swift-mk-bin,)
 ifeq ($(strip $(SWIFT_GENERATE_CMD)),)
 	@echo "generate: no generate command configured"; exit 0
 else
-	@$(SWIFT_GENERATE_CMD)
+	@$(if $(SWIFT_MK_SIGNING_REQUIRED),$(SWIFT_MK_SIGNING_PREFLIGHT) && ,)$(SWIFT_GENERATE_CMD)
 endif
 
 deploy: build
