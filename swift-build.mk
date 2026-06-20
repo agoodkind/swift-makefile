@@ -63,7 +63,7 @@ SWIFT_MK_POST_BUILD_SIGN_CMD = $(if $(SWIFT_MK_HAS_SIGN_WORK),$(if $(strip $(COD
 # make prerequisite.
 build: swift-mk-bin
 	@$(SWIFT_MK_SIGNING_PRELUDE) \
-		$(SWIFT_MK_SIGNING_PREFLIGHT) && \
+		$(if $(SWIFT_MK_SIGNING_REQUIRED),$(SWIFT_MK_SIGNING_PREFLIGHT) && ,) \
 		$(if $(strip $(SWIFT_GENERATE_CMD)),$(SWIFT_GENERATE_CMD) &&,) \
 		$(SWIFT_MK_VERIFY_SETTINGS_CMD) \
 		"$(SWIFT_MK_BIN)" build \

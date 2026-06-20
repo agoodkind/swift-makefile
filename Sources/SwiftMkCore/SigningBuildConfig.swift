@@ -154,7 +154,7 @@ public enum SigningBuildConfig {
     }
     let xcconfigPath = signingPreflightXcconfigPath()
     let team = resolvedTeam(localXcconfigPaths: [xcconfigPath])
-    guard team.isEmpty else {
+    if !team.isEmpty {
       return SigningPreflightResult(ok: true)
     }
     return SigningPreflightResult(
