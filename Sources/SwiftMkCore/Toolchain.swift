@@ -88,19 +88,6 @@ public enum Toolchain {
     }
   }
 
-  /// Generate the project (and, for Tuist, the workspace).
-  @discardableResult
-  public static func generate(_ generator: Generator, extraArguments: [String] = []) -> Int32 {
-    switch generator {
-    case .tuist:
-      Output.info("toolchain: tuist generate")
-      return Shell.runForwardingOutput("tuist", ["generate", "--no-open"] + extraArguments)
-    case .xcodegen:
-      Output.info("toolchain: xcodegen generate")
-      return Shell.runForwardingOutput("xcodegen", ["generate"] + extraArguments)
-    }
-  }
-
   // MARK: Signing-setting rejection
 
   /// The exit status a build returns when a request carries a forbidden signing
@@ -406,6 +393,7 @@ public enum Toolchain {
     if let derivedDataPath = request.derivedDataPath {
       args.append(contentsOf: ["-derivedDataPath", derivedDataPath])
     }
+    args.append(contentsOf: sharedCacheArguments())
     args.append(contentsOf: request.extraArguments)
     args.append(contentsOf: settingArguments(request.extraSettings))
     args.append(contentsOf: resultBundleArguments(request, dir: resultBundleDirectory))
@@ -464,5 +452,164 @@ public enum Toolchain {
       result.append("\(key)=\(value)")
     }
     return result
+  }
+}
+
+// MARK: - Shared content-addressed caches
+
+extension Toolchain {
+  /// Env values that turn a shared cache off.
+  static let sharedCacheDisableTokens: Set<String> = ["off", "none", "0", "disabled"]
+
+  /// Shared, content-addressed caches reused across every worktree and clone.
+  /// `-derivedDataPath` stays per checkout so concurrent builds never collide, but the
+  /// Clang module cache (`MODULE_CACHE_DIR`) and the SPM clone dir
+  /// (`-clonedSourcePackagesDirPath`) are keyed by content and revision, so pointing
+  /// every build at one location reuses them safely and avoids a multi-GB module cache
+  /// per worktree. `SWIFT_MK_MODULE_CACHE` / `SWIFT_MK_SPM_CACHE` set the locations (the
+  /// make layer exports the defaults under `~/Library/Caches/swift-mk`); an env value
+  /// of `off`/`none` opts out, and an unset value falls back to the built-in default.
+  static func sharedCacheArguments() -> [String] {
+    var args: [String] = []
+    let spm = resolvedSharedCachePath(
+      "SWIFT_MK_SPM_CACHE", defaultSubdirectory: "SourcePackages")
+    if let spm {
+      args.append(contentsOf: ["-clonedSourcePackagesDirPath", spm])
+    }
+    let module = resolvedSharedCachePath(
+      "SWIFT_MK_MODULE_CACHE", defaultSubdirectory: "ModuleCache")
+    if let module {
+      args.append("MODULE_CACHE_DIR=\(module)")
+    }
+    return args
+  }
+
+  /// Resolve one shared-cache env var into a usable directory path, or nil when the
+  /// value names a disable token. An empty value falls back to the built-in default
+  /// under `~/Library/Caches/swift-mk`. Pure (no filesystem writes); xcodebuild and
+  /// clang create the directory at build time.
+  static func resolvedSharedCachePath(
+    _ envName: String, defaultSubdirectory: String
+  ) -> String? {
+    let raw = Env.get(envName).trimmingCharacters(in: .whitespacesAndNewlines)
+    if sharedCacheDisableTokens.contains(raw.lowercased()) {
+      return nil
+    }
+    if raw.isEmpty {
+      return defaultSharedCacheRoot().appendingPathComponent(defaultSubdirectory).path
+    }
+    return raw
+  }
+
+  private static func defaultSharedCacheRoot() -> URL {
+    FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Caches/swift-mk", isDirectory: true)
+  }
+}
+
+// MARK: - Xcode-app DerivedData redirect
+
+extension Toolchain {
+  /// Generate the project (and, for Tuist, the workspace). On success, point the
+  /// generated container's Xcode-app DerivedData at the same per-worktree
+  /// `.derived-data` the CLI uses, so opening the worktree in Xcode.app stops writing
+  /// to the global `~/Library/.../DerivedData/<Name>-<hash>` pile.
+  @discardableResult
+  public static func generate(_ generator: Generator, extraArguments: [String] = []) -> Int32 {
+    let status: Int32
+    switch generator {
+    case .tuist:
+      Output.info("toolchain: tuist generate")
+      status = Shell.runForwardingOutput("tuist", ["generate", "--no-open"] + extraArguments)
+    case .xcodegen:
+      Output.info("toolchain: xcodegen generate")
+      status = Shell.runForwardingOutput("xcodegen", ["generate"] + extraArguments)
+    }
+    if status == 0 {
+      redirectGuiDerivedData(generator: generator)
+    }
+    return status
+  }
+
+  /// Point the generated container's Xcode-app DerivedData at the same per-worktree
+  /// `.derived-data` the CLI uses, via an absolute path so the relative-base ambiguity
+  /// between Xcode versions cannot misplace it. Best-effort: a write failure only means
+  /// Xcode keeps its default location, so it never fails generation.
+  static func redirectGuiDerivedData(generator: Generator) {
+    let cwd = FileManager.default.currentDirectoryPath
+    guard let workspace = generatedWorkspacePath(generator: generator, in: cwd) else {
+      Output.log("toolchain: no generated workspace found to redirect DerivedData")
+      return
+    }
+    let derivedData = resolvedDerivedDataPath()
+    do {
+      try writeDerivedDataRedirect(workspace: workspace, derivedDataPath: derivedData)
+      Output.info("toolchain: Xcode DerivedData -> \(derivedData)")
+    } catch {
+      Output.log("toolchain: could not redirect Xcode DerivedData: \(error)")
+    }
+  }
+
+  /// Write the per-user `WorkspaceSettings.xcsettings` that pins the container's Xcode
+  /// DerivedData to `derivedDataPath`. Separated from env/cwd lookup so it is testable.
+  static func writeDerivedDataRedirect(workspace: String, derivedDataPath: String) throws {
+    let settingsDir =
+      (workspace as NSString)
+      .appendingPathComponent("xcuserdata")
+      + "/\(NSUserName()).xcuserdatad"
+    let settingsPath =
+      (settingsDir as NSString)
+      .appendingPathComponent("WorkspaceSettings.xcsettings")
+    try FileManager.default.createDirectory(
+      atPath: settingsDir, withIntermediateDirectories: true)
+    let data = try PropertyListSerialization.data(
+      fromPropertyList: derivedDataRedirectSettings(derivedDataPath: derivedDataPath),
+      format: .xml,
+      options: 0)
+    try data.write(to: URL(fileURLWithPath: settingsPath))
+  }
+
+  /// The plist keys Xcode reads for a custom DerivedData location. `AbsolutePath`
+  /// avoids the relative-base ambiguity between Xcode versions.
+  static func derivedDataRedirectSettings(derivedDataPath: String) -> [String: String] {
+    [
+      "DerivedDataLocationStyle": "AbsolutePath",
+      "DerivedDataCustomLocation": derivedDataPath,
+      "BuildLocationStyle": "UseAppPreferences",
+    ]
+  }
+
+  /// The per-worktree DerivedData path, resolved to absolute. Honors
+  /// `SWIFT_MK_DERIVED_DATA` (the make layer sets it), else `<cwd>/.derived-data`.
+  static func resolvedDerivedDataPath() -> String {
+    let configured =
+      Env.get("SWIFT_MK_DERIVED_DATA")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let path = configured.isEmpty ? ".derived-data" : configured
+    if (path as NSString).isAbsolutePath {
+      return path
+    }
+    let cwd = FileManager.default.currentDirectoryPath
+    return (cwd as NSString).appendingPathComponent(path)
+  }
+
+  /// Locate the generated container in `directory`: the `.xcworkspace` a Tuist generate
+  /// emits, or the xcodegen project's embedded `project.xcworkspace`.
+  static func generatedWorkspacePath(generator: Generator, in directory: String) -> String? {
+    let entries = (try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? []
+    switch generator {
+    case .tuist:
+      guard let workspace = entries.first(where: { $0.hasSuffix(".xcworkspace") }) else {
+        return nil
+      }
+      return (directory as NSString).appendingPathComponent(workspace)
+    case .xcodegen:
+      guard let project = entries.first(where: { $0.hasSuffix(".xcodeproj") }) else {
+        return nil
+      }
+      return
+        (directory as NSString)
+        .appendingPathComponent(project) + "/project.xcworkspace"
+    }
   }
 }

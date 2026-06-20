@@ -373,3 +373,135 @@ func toolchainBuildReturnsRejectionStatusForSigningSetting() {
   )
   #expect(Toolchain.build(request) == Toolchain.signingOverrideRejectionStatus)
 }
+
+// MARK: - Shared content-addressed cache tests
+
+/// Env-driven, so serialized to keep the process-global cache vars from racing.
+@Suite(.serialized)
+enum ToolchainSharedCacheTests {
+  @Test
+  static func buildSharesModuleCacheAndSpmCloneAcrossWorktrees() {
+    withSharedCacheEnv(module: "/tmp/swift-mk-mc", spm: "/tmp/swift-mk-spm") {
+      let request = Toolchain.Request(
+        generator: .tuist,
+        scheme: "App",
+        workspace: "App.xcworkspace",
+        derivedDataPath: ".derived-data"
+      )
+      let args = Toolchain.buildArguments(request)
+      // DerivedData stays per worktree; only the content-addressed caches are shared.
+      #expect(args.contains("-derivedDataPath"))
+      #expect(args.contains(".derived-data"))
+      #expect(args.contains("-clonedSourcePackagesDirPath"))
+      #expect(args.contains("/tmp/swift-mk-spm"))
+      #expect(args.contains("MODULE_CACHE_DIR=/tmp/swift-mk-mc"))
+      #expect(args.last == "build")
+    }
+  }
+
+  @Test
+  static func sharedCachesOmittedWhenDisabled() {
+    withSharedCacheEnv(module: "off", spm: "none") {
+      #expect(Toolchain.sharedCacheArguments().isEmpty)
+    }
+  }
+
+  @Test
+  static func sharedCachesFallBackToLibraryCachesWhenUnset() {
+    withSharedCacheEnv(module: nil, spm: nil) {
+      let joined = Toolchain.sharedCacheArguments().joined(separator: " ")
+      #expect(joined.contains("Library/Caches/swift-mk/ModuleCache"))
+      #expect(joined.contains("Library/Caches/swift-mk/SourcePackages"))
+    }
+  }
+
+  private static func withSharedCacheEnv(module: String?, spm: String?, _ run: () -> Void) {
+    setOrUnset("SWIFT_MK_MODULE_CACHE", module)
+    setOrUnset("SWIFT_MK_SPM_CACHE", spm)
+    defer {
+      unsetenv("SWIFT_MK_MODULE_CACHE")
+      unsetenv("SWIFT_MK_SPM_CACHE")
+    }
+    run()
+  }
+
+  private static func setOrUnset(_ name: String, _ value: String?) {
+    if let value {
+      setenv(name, value, 1)
+    } else {
+      unsetenv(name)
+    }
+  }
+}
+
+// MARK: - Xcode-app DerivedData redirect tests
+
+@Suite(.serialized)
+enum ToolchainGuiDerivedDataTests {
+  @Test
+  static func redirectSettingsUseAbsolutePathKeys() {
+    let settings = Toolchain.derivedDataRedirectSettings(
+      derivedDataPath: "/repo/.derived-data")
+    #expect(settings["DerivedDataLocationStyle"] == "AbsolutePath")
+    #expect(settings["DerivedDataCustomLocation"] == "/repo/.derived-data")
+    #expect(settings["BuildLocationStyle"] == "UseAppPreferences")
+  }
+
+  @Test
+  static func findsTuistWorkspaceInDirectory() throws {
+    try withTemporaryDirectory { dir in
+      let workspace = (dir as NSString).appendingPathComponent("App.xcworkspace")
+      try FileManager.default.createDirectory(
+        atPath: workspace, withIntermediateDirectories: true)
+      #expect(Toolchain.generatedWorkspacePath(generator: .tuist, in: dir) == workspace)
+    }
+  }
+
+  @Test
+  static func findsXcodegenEmbeddedWorkspace() throws {
+    try withTemporaryDirectory { dir in
+      let project = (dir as NSString).appendingPathComponent("App.xcodeproj")
+      try FileManager.default.createDirectory(
+        atPath: project, withIntermediateDirectories: true)
+      let found = Toolchain.generatedWorkspacePath(generator: .xcodegen, in: dir)
+      #expect(found == project + "/project.xcworkspace")
+    }
+  }
+
+  @Test
+  static func writesReadablePlistAtUserSettingsPath() throws {
+    try withTemporaryDirectory { dir in
+      let workspace = (dir as NSString).appendingPathComponent("App.xcworkspace")
+      try FileManager.default.createDirectory(
+        atPath: workspace, withIntermediateDirectories: true)
+      try Toolchain.writeDerivedDataRedirect(
+        workspace: workspace, derivedDataPath: "/abs/.derived-data")
+      let settingsPath =
+        workspace
+        + "/xcuserdata/\(NSUserName()).xcuserdatad/WorkspaceSettings.xcsettings"
+      let data = try #require(FileManager.default.contents(atPath: settingsPath))
+      let plist =
+        try PropertyListSerialization.propertyList(
+          from: data,
+          options: [],
+          format: nil) as? [String: Any]
+      #expect(plist?["DerivedDataLocationStyle"] as? String == "AbsolutePath")
+      #expect(plist?["DerivedDataCustomLocation"] as? String == "/abs/.derived-data")
+    }
+  }
+
+  @Test
+  static func resolvedDerivedDataHonorsAbsoluteEnv() {
+    setenv("SWIFT_MK_DERIVED_DATA", "/custom/.derived-data", 1)
+    defer { unsetenv("SWIFT_MK_DERIVED_DATA") }
+    #expect(Toolchain.resolvedDerivedDataPath() == "/custom/.derived-data")
+  }
+
+  private static func withTemporaryDirectory(_ run: (String) throws -> Void) throws {
+    let dir = NSTemporaryDirectory() + "swiftmk-gui-dd-" + UUID().uuidString
+    try FileManager.default.createDirectory(
+      atPath: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    try run(dir)
+  }
+}
