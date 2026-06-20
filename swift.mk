@@ -332,6 +332,19 @@ SWIFT_MK_XCODEBUILD_NO_CACHE_ARGS := COMPILATION_CACHE_ENABLE_CACHING=NO COMPILA
 # `xcodebuild -derivedDataPath` here, and the dead-code gate reads the index store
 # from the same place, so coverage analysis is deterministic across repos.
 SWIFT_MK_DERIVED_DATA ?= $(CURDIR)/.derived-data
+# Shared, content-addressed build caches reused across every worktree and clone.
+# DerivedData stays per checkout (above) so concurrent builds never collide, but the
+# Clang module cache and the SPM clone dir are keyed by content and revision, so one
+# shared copy is safe and avoids a multi-GB ModuleCache per worktree. Set either to
+# `off` to opt out. The `swift-mk toolchain` primitive reads these from the
+# environment, so they are exported to the recipe shell.
+SWIFT_MK_CACHE_ROOT ?= $(HOME)/Library/Caches/swift-mk
+SWIFT_MK_MODULE_CACHE ?= $(SWIFT_MK_CACHE_ROOT)/ModuleCache
+SWIFT_MK_SPM_CACHE ?= $(SWIFT_MK_CACHE_ROOT)/SourcePackages
+export SWIFT_MK_MODULE_CACHE
+export SWIFT_MK_SPM_CACHE
+# Exported so `toolchain generate` can point Xcode.app's DerivedData at the same path.
+export SWIFT_MK_DERIVED_DATA
 SWIFT_MK_SWIFTPM_CACHE_ENABLED := NO
 ifneq ($(filter $(SWIFT_MK_SWIFTPM_CACHE),1 true TRUE yes YES on ON auto AUTO),)
 SWIFT_MK_SWIFTPM_CACHE_ENABLED := YES
