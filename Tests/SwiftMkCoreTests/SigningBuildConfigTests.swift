@@ -135,8 +135,9 @@ func signingXcconfigValuesReturnsEmptyForMissingFile() {
 @Suite(.serialized)
 enum SigningEnvironmentOverrideTests {
   private static let signingEnvironmentKeys = [
-    "CODE_SIGN_IDENTITY", "DEVELOPMENT_TEAM", "CODE_SIGN_STYLE",
+    "CODE_SIGN_IDENTITY", "DEVELOPMENT_TEAM", "TUIST_DEVELOPMENT_TEAM", "CODE_SIGN_STYLE",
     "SWIFT_MK_SIGN_IDENTITY", "SWIFT_MK_SIGN_TEAM", "SWIFT_MK_SIGN_STYLE",
+    "SWIFT_MK_REQUIRE_SIGNING", "SWIFT_MK_VERIFY_XCCONFIG",
   ]
 
   @Test
@@ -150,25 +151,158 @@ enum SigningEnvironmentOverrideTests {
 
   @Test
   static func writesAndSetsEnvFromXcconfigWhenUnset() throws {
-    unsetenv("XCODE_XCCONFIG_FILE")
-    for key in signingEnvironmentKeys {
-      setenv(key, "", 1)
+    try withCleanSigningEnvironment {
+      let makeDir = NSTemporaryDirectory() + "swiftmk-apply-" + UUID().uuidString
+      let xcconfig = makeDir + ".xcconfig"
+      try "DEVELOPMENT_TEAM = H3BMXM4W7H\n".write(
+        toFile: xcconfig, atomically: true, encoding: .utf8)
+      let path = SigningBuildConfig.applyEnvironmentOverride(
+        localXcconfigPaths: [xcconfig], makeDir: makeDir)
+      let applied = Env.get("XCODE_XCCONFIG_FILE")
+      let resolved = try #require(path)
+      #expect(applied == resolved)
+      let written = try String(contentsOfFile: resolved, encoding: .utf8)
+      #expect(written.contains("DEVELOPMENT_TEAM = H3BMXM4W7H"))
+      #expect(written.contains("CODE_SIGN_STYLE = Automatic"))
     }
-    let makeDir = NSTemporaryDirectory() + "swiftmk-apply-" + UUID().uuidString
-    let xcconfig = makeDir + ".xcconfig"
-    try "DEVELOPMENT_TEAM = H3BMXM4W7H\n".write(
-      toFile: xcconfig, atomically: true, encoding: .utf8)
-    let path = SigningBuildConfig.applyEnvironmentOverride(
-      localXcconfigPaths: [xcconfig], makeDir: makeDir)
-    let applied = ProcessInfo.processInfo.environment["XCODE_XCCONFIG_FILE"]
+  }
+
+  @Test
+  static func teamResolutionUsesSwiftMkThenDevelopmentThenTuistEnvironment() {
+    withCleanSigningEnvironment {
+      setenv("TUIST_DEVELOPMENT_TEAM", "TUISTTEAM", 1)
+      #expect(SigningBuildConfig.environmentInputs().team == "TUISTTEAM")
+
+      setenv("DEVELOPMENT_TEAM", "DEVTEAM", 1)
+      #expect(SigningBuildConfig.environmentInputs().team == "DEVTEAM")
+
+      setenv("SWIFT_MK_SIGN_TEAM", "SWIFTTEAM", 1)
+      #expect(SigningBuildConfig.environmentInputs().team == "SWIFTTEAM")
+    }
+  }
+
+  @Test
+  static func resolvedTeamFallsBackToConfiguredXcconfig() throws {
+    try withCleanSigningEnvironment {
+      let xcconfig = try temporaryXcconfig("DEVELOPMENT_TEAM = FILETEAM\n")
+      #expect(SigningBuildConfig.resolvedTeam(localXcconfigPaths: [xcconfig]) == "FILETEAM")
+    }
+  }
+
+  @Test
+  static func signingPreflightIsInertWhenSigningIsNotRequired() {
+    withCleanSigningEnvironment {
+      #expect(SigningBuildConfig.signingPreflightResult().ok)
+    }
+  }
+
+  @Test
+  static func signingPreflightFailsWhenRequiredTeamIsMissing() {
+    withCleanSigningEnvironment {
+      let missingXcconfig = temporaryPath("missing-local.xcconfig")
+      setenv("SWIFT_MK_VERIFY_XCCONFIG", missingXcconfig, 1)
+
+      let result = SigningBuildConfig.signingPreflightResult()
+
+      #expect(!result.ok)
+      #expect(result.message.contains("swift-mk signing: missing DEVELOPMENT_TEAM"))
+      #expect(result.message.contains("Set DEVELOPMENT_TEAM"))
+      #expect(result.message.contains(missingXcconfig))
+      #expect(!result.message.contains("\u{2014}"))
+      #expect(!result.message.contains("\u{2013}"))
+    }
+  }
+
+  @Test
+  static func signingPreflightPassesWithTuistDevelopmentTeam() {
+    withCleanSigningEnvironment {
+      setenv("SWIFT_MK_VERIFY_XCCONFIG", temporaryPath("missing-local.xcconfig"), 1)
+      setenv("TUIST_DEVELOPMENT_TEAM", "TUISTTEAM", 1)
+
+      #expect(SigningBuildConfig.signingPreflightResult().ok)
+    }
+  }
+
+  @Test
+  static func signingPreflightPassesWithConfiguredXcconfigTeam() throws {
+    try withCleanSigningEnvironment {
+      let xcconfig = try temporaryXcconfig("DEVELOPMENT_TEAM = FILETEAM\n")
+      setenv("SWIFT_MK_VERIFY_XCCONFIG", xcconfig, 1)
+
+      #expect(SigningBuildConfig.signingPreflightResult().ok)
+    }
+  }
+
+  @Test
+  static func signingPreflightUsesDefaultLocalXcconfigPathWithRequireFlag() {
+    withCleanSigningEnvironment {
+      setenv("SWIFT_MK_REQUIRE_SIGNING", "1", 1)
+
+      let result = SigningBuildConfig.signingPreflightResult()
+
+      #expect(!result.ok)
+      #expect(result.message.contains("Config/local.xcconfig"))
+    }
+  }
+
+  private static func withCleanSigningEnvironment(_ run: () throws -> Void) rethrows {
+    let xcodeXcconfigFile = savedEnvironmentValue("XCODE_XCCONFIG_FILE")
+    let savedValues = savedSigningEnvironmentValues()
+    defer {
+      restoreEnvironmentValue(xcodeXcconfigFile, forKey: "XCODE_XCCONFIG_FILE")
+      restoreSigningEnvironmentValues(savedValues)
+    }
     unsetenv("XCODE_XCCONFIG_FILE")
     for key in signingEnvironmentKeys {
       unsetenv(key)
     }
-    let resolved = try #require(path)
-    #expect(applied == resolved)
-    let written = try String(contentsOfFile: resolved, encoding: .utf8)
-    #expect(written.contains("DEVELOPMENT_TEAM = H3BMXM4W7H"))
-    #expect(written.contains("CODE_SIGN_STYLE = Automatic"))
+    try run()
+  }
+
+  private static func temporaryXcconfig(_ contents: String) throws -> String {
+    let path = temporaryPath("local.xcconfig")
+    let parent = URL(fileURLWithPath: path).deletingLastPathComponent()
+    try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+    try contents.write(toFile: path, atomically: true, encoding: .utf8)
+    return path
+  }
+
+  private static func temporaryPath(_ filename: String) -> String {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "swiftmk-signing-\(UUID().uuidString)",
+      isDirectory: true
+    )
+    return directory.appendingPathComponent(filename).path
+  }
+
+  private static func savedSigningEnvironmentValues() -> [String: String] {
+    var values: [String: String] = [:]
+    for key in signingEnvironmentKeys {
+      if let value = savedEnvironmentValue(key) {
+        values[key] = value
+      }
+    }
+    return values
+  }
+
+  private static func restoreSigningEnvironmentValues(_ values: [String: String]) {
+    for key in signingEnvironmentKeys {
+      restoreEnvironmentValue(values[key], forKey: key)
+    }
+  }
+
+  private static func savedEnvironmentValue(_ key: String) -> String? {
+    guard let value = getenv(key) else {
+      return nil
+    }
+    return String(cString: value)
+  }
+
+  private static func restoreEnvironmentValue(_ value: String?, forKey key: String) {
+    guard let value else {
+      unsetenv(key)
+      return
+    }
+    setenv(key, value, 1)
   }
 }

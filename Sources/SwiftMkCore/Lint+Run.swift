@@ -86,16 +86,7 @@ extension Lint {
   // MARK: preflight
 
   static func preflightRequirements() -> [Preflight.Requirement] {
-    let xcconfigPath = Env.get("SWIFT_MK_VERIFY_XCCONFIG")
-    guard !xcconfigPath.isEmpty else {
-      return []
-    }
-
-    return [
-      Preflight.Requirement(
-        path: xcconfigPath,
-        hint: "copy Config/local.xcconfig.example and fill in DEVELOPMENT_TEAM")
-    ]
+    []
   }
 
   // MARK: generate
@@ -112,6 +103,9 @@ extension Lint {
   /// `SWIFT_GENERATE_CMD` is unaffected.
   @discardableResult
   public static func ensureGenerated() -> Bool {
+    guard SigningBuildConfig.checkSigningPreflight() else {
+      return false
+    }
     if Env.get("SWIFT_MK_GENERATED") == "1" {
       return true
     }
@@ -219,6 +213,10 @@ extension Lint {
   @discardableResult
   public static func runQualityGuard(context: PathContext) -> Bool {
     GateProof.mark(context: context)
+    guard SigningBuildConfig.checkSigningPreflight() else {
+      Output.log("\n1 check failed: preflight")
+      return false
+    }
     let preflightResult = Preflight.checkFiles(preflightRequirements())
     guard preflightResult.ok else {
       Output.log("\n1 check failed: preflight")

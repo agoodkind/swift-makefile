@@ -36,6 +36,19 @@ public enum SigningBuildConfig {
   /// The ad-hoc identity xcodebuild understands; a build with this signs without
   /// a provisioned certificate or team.
   static let adHocIdentity = "-"
+  static let defaultLocalXcconfigPath = "Config/local.xcconfig"
+  private static let requiredSigningFlagName = "SWIFT_MK_REQUIRE_SIGNING"
+  private static let verifyXcconfigName = "SWIFT_MK_VERIFY_XCCONFIG"
+
+  public struct SigningPreflightResult: Equatable, Sendable {
+    public let ok: Bool
+    public let message: String
+
+    public init(ok: Bool, message: String = "") {
+      self.ok = ok
+      self.message = message
+    }
+  }
 
   /// The xcconfig text for the given values, or nil when neither an identity nor a
   /// team is set. Returning nil keeps swift-mk from forcing anything, so a fully
@@ -96,7 +109,9 @@ public enum SigningBuildConfig {
   public static func environmentInputs() -> Inputs {
     Inputs(
       identity: Env.get("SWIFT_MK_SIGN_IDENTITY", Env.get("CODE_SIGN_IDENTITY")),
-      team: Env.get("SWIFT_MK_SIGN_TEAM", Env.get("DEVELOPMENT_TEAM")),
+      team: firstNonEmptyEnvironmentValue([
+        "SWIFT_MK_SIGN_TEAM", "DEVELOPMENT_TEAM", "TUIST_DEVELOPMENT_TEAM",
+      ]),
       style: Env.get("SWIFT_MK_SIGN_STYLE", Env.get("CODE_SIGN_STYLE")))
   }
 
@@ -123,6 +138,83 @@ public enum SigningBuildConfig {
       }
     }
     return Inputs(identity: identity, team: team, style: style)
+  }
+
+  public static func signingRequired() -> Bool {
+    let requiredFlag = Env.get(requiredSigningFlagName).trimmingCharacters(in: .whitespaces)
+    if requiredFlag == "1" {
+      return true
+    }
+    return !verifyXcconfigPath().isEmpty
+  }
+
+  public static func signingPreflightResult() -> SigningPreflightResult {
+    guard signingRequired() else {
+      return SigningPreflightResult(ok: true)
+    }
+    let xcconfigPath = signingPreflightXcconfigPath()
+    let team = resolvedTeam(localXcconfigPaths: [xcconfigPath])
+    if !team.isEmpty {
+      return SigningPreflightResult(ok: true)
+    }
+    return SigningPreflightResult(
+      ok: false,
+      message: missingSigningTeamMessage(xcconfigPath: xcconfigPath))
+  }
+
+  public static func checkSigningPreflight() -> Bool {
+    let result = signingPreflightResult()
+    guard result.ok else {
+      Output.error(result.message)
+      return false
+    }
+    return true
+  }
+
+  static func resolvedTeam(localXcconfigPaths: [String] = []) -> String {
+    let environmentTeam = firstNonEmptyEnvironmentValue([
+      "SWIFT_MK_SIGN_TEAM", "DEVELOPMENT_TEAM", "TUIST_DEVELOPMENT_TEAM",
+    ])
+    if !environmentTeam.isEmpty {
+      return environmentTeam
+    }
+    for path in localXcconfigPaths {
+      let team = (xcconfigValues(atPath: path)["DEVELOPMENT_TEAM"] ?? "")
+        .trimmingCharacters(in: .whitespaces)
+      if !team.isEmpty {
+        return team
+      }
+    }
+    return ""
+  }
+
+  static func signingPreflightXcconfigPath() -> String {
+    let configuredPath = verifyXcconfigPath()
+    if !configuredPath.isEmpty {
+      return configuredPath
+    }
+    return defaultLocalXcconfigPath
+  }
+
+  static func missingSigningTeamMessage(xcconfigPath: String) -> String {
+    "swift-mk signing: missing DEVELOPMENT_TEAM for this consumer. "
+      + "Set DEVELOPMENT_TEAM, TUIST_DEVELOPMENT_TEAM, or SWIFT_MK_SIGN_TEAM, "
+      + "or add DEVELOPMENT_TEAM to \(xcconfigPath). "
+      + "This often happens in a fresh worktree because \(xcconfigPath) is gitignored."
+  }
+
+  private static func verifyXcconfigPath() -> String {
+    Env.get(verifyXcconfigName).trimmingCharacters(in: .whitespaces)
+  }
+
+  private static func firstNonEmptyEnvironmentValue(_ names: [String]) -> String {
+    for name in names {
+      let value = Env.get(name).trimmingCharacters(in: .whitespaces)
+      if !value.isEmpty {
+        return value
+      }
+    }
+    return ""
   }
 
   /// The number of components a parsed `KEY = value` line splits into.

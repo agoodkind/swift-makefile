@@ -494,6 +494,12 @@ export SWIFT_DEADCODE_BUILD_CMD
 export CODE_SIGN_IDENTITY
 export CODE_SIGN_STYLE
 export DEVELOPMENT_TEAM
+export TUIST_DEVELOPMENT_TEAM
+export SWIFT_MK_SIGN_IDENTITY
+export SWIFT_MK_SIGN_TEAM
+export SWIFT_MK_SIGN_STYLE
+export SWIFT_MK_REQUIRE_SIGNING
+export SWIFT_MK_VERIFY_XCCONFIG
 # A consumer builds via Xcode when it declares a scheme or a dead-code coverage
 # build; a plain SwiftPM package declares neither. The dead-code gate and the build
 # chokepoint key off this one flag rather than guessing from on-disk project files,

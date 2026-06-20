@@ -42,6 +42,9 @@ public enum Build {
     // the inline gates skip, but the proof must still be set so the downstream
     // compile is not refused.
     GateProof.mark()
+    guard SigningBuildConfig.checkSigningPreflight() else {
+      return missingBuildCommandStatus
+    }
     let inlineGates = runsInlineGates(
       githubActions: Env.get("GITHUB_ACTIONS"), githubRunId: Env.get("GITHUB_RUN_ID"))
     if inlineGates {
