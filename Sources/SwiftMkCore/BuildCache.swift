@@ -11,6 +11,11 @@
 //  those values; xcodebuild does not, so a consumer step that runs xcodebuild
 //  must strip CC/CXX from its child environment.
 //
+//  When SWIFT_MK_BUILD_CACHE is unset, an installed ccache or sccache on PATH
+//  is auto-detected and used, so a consumer that installs the tool (for
+//  example via brew-packages in CI) does not also have to set the variable to
+//  get caching. An explicit `off`/`none`/`0` opts out.
+//
 
 import Foundation
 
@@ -18,7 +23,12 @@ import Foundation
 
 public enum BuildCache {
   static let supportedTools = ["ccache", "sccache"]
-  static let disabledValues = ["", "none", "off", "0"]
+  /// Auto-detection order when SWIFT_MK_BUILD_CACHE is unset. ccache first
+  /// because it is the tool every C/C++-heavy consumer installs today.
+  static let autoDetectOrder = ["ccache", "sccache"]
+  /// Explicit opt-out values. An empty value is deliberately not here: unset
+  /// means auto-detect, not disabled.
+  static let disabledValues = ["none", "off", "0"]
 
   /// The CC/CXX environment for a selection and a resolved tool path, pure
   /// for tests.
@@ -29,30 +39,66 @@ public enum BuildCache {
     ]
   }
 
-  /// Whether a selection disables caching, pure for tests.
+  /// Whether an explicit selection opts out of caching, pure for tests. An
+  /// empty (unset) value is not disabled; it triggers auto-detection.
   static func isDisabled(_ selection: String) -> Bool {
     disabledValues.contains(selection.lowercased())
   }
 
-  /// Resolve SWIFT_MK_BUILD_CACHE into the wrapper environment, or nil when
-  /// caching is off or the selected tool is absent. An unknown selection
-  /// fails loud rather than building uncached silently.
-  public static func environment() -> [String: String]? {
-    let selection = Env.get("SWIFT_MK_BUILD_CACHE").lowercased()
+  /// Resolve a selection plus a tool-path lookup into the wrapper environment,
+  /// or nil when caching is off, no tool is installed, or the selection is
+  /// unknown. Pure given `lookup`, so a test injects a fake PATH probe rather
+  /// than the real `command -v`. The behavior:
+  ///   - off/none/0     -> nil (explicit opt-out).
+  ///   - unset ("")     -> auto-detect ccache then sccache; use the first found.
+  ///   - ccache/sccache -> use it when installed, else build uncached.
+  ///   - anything else  -> fail loud, so a typo never silently builds uncached.
+  static func resolve(
+    selection rawSelection: String, lookup: (String) -> String?
+  ) -> [String: String]? {
+    let selection = rawSelection.lowercased()
     if isDisabled(selection) {
+      return nil
+    }
+    if selection.isEmpty {
+      for tool in autoDetectOrder {
+        guard let toolPath = lookup(tool) else {
+          continue
+        }
+        Output.log(
+          "build-cache: auto-detected \(tool); compiling through it "
+            + "(set SWIFT_MK_BUILD_CACHE=off to disable)")
+        return wrapperEnvironment(toolPath: toolPath)
+      }
       return nil
     }
     guard supportedTools.contains(selection) else {
       Output.error("build-cache: SWIFT_MK_BUILD_CACHE must be ccache, sccache, none, or off")
       return nil
     }
-    let lookup = Shell.sh("command -v \(selection)")
-    let toolPath = lookup.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard lookup.status == 0, !toolPath.isEmpty else {
+    guard let toolPath = lookup(selection) else {
       Output.log("build-cache: \(selection) selected but not installed; building uncached")
       return nil
     }
     Output.log("build-cache: compiling through \(selection)")
     return wrapperEnvironment(toolPath: toolPath)
+  }
+
+  /// Resolve SWIFT_MK_BUILD_CACHE into the wrapper environment using the real
+  /// PATH probe, or nil when caching is off or no tool is installed.
+  public static func environment() -> [String: String]? {
+    resolve(selection: Env.get("SWIFT_MK_BUILD_CACHE"), lookup: installedToolPath)
+  }
+
+  /// The absolute path of `tool` on PATH, or nil when it is not installed. A
+  /// process boundary (`command -v`), kept out of `resolve` so the decision is
+  /// pure and testable.
+  static func installedToolPath(_ tool: String) -> String? {
+    let lookup = Shell.sh("command -v \(tool)")
+    let path = lookup.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard lookup.status == 0, !path.isEmpty else {
+      return nil
+    }
+    return path
   }
 }
