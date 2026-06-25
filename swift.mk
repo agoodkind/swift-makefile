@@ -322,11 +322,27 @@ SWIFT_MK_XCODE_CACHE_ENABLED := NO
 else ifneq ($(filter $(SWIFT_MK_XCODE_CACHE),auto AUTO),)
 SWIFT_MK_XCODE_CACHE_ENABLED := $(SWIFT_MK_XCODE_CACHE_AUTO_ENABLED)
 endif
+# Prefix mapping rewrites absolute path prefixes (SDK, toolchain, source root) out of
+# the compilation-cache keys so a cache entry produced on one machine or CI runner
+# hits on another whose checkout path differs. Without it the keys embed absolute
+# paths and every cross-runner restore misses. Defaults to the Xcode cache policy, so
+# it follows caching on Xcode 26+ and a consumer can drop just the mapping (keeping the
+# local cache) with SWIFT_MK_XCODE_CACHE_PREFIX_MAP=0 if a path-sensitive input (a
+# bridging header) regresses.
+SWIFT_MK_XCODE_CACHE_PREFIX_MAP ?= $(SWIFT_MK_XCODE_CACHE)
+SWIFT_MK_XCODE_CACHE_PREFIX_MAP_ENABLED := NO
+ifneq ($(filter $(SWIFT_MK_XCODE_CACHE_PREFIX_MAP),1 true TRUE yes YES on ON),)
+SWIFT_MK_XCODE_CACHE_PREFIX_MAP_ENABLED := YES
+else ifneq ($(filter $(SWIFT_MK_XCODE_CACHE_PREFIX_MAP),0 false FALSE no NO off OFF),)
+SWIFT_MK_XCODE_CACHE_PREFIX_MAP_ENABLED := NO
+else ifneq ($(filter $(SWIFT_MK_XCODE_CACHE_PREFIX_MAP),auto AUTO),)
+SWIFT_MK_XCODE_CACHE_PREFIX_MAP_ENABLED := $(SWIFT_MK_XCODE_CACHE_AUTO_ENABLED)
+endif
 SWIFT_MK_XCODE_CACHE_DIAGNOSTICS_ENABLED := NO
 ifneq ($(filter $(SWIFT_MK_XCODE_CACHE_DIAGNOSTICS),1 true TRUE yes YES on ON),)
 SWIFT_MK_XCODE_CACHE_DIAGNOSTICS_ENABLED := YES
 endif
-SWIFT_MK_XCODEBUILD_ARGS := $(strip $(if $(filter YES,$(SWIFT_MK_XCODE_CACHE_ENABLED)),COMPILATION_CACHE_ENABLE_CACHING=YES $(if $(filter YES,$(SWIFT_MK_XCODE_CACHE_DIAGNOSTICS_ENABLED)),COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=YES,),))
+SWIFT_MK_XCODEBUILD_ARGS := $(strip $(if $(filter YES,$(SWIFT_MK_XCODE_CACHE_ENABLED)),COMPILATION_CACHE_ENABLE_CACHING=YES $(if $(filter YES,$(SWIFT_MK_XCODE_CACHE_PREFIX_MAP_ENABLED)),SWIFT_ENABLE_PREFIX_MAPPING=YES CLANG_ENABLE_PREFIX_MAPPING=YES,) $(if $(filter YES,$(SWIFT_MK_XCODE_CACHE_DIAGNOSTICS_ENABLED)),COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=YES,),))
 SWIFT_MK_XCODEBUILD_NO_CACHE_ARGS := COMPILATION_CACHE_ENABLE_CACHING=NO COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=NO
 # Canonical DerivedData path. A consumer that builds Xcode targets routes its
 # `xcodebuild -derivedDataPath` here, and the dead-code gate reads the index store
@@ -481,6 +497,7 @@ export SWIFT_MK_XCODE_VERSION_MAJOR
 export SWIFT_MK_SWIFT_CACHE
 export SWIFT_MK_SWIFTPM_CACHE
 export SWIFT_MK_XCODE_CACHE
+export SWIFT_MK_XCODE_CACHE_PREFIX_MAP
 export SWIFT_MK_XCODE_CACHE_DIAGNOSTICS
 export SWIFT_MK_XCODEBUILD_ARGS
 export SWIFT_MK_XCODEBUILD_NO_CACHE_ARGS
@@ -566,6 +583,7 @@ help:
 	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFT_CACHE=auto|1|0' 'default local SwiftPM and Xcode cache policy'
 	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE=auto|1|0' 'override SwiftPM cache policy'
 	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE=auto|1|0' 'override local Xcode compilation cache policy'
+	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_PREFIX_MAP=auto|1|0' 'remap absolute paths for cross-runner cache hits'
 	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_DIAGNOSTICS=1' 'emit Xcode compilation cache diagnostic remarks'
 	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE_ARGS=...' 'override shared SwiftPM cache flags'
 	@printf '  %-40s %s\n' 'ccache/sccache' 'C-family cache tools; not Swift compilation caches'
