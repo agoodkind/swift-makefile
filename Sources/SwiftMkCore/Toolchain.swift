@@ -502,8 +502,15 @@ extension Toolchain {
   }
 
   private static func defaultSharedCacheRoot() -> URL {
-    FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent("Library/Caches/swift-mk", isDirectory: true)
+    // Honor $HOME (what the cache-plan path list and the home-rooted tool caches
+    // use), falling back to the account home only when it is unset, so the build and
+    // the cache plan resolve the shared caches to the same location.
+    let home = Env.get("HOME")
+    let base =
+      home.isEmpty
+      ? FileManager.default.homeDirectoryForCurrentUser
+      : URL(fileURLWithPath: home, isDirectory: true)
+    return base.appendingPathComponent("Library/Caches/swift-mk", isDirectory: true)
   }
 }
 
@@ -612,5 +619,37 @@ extension Toolchain {
         (directory as NSString)
         .appendingPathComponent(project) + "/project.xcworkspace"
     }
+  }
+}
+
+// MARK: - Toolchain version probes
+
+extension Toolchain {
+  /// The full `xcodebuild -version` string, trimmed, for cache keying. Returns a
+  /// stable fallback when Xcode is unavailable. Lives in Toolchain because this is
+  /// the one place allowed to invoke the build toolchain directly.
+  public static func xcodeVersionString() -> String {
+    Output.debug("toolchain: reading xcodebuild -version")
+    return probedToolVersion("xcodebuild", ["-version"], fallback: "xcode-unavailable")
+  }
+
+  /// The full `swift --version` string, trimmed, for cache keying. Returns a stable
+  /// fallback when Swift is unavailable.
+  public static func swiftVersionString() -> String {
+    Output.debug("toolchain: reading swift --version")
+    return probedToolVersion("swift", ["--version"], fallback: "swift-unavailable")
+  }
+
+  /// Trailing whitespace is stripped to match how shell `$(...)` command substitution
+  /// drops trailing newlines, so the sanitized cache key matches the former script.
+  private static func probedToolVersion(
+    _ command: String, _ arguments: [String], fallback: String
+  ) -> String {
+    let result = Shell.run(command, arguments)
+    let trimmed = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    if result.status != 0 || trimmed.isEmpty {
+      return fallback
+    }
+    return trimmed
   }
 }
