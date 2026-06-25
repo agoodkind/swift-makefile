@@ -79,18 +79,30 @@ runs:
                 printf '%s\0' "${src}/${manifest}" >> "${file_list}"
             fi
         done
-        hash=$(xargs -0 shasum < "${file_list}" | awk '{ print $1 }' | LC_ALL=C sort | shasum | awk '{ print $1 }')
+        source_hash=$(xargs -0 shasum < "${file_list}" | awk '{ print $1 }' | LC_ALL=C sort | shasum | awk '{ print $1 }')
         rm -f "${file_list}"
-        echo "hash=${hash}" >> "${GITHUB_OUTPUT}"
+        # Fold the ACTIVE toolchain into the key. The cached binary links
+        # libIndexStore from the exact Xcode/Swift it was built against, so reusing it
+        # under a different toolchain (the latest-stable label drifting across runner
+        # images) fails to load that dylib and aborts. Keying on the real version
+        # string makes a cache hit guarantee the same toolchain.
+        toolchain_id=$(
+            {
+                xcodebuild -version 2>/dev/null || true
+                swift --version 2>/dev/null || true
+            } | shasum | awk '{ print $1 }'
+        )
+        echo "hash=${source_hash}-${toolchain_id}" >> "${GITHUB_OUTPUT}"
 
     - name: Restore swift-mk toolchain
       id: swift-mk-toolchain
       uses: actions/cache@v5
       with:
         path: ~/.swift-mk-ci-toolchain
-        # The Xcode version is in the key: a runner-image or Xcode rollout changes the
-        # toolchain that built the binary even when the engine source is unchanged.
-        key: swift-mk-ci-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ inputs.xcode-version }}-${{ steps.swift-mk-src.outputs.hash }}
+        # The key includes the engine source hash and the active toolchain id, so a
+        # cached binary is only ever reused under the identical Xcode/Swift it was
+        # built against.
+        key: swift-mk-ci-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-mk-src.outputs.hash }}
 
     - name: Build swift-mk and compute cache plan
       id: cache-plan
