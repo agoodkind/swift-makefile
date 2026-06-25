@@ -48,16 +48,63 @@ runs:
       with:
         xcode-version: ${{ inputs.xcode-version }}
 
-    - name: Compute cache plan
+    # The cache plan (keys plus the cacheable path list) lives in the swift-mk
+    # engine (`swift-mk cache plan`), so CI and local share one cache model. The
+    # engine must be built before it can emit the plan that warms the build, so a
+    # dedicated swift-mk toolchain cache, keyed on the engine source, is restored
+    # first; it never depends on the consumer's caches, so there is no cycle.
+    - name: Resolve swift-mk source
+      id: swift-mk-src
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Consumers vendor the engine source at .swift-makefile; swift-makefile's
+        # own CI builds from the checkout root.
+        if [ -d .swift-makefile/Sources ]; then
+            src=.swift-makefile
+        else
+            src=.
+        fi
+        echo "dir=${src}" >> "${GITHUB_OUTPUT}"
+        # Key the toolchain cache on the engine source content, so it invalidates on
+        # an engine change and hits across consumer commits otherwise.
+        hash=$(
+            find "${src}/Sources" "${src}/Package.swift" "${src}/Package.resolved" \
+                "${src}/scripts/swift-mk-build.sh" -type f 2>/dev/null |
+                LC_ALL=C sort | xargs shasum | shasum | awk '{ print $1 }'
+        )
+        echo "hash=${hash}" >> "${GITHUB_OUTPUT}"
+
+    - name: Restore swift-mk toolchain
+      uses: actions/cache@v5
+      with:
+        path: ~/.swift-mk-ci-toolchain
+        key: swift-mk-ci-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-mk-src.outputs.hash }}
+
+    - name: Build swift-mk and compute cache plan
       id: cache-plan
       shell: bash
       env:
+        SWIFT_MK_SRC: ${{ steps.swift-mk-src.outputs.dir }}
         CACHE_PROFILE: ${{ inputs.cache-profile }}
         CACHE_VERSION: ${{ inputs.cache-version }}
         DEPENDENCY_HASH: ${{ hashFiles('Package.swift', 'Package.resolved', 'Tuist/Package.swift', 'Tuist/Package.resolved', 'Tools/Package.swift', 'Tools/Package.resolved', 'swiftcheck/Package.swift', 'swiftcheck/Package.resolved', '.tool-versions', 'mise.toml', '.config/mise/conf.d/*.toml', 'project.yml') }}
         BUILD_HASH: ${{ hashFiles('Package.swift', 'Package.resolved', 'Project.swift', 'Workspace.swift', 'Tuist.swift', 'Tuist/Package.swift', 'Tuist/Package.resolved', 'Tools/Package.swift', 'Tools/Package.resolved', 'swiftcheck/Package.swift', 'swiftcheck/Package.resolved', 'project.yml', 'Makefile') }}
         EXTRA_CACHE_PATHS: ${{ inputs.extra-cache-paths }}
-      run: bash "${GITHUB_ACTION_PATH}/cache-plan.sh"
+      run: |
+        set -euo pipefail
+        bin="${HOME}/.swift-mk-ci-toolchain/swift-mk"
+        if [ -x "${bin}" ]; then
+            # Cache hit. The cache key pins the engine source, so the cached binary
+            # matches; clear the provenance xattr and re-sign so a restored arm64
+            # binary is not killed on launch.
+            xattr -c "${bin}" 2>/dev/null || true
+            codesign --force --sign - "${bin}" >/dev/null 2>&1 || true
+        else
+            SWIFT_MK_BIN="${bin}" SWIFT_MK_BUILD_REPO="${SWIFT_MK_SRC}" \
+                bash "${SWIFT_MK_SRC}/scripts/swift-mk-build.sh" resolve
+        fi
+        "${bin}" cache plan
 
     - name: Restore dependency cache
       if: steps.cache-plan.outputs.dependency-cache-enabled == 'true'
