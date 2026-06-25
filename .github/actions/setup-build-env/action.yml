@@ -67,12 +67,19 @@ runs:
         fi
         echo "dir=${src}" >> "${GITHUB_OUTPUT}"
         # Key the toolchain cache on the engine source content, so it invalidates on
-        # an engine change and hits across consumer commits otherwise.
-        hash=$(
-            find "${src}/Sources" "${src}/Package.swift" "${src}/Package.resolved" \
-                "${src}/scripts/swift-mk-build.sh" -type f 2>/dev/null |
-                LC_ALL=C sort | xargs shasum | shasum | awk '{ print $1 }'
-        )
+        # an engine change and hits across consumer commits otherwise. Build the file
+        # list defensively: Sources always exists, but Package.resolved is gitignored
+        # in swift-makefile's own repo, so listing missing paths via find under
+        # pipefail must not abort the step.
+        file_list=$(mktemp)
+        find "${src}/Sources" -type f >> "${file_list}" 2>/dev/null || true
+        for manifest in Package.swift Package.resolved scripts/swift-mk-build.sh; do
+            if [ -f "${src}/${manifest}" ]; then
+                printf '%s\n' "${src}/${manifest}" >> "${file_list}"
+            fi
+        done
+        hash=$(LC_ALL=C sort "${file_list}" | xargs shasum | shasum | awk '{ print $1 }')
+        rm -f "${file_list}"
         echo "hash=${hash}" >> "${GITHUB_OUTPUT}"
 
     - name: Restore swift-mk toolchain
