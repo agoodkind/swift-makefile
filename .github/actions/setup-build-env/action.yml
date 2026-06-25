@@ -58,22 +58,20 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        # Consumers vendor the engine source at .swift-makefile; swift-makefile's
-        # own CI builds from the checkout root.
-        if [ -d .swift-makefile/Sources ]; then
-            src=.swift-makefile
-        else
-            src=.
-        fi
+        # Build swift-mk from the action's own checkout, so the action YAML and the
+        # engine binary it builds always come from the same commit, and a consumer
+        # needs no separate helper checkout for the toolchain build. GITHUB_ACTION_PATH
+        # is the action directory; three levels up is the swift-makefile repo root,
+        # for both the local `./.github/...` use and a pinned `@ref` consumer use.
+        src=$(cd "${GITHUB_ACTION_PATH}/../../.." && pwd)
         echo "dir=${src}" >> "${GITHUB_OUTPUT}"
         # Key the toolchain cache on the engine source content, so it invalidates on
-        # an engine change and hits across consumer commits otherwise. Build the file
-        # list defensively: Sources always exists, but Package.resolved is gitignored
-        # in swift-makefile's own repo, so listing missing paths via find under
-        # pipefail must not abort the step.
-        # Null-delimit the file list so a path containing whitespace cannot corrupt
-        # the hash, and sort the per-file hashes (not the filenames) so the key is
-        # order- and whitespace-stable.
+        # an engine change and hits otherwise. Build the file list defensively:
+        # Sources always exists, but Package.resolved is gitignored in swift-makefile's
+        # own repo, so listing missing paths via find under pipefail must not abort the
+        # step. Null-delimit the list so a path containing whitespace cannot corrupt the
+        # hash, and sort the per-file hashes (not the filenames) so the key is order- and
+        # whitespace-stable.
         file_list=$(mktemp)
         find "${src}/Sources" -type f -print0 >> "${file_list}" 2>/dev/null || true
         for manifest in Package.swift Package.resolved scripts/swift-mk-build.sh; do
@@ -86,16 +84,20 @@ runs:
         echo "hash=${hash}" >> "${GITHUB_OUTPUT}"
 
     - name: Restore swift-mk toolchain
+      id: swift-mk-toolchain
       uses: actions/cache@v5
       with:
         path: ~/.swift-mk-ci-toolchain
-        key: swift-mk-ci-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-mk-src.outputs.hash }}
+        # The Xcode version is in the key: a runner-image or Xcode rollout changes the
+        # toolchain that built the binary even when the engine source is unchanged.
+        key: swift-mk-ci-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ inputs.xcode-version }}-${{ steps.swift-mk-src.outputs.hash }}
 
     - name: Build swift-mk and compute cache plan
       id: cache-plan
       shell: bash
       env:
         SWIFT_MK_SRC: ${{ steps.swift-mk-src.outputs.dir }}
+        TOOLCHAIN_CACHE_HIT: ${{ steps.swift-mk-toolchain.outputs.cache-hit }}
         CACHE_PROFILE: ${{ inputs.cache-profile }}
         CACHE_VERSION: ${{ inputs.cache-version }}
         DEPENDENCY_HASH: ${{ hashFiles('Package.swift', 'Package.resolved', 'Tuist/Package.swift', 'Tuist/Package.resolved', 'Tools/Package.swift', 'Tools/Package.resolved', 'swiftcheck/Package.swift', 'swiftcheck/Package.resolved', '.tool-versions', 'mise.toml', '.config/mise/conf.d/*.toml', 'project.yml') }}
@@ -104,13 +106,16 @@ runs:
       run: |
         set -euo pipefail
         bin="${HOME}/.swift-mk-ci-toolchain/swift-mk"
-        if [ -x "${bin}" ]; then
-            # Cache hit. The cache key pins the engine source, so the cached binary
-            # matches; clear the provenance xattr and re-sign so a restored arm64
-            # binary is not killed on launch.
+        if [ "${TOOLCHAIN_CACHE_HIT}" = "true" ] && [ -x "${bin}" ]; then
+            # Real cache hit (the key pins the engine source and Xcode, so the cached
+            # binary matches). Clear the provenance xattr and re-sign so a restored
+            # arm64 binary is not killed on launch.
             xattr -c "${bin}" 2>/dev/null || true
             codesign --force --sign - "${bin}" >/dev/null 2>&1 || true
         else
+            # Cache miss. Remove any stale binary a non-clean runner may have left, so
+            # the rebuild cannot be skipped by swift-mk-build.sh's mtime check.
+            rm -rf "${HOME}/.swift-mk-ci-toolchain"
             SWIFT_MK_BIN="${bin}" SWIFT_MK_BUILD_REPO="${SWIFT_MK_SRC}" \
                 bash "${SWIFT_MK_SRC}/scripts/swift-mk-build.sh" resolve
         fi

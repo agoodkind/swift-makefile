@@ -136,16 +136,40 @@ public enum CacheService {
     return 0
   }
 
-  /// Whether an absolute path is safe for `cache clean` to remove: it must sit
-  /// inside $HOME or the workspace, and never be the filesystem root.
-  static func isWithinSafeRoots(_ absolute: String) -> Bool {
-    let normalized = (absolute as NSString).standardizingPath
-    if normalized == "/" || normalized.isEmpty {
-      return false
-    }
+  /// The known cache directories `cache clean` is allowed to remove. An allowlist,
+  /// not a broad "anything under $HOME or the workspace" check, so a misconfigured
+  /// `EXTRA_CACHE_PATHS` (for example `.`, `..`, or a sibling repo) can never make
+  /// clean delete the workspace root, $HOME, or an unrelated tree.
+  static func cleanableRoots() -> [String] {
     let home = Env.get("HOME", FileManager.default.homeDirectoryForCurrentUser.path)
     let cwd = FileManager.default.currentDirectoryPath
-    for root in [home, cwd] where !root.isEmpty {
+    var roots = [
+      "\(home)/Library/Caches/swift-mk",
+      "\(home)/Library/Caches/org.swift.swiftpm",
+      "\(home)/Library/Caches/ccache",
+      "\(home)/Library/Caches/Mozilla.sccache",
+      "\(home)/.cache/tuist",
+      "\(home)/.cache/sccache",
+      "\(home)/.local/share/mise",
+      "\(cwd)/.build",
+      "\(cwd)/.make",
+      "\(cwd)/Tools/.build",
+      "\(cwd)/swiftcheck/.build",
+      "\(cwd)/Tuist/.build",
+    ]
+    roots.append(Toolchain.resolvedDerivedDataPath())
+    return roots
+  }
+
+  /// Whether an absolute path is safe for `cache clean` to remove: it must equal or
+  /// sit strictly inside one of the known cache roots, and never be the filesystem
+  /// root, $HOME, or the workspace itself.
+  static func isWithinSafeRoots(_ absolute: String) -> Bool {
+    let normalized = (absolute as NSString).standardizingPath
+    if normalized.isEmpty || normalized == "/" {
+      return false
+    }
+    for root in cleanableRoots() where !root.isEmpty {
       let normalizedRoot = (root as NSString).standardizingPath
       if normalized == normalizedRoot || normalized.hasPrefix(normalizedRoot + "/") {
         return true

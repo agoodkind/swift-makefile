@@ -58,7 +58,7 @@ public enum BuildCache {
   ///   - anything else  -> fail loud, so a typo never silently builds uncached.
   static func resolve(
     selection rawSelection: String,
-    xcodeBuild: Bool = false,
+    autoDetect: Bool = true,
     lookup: (String) -> String?
   ) -> [String: String]? {
     let selection = rawSelection.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -66,10 +66,10 @@ public enum BuildCache {
       return nil
     }
     if selection.isEmpty {
-      // Auto-detect only for `swift build`, which word-splits the two-word CC/CXX
-      // wrapper. xcodebuild does not split it, so injecting it would break the
-      // build; an xcodebuild consumer that wants caching must opt in explicitly.
-      if xcodeBuild {
+      // Auto-detect only for a `swift build`, which word-splits the two-word CC/CXX
+      // wrapper. An xcodebuild or tuist build does not split it, so injecting it
+      // would break the build; those build kinds must opt in explicitly.
+      guard autoDetect else {
         return nil
       }
       for tool in autoDetectOrder {
@@ -97,12 +97,21 @@ public enum BuildCache {
 
   /// Resolve SWIFT_MK_BUILD_CACHE into the wrapper environment using the real
   /// PATH probe, or nil when caching is off or no tool is installed. Auto-detection
-  /// is suppressed for an xcodebuild consumer (`SWIFT_MK_XCODE_BUILD == "1"`).
+  /// is suppressed for an xcodebuild or tuist build (see `autoDetectAllowed`).
   public static func environment() -> [String: String]? {
     resolve(
       selection: Env.get("SWIFT_MK_BUILD_CACHE"),
-      xcodeBuild: Env.get("SWIFT_MK_XCODE_BUILD") == "1",
+      autoDetect: autoDetectAllowed(),
       lookup: installedToolPath)
+  }
+
+  /// Whether an unset SWIFT_MK_BUILD_CACHE should auto-detect a compiler cache. Only
+  /// a `swift build` word-splits the two-word CC/CXX wrapper, so auto-detection is
+  /// suppressed for an Xcode build, which a consumer marks with
+  /// `SWIFT_MK_XCODE_BUILD == "1"`. An Xcode-built consumer that wants caching must
+  /// opt in explicitly so it never silently breaks.
+  static func autoDetectAllowed() -> Bool {
+    Env.get("SWIFT_MK_XCODE_BUILD") != "1"
   }
 
   /// The absolute path of `tool` on PATH, or nil when it is not installed. A

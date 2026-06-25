@@ -502,8 +502,15 @@ extension Toolchain {
   }
 
   private static func defaultSharedCacheRoot() -> URL {
-    FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent("Library/Caches/swift-mk", isDirectory: true)
+    // Honor $HOME (what the cache-plan path list and the home-rooted tool caches
+    // use), falling back to the account home only when it is unset, so the build and
+    // the cache plan resolve the shared caches to the same location.
+    let home = Env.get("HOME")
+    let base =
+      home.isEmpty
+      ? FileManager.default.homeDirectoryForCurrentUser
+      : URL(fileURLWithPath: home, isDirectory: true)
+    return base.appendingPathComponent("Library/Caches/swift-mk", isDirectory: true)
   }
 }
 

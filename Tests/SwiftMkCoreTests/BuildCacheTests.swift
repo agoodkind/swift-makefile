@@ -25,10 +25,10 @@ func explicitOptOutSelectionsAreRecognized() {
 }
 
 @Test
-func autoDetectSkippedForXcodeBuild() {
-  // xcodebuild does not word-split CC/CXX, so auto-detection must not inject a
-  // wrapper for an xcodebuild build even when a tool is installed.
-  let result = BuildCache.resolve(selection: "", xcodeBuild: true) { _ in
+func autoDetectSkippedWhenNotAllowed() {
+  // xcodebuild/tuist do not word-split CC/CXX, so auto-detection must not inject a
+  // wrapper for those builds even when a tool is installed.
+  let result = BuildCache.resolve(selection: "", autoDetect: false) { _ in
     "/opt/homebrew/bin/ccache"
   }
   #expect(result == nil)
