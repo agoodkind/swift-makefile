@@ -40,3 +40,17 @@ func cleanAllowsKnownCacheRoots() {
   #expect(CacheService.isWithinSafeRoots("\(cwd)/.build"))
   #expect(CacheService.isWithinSafeRoots("\(cwd)/.derived-data/Index.noindex"))
 }
+
+@Test
+func customDerivedDataOutsideBoundaryIsNotCleanable() {
+  // A consumer-set SWIFT_MK_DERIVED_DATA outside $HOME/workspace must not enter the
+  // cleanable allowlist, or cache clean could delete an unrelated tree.
+  #expect(
+    CacheService.boundedDerivedDataRoot("/opt/external/.derived-data", home: "/h", cwd: "/ws")
+      == nil)
+  #expect(
+    CacheService.boundedDerivedDataRoot("/ws/.derived-data", home: "/h", cwd: "/ws")
+      == "/ws/.derived-data")
+  // The workspace root itself (no subpath) is not a cleanable DerivedData root.
+  #expect(CacheService.boundedDerivedDataRoot("/ws", home: "/h", cwd: "/ws") == nil)
+}

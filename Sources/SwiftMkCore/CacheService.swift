@@ -36,7 +36,15 @@ public enum CacheOutput {
     return lines.joined(separator: "\n") + "\n"
   }
 
-  private static func heredoc(_ name: String, _ delimiter: String, _ values: [String]) -> [String] {
+  private static func heredoc(_ name: String, _ base: String, _ values: [String]) -> [String] {
+    // A GitHub heredoc block ends at the first line equal to the delimiter. A value
+    // (notably a line from EXTRA_CACHE_PATHS) that equals the base delimiter would end
+    // the block early and corrupt the parsed outputs, so extend the delimiter until no
+    // value line matches it.
+    var delimiter = base
+    while values.contains(delimiter) {
+      delimiter += "_EOF"
+    }
     var out = ["\(name)<<\(delimiter)"]
     out.append(contentsOf: values)
     out.append(delimiter)
@@ -157,8 +165,30 @@ public enum CacheService {
       "\(cwd)/swiftcheck/.build",
       "\(cwd)/Tuist/.build",
     ]
-    roots.append(Toolchain.resolvedDerivedDataPath())
+    // The DerivedData path is consumer-configurable (SWIFT_MK_DERIVED_DATA), so add it
+    // only when it sits strictly under $HOME or the workspace. A custom path elsewhere
+    // (or one normalizing via `..`) must not become cleanable and break the safety
+    // boundary the allowlist exists to hold.
+    if let derived = boundedDerivedDataRoot(
+      Toolchain.resolvedDerivedDataPath(), home: home, cwd: cwd)
+    {
+      roots.append(derived)
+    }
     return roots
+  }
+
+  /// The resolved DerivedData path, but only when it lies strictly under $HOME or the
+  /// workspace; nil otherwise. Pure, so the boundary is unit-tested without mutating
+  /// the environment.
+  static func boundedDerivedDataRoot(_ derivedPath: String, home: String, cwd: String) -> String? {
+    let derived = (derivedPath as NSString).standardizingPath
+    for boundary in [home, cwd] where !boundary.isEmpty {
+      let normalizedBoundary = (boundary as NSString).standardizingPath
+      if derived.hasPrefix(normalizedBoundary + "/") {
+        return derived
+      }
+    }
+    return nil
   }
 
   /// Whether an absolute path is safe for `cache clean` to remove: it must equal or

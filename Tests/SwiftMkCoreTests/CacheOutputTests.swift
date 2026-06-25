@@ -61,3 +61,22 @@ func githubOutputEmitsEmptyRestoreKeyBlock() {
   #expect(output.contains("dependency-restore-keys<<CACHE_KEYS\nCACHE_KEYS\n"))
   #expect(output.contains("build-restore-keys<<CACHE_KEYS\nCACHE_KEYS\n"))
 }
+
+@Test
+func githubOutputDelimiterAvoidsCollisionWithValues() {
+  // A path value equal to the base delimiter (e.g. from EXTRA_CACHE_PATHS) must not end
+  // the heredoc block early; the delimiter is extended until no value line matches.
+  let plan = CachePlan.Result(
+    dependencyCacheEnabled: true,
+    buildCacheEnabled: true,
+    dependencyKey: "dk",
+    dependencyRestoreKeys: [],
+    buildKey: "bk",
+    buildRestoreKeys: [])
+  let paths = CachePaths.Resolved(dependency: [], build: ["CACHE_PATHS", "real/path"])
+  let output = CacheOutput.githubOutput(plan: plan, paths: paths)
+  // The build-paths block opens and closes with the extended delimiter, and the literal
+  // value is preserved on its own line between them.
+  let expectedBlock = "build-paths<<CACHE_PATHS_EOF\nCACHE_PATHS\nreal/path\nCACHE_PATHS_EOF\n"
+  #expect(output.contains(expectedBlock))
+}
