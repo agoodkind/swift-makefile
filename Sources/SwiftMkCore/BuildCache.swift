@@ -47,20 +47,31 @@ public enum BuildCache {
 
   /// Resolve a selection plus a tool-path lookup into the wrapper environment,
   /// or nil when caching is off, no tool is installed, or the selection is
-  /// unknown. Pure given `lookup`, so a test injects a fake PATH probe rather
-  /// than the real `command -v`. The behavior:
+  /// unknown. The selection is trimmed before parsing, so a stray newline or
+  /// surrounding whitespace from CI/YAML is not treated as an unknown value.
+  /// Pure given `lookup`, so a test injects a fake PATH probe rather than the
+  /// real `command -v`. The behavior:
   ///   - off/none/0     -> nil (explicit opt-out).
-  ///   - unset ("")     -> auto-detect ccache then sccache; use the first found.
+  ///   - unset ("")     -> auto-detect ccache then sccache for a `swift build`;
+  ///                       skipped for an xcodebuild build (see `xcodeBuild`).
   ///   - ccache/sccache -> use it when installed, else build uncached.
   ///   - anything else  -> fail loud, so a typo never silently builds uncached.
   static func resolve(
-    selection rawSelection: String, lookup: (String) -> String?
+    selection rawSelection: String,
+    xcodeBuild: Bool = false,
+    lookup: (String) -> String?
   ) -> [String: String]? {
-    let selection = rawSelection.lowercased()
+    let selection = rawSelection.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     if isDisabled(selection) {
       return nil
     }
     if selection.isEmpty {
+      // Auto-detect only for `swift build`, which word-splits the two-word CC/CXX
+      // wrapper. xcodebuild does not split it, so injecting it would break the
+      // build; an xcodebuild consumer that wants caching must opt in explicitly.
+      if xcodeBuild {
+        return nil
+      }
       for tool in autoDetectOrder {
         guard let toolPath = lookup(tool) else {
           continue
@@ -73,7 +84,7 @@ public enum BuildCache {
       return nil
     }
     guard supportedTools.contains(selection) else {
-      Output.error("build-cache: SWIFT_MK_BUILD_CACHE must be ccache, sccache, none, or off")
+      Output.error("build-cache: SWIFT_MK_BUILD_CACHE must be ccache, sccache, none, off, or 0")
       return nil
     }
     guard let toolPath = lookup(selection) else {
@@ -85,9 +96,13 @@ public enum BuildCache {
   }
 
   /// Resolve SWIFT_MK_BUILD_CACHE into the wrapper environment using the real
-  /// PATH probe, or nil when caching is off or no tool is installed.
+  /// PATH probe, or nil when caching is off or no tool is installed. Auto-detection
+  /// is suppressed for an xcodebuild consumer (`SWIFT_MK_XCODE_BUILD == "1"`).
   public static func environment() -> [String: String]? {
-    resolve(selection: Env.get("SWIFT_MK_BUILD_CACHE"), lookup: installedToolPath)
+    resolve(
+      selection: Env.get("SWIFT_MK_BUILD_CACHE"),
+      xcodeBuild: Env.get("SWIFT_MK_XCODE_BUILD") == "1",
+      lookup: installedToolPath)
   }
 
   /// The absolute path of `tool` on PATH, or nil when it is not installed. A

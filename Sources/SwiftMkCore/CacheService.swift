@@ -107,13 +107,20 @@ public enum CacheService {
     return 0
   }
 
-  /// `cache clean`: remove the local cache directories.
+  /// `cache clean`: remove the local cache directories. A path is removed only when
+  /// it sits inside $HOME or the workspace, so a misconfigured `EXTRA_CACHE_PATHS`
+  /// (an absolute path elsewhere, or `/`) cannot make clean delete arbitrary
+  /// directories.
   public static func runClean() -> Int32 {
     Output.info("cache clean: removing local cache directories")
     let paths = resolvedPaths()
     var removed = 0
     for path in paths.dependency + paths.build {
       let absolute = absolutePath(path)
+      guard isWithinSafeRoots(absolute) else {
+        Output.error("cache clean: refusing to remove path outside HOME or the workspace: \(path)")
+        continue
+      }
       guard FileManager.default.fileExists(atPath: absolute) else {
         continue
       }
@@ -127,6 +134,24 @@ public enum CacheService {
     }
     Output.log("cache clean: removed \(removed) director\(removed == 1 ? "y" : "ies")")
     return 0
+  }
+
+  /// Whether an absolute path is safe for `cache clean` to remove: it must sit
+  /// inside $HOME or the workspace, and never be the filesystem root.
+  static func isWithinSafeRoots(_ absolute: String) -> Bool {
+    let normalized = (absolute as NSString).standardizingPath
+    if normalized == "/" || normalized.isEmpty {
+      return false
+    }
+    let home = Env.get("HOME", FileManager.default.homeDirectoryForCurrentUser.path)
+    let cwd = FileManager.default.currentDirectoryPath
+    for root in [home, cwd] where !root.isEmpty {
+      let normalizedRoot = (root as NSString).standardizingPath
+      if normalized == normalizedRoot || normalized.hasPrefix(normalizedRoot + "/") {
+        return true
+      }
+    }
+    return false
   }
 
   // MARK: - Resolution

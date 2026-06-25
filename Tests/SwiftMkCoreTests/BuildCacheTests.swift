@@ -15,13 +15,34 @@ import Testing
 enum BuildCacheTests {}
 
 @Test
-func disabledSelectionsAreRecognized() {
+func explicitOptOutSelectionsAreRecognized() {
   #expect(BuildCache.isDisabled("none"))
   #expect(BuildCache.isDisabled("OFF"))
   #expect(BuildCache.isDisabled("0"))
   // Unset is auto-detect, not disabled.
   #expect(!BuildCache.isDisabled(""))
   #expect(!BuildCache.isDisabled("ccache"))
+}
+
+@Test
+func autoDetectSkippedForXcodeBuild() {
+  // xcodebuild does not word-split CC/CXX, so auto-detection must not inject a
+  // wrapper for an xcodebuild build even when a tool is installed.
+  let result = BuildCache.resolve(selection: "", xcodeBuild: true) { _ in
+    "/opt/homebrew/bin/ccache"
+  }
+  #expect(result == nil)
+}
+
+@Test
+func selectionIsTrimmedBeforeParsing() {
+  // A stray newline or surrounding whitespace from CI/YAML resolves like the bare
+  // value, not an unknown selection.
+  let trimmed = BuildCache.resolve(selection: " ccache\n") { tool in
+    tool == "ccache" ? "/usr/bin/ccache" : nil
+  }
+  #expect(trimmed?["CC"] == "/usr/bin/ccache /usr/bin/clang")
+  #expect(BuildCache.resolve(selection: "  off  ") { _ in "/usr/bin/ccache" } == nil)
 }
 
 @Test

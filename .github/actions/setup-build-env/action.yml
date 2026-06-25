@@ -71,14 +71,17 @@ runs:
         # list defensively: Sources always exists, but Package.resolved is gitignored
         # in swift-makefile's own repo, so listing missing paths via find under
         # pipefail must not abort the step.
+        # Null-delimit the file list so a path containing whitespace cannot corrupt
+        # the hash, and sort the per-file hashes (not the filenames) so the key is
+        # order- and whitespace-stable.
         file_list=$(mktemp)
-        find "${src}/Sources" -type f >> "${file_list}" 2>/dev/null || true
+        find "${src}/Sources" -type f -print0 >> "${file_list}" 2>/dev/null || true
         for manifest in Package.swift Package.resolved scripts/swift-mk-build.sh; do
             if [ -f "${src}/${manifest}" ]; then
-                printf '%s\n' "${src}/${manifest}" >> "${file_list}"
+                printf '%s\0' "${src}/${manifest}" >> "${file_list}"
             fi
         done
-        hash=$(LC_ALL=C sort "${file_list}" | xargs shasum | shasum | awk '{ print $1 }')
+        hash=$(xargs -0 shasum < "${file_list}" | awk '{ print $1 }' | LC_ALL=C sort | shasum | awk '{ print $1 }')
         rm -f "${file_list}"
         echo "hash=${hash}" >> "${GITHUB_OUTPUT}"
 
