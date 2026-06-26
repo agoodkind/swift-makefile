@@ -27,6 +27,9 @@ public enum CachePaths {
     public var spmCachePath: String?
     /// The resolved shared Clang module cache, or nil when off.
     public var moduleCachePath: String?
+    /// The resolved shared LLVM compilation-cache (CAS) store, or nil when off. Kept
+    /// outside DerivedData so the dead-code coverage build's `rm -rf` cannot destroy it.
+    public var xcodeCachePath: String?
     /// Extra cacheable paths a consumer appends (EXTRA_CACHE_PATHS).
     public var extraPaths: [String]
 
@@ -35,12 +38,14 @@ public enum CachePaths {
       derivedDataPath: String,
       spmCachePath: String?,
       moduleCachePath: String?,
+      xcodeCachePath: String?,
       extraPaths: [String]
     ) {
       self.home = home
       self.derivedDataPath = derivedDataPath
       self.spmCachePath = spmCachePath
       self.moduleCachePath = moduleCachePath
+      self.xcodeCachePath = xcodeCachePath
       self.extraPaths = extraPaths
     }
   }
@@ -51,13 +56,14 @@ public enum CachePaths {
   }
 
   /// The DerivedData subdirectories worth caching: the incremental build database,
-  /// the Swift index store, the resolved SPM checkouts, and the LLVM CAS Swift
-  /// compilation cache.
+  /// the Swift index store, and the resolved SPM checkouts. The LLVM CAS store is NOT
+  /// here: it is pinned outside DerivedData (see `Inputs.xcodeCachePath`) so the
+  /// dead-code coverage build's `rm -rf` of DerivedData cannot destroy it, and it is
+  /// cached as a content-addressed dependency instead of a per-commit build subdir.
   static let derivedDataSubdirectories = [
     "Build/Intermediates.noindex",
     "Index.noindex",
     "SourcePackages",
-    "CompilationCache.noindex",
   ]
 
   public static func resolve(_ inputs: Inputs) -> Resolved {
@@ -81,6 +87,12 @@ public enum CachePaths {
     }
     if let module = inputs.moduleCachePath {
       dependency.append(module)
+    }
+    // The CAS store is content-addressed, so it belongs in the cross-commit dependency
+    // bucket: a code-only change leaves the dependency key stable, so the store is
+    // restored and the build replays unchanged compiles instead of recompiling.
+    if let xcodeCache = inputs.xcodeCachePath {
+      dependency.append(xcodeCache)
     }
 
     var build = [

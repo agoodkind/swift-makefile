@@ -17,6 +17,7 @@ enum CachePathsTests {}
 private func sampleInputs(
   spmCachePath: String? = "/h/Library/Caches/swift-mk/SourcePackages",
   moduleCachePath: String? = "/h/Library/Caches/swift-mk/ModuleCache",
+  xcodeCachePath: String? = "/h/Library/Caches/swift-mk/CompilationCache",
   extraPaths: [String] = []
 ) -> CachePaths.Inputs {
   CachePaths.Inputs(
@@ -24,6 +25,7 @@ private func sampleInputs(
     derivedDataPath: "/ws/.derived-data",
     spmCachePath: spmCachePath,
     moduleCachePath: moduleCachePath,
+    xcodeCachePath: xcodeCachePath,
     extraPaths: extraPaths)
 }
 
@@ -48,18 +50,20 @@ func dependencyBucketKeepsLegacyHomeCaches() {
 
 @Test
 func dependencyBucketAddsSharedSwiftMkCaches() {
-  // The gap: the engine's shared module and SPM caches were never persisted.
+  // The gap: the engine's shared module, SPM, and CAS caches were never persisted.
   let resolved = CachePaths.resolve(sampleInputs())
   #expect(resolved.dependency.contains("/h/Library/Caches/swift-mk/SourcePackages"))
   #expect(resolved.dependency.contains("/h/Library/Caches/swift-mk/ModuleCache"))
+  #expect(resolved.dependency.contains("/h/Library/Caches/swift-mk/CompilationCache"))
 }
 
 @Test
 func sharedCachesOmittedWhenDisabled() {
   let resolved = CachePaths.resolve(
-    sampleInputs(spmCachePath: nil, moduleCachePath: nil))
+    sampleInputs(spmCachePath: nil, moduleCachePath: nil, xcodeCachePath: nil))
   #expect(!resolved.dependency.contains("/h/Library/Caches/swift-mk/SourcePackages"))
   #expect(!resolved.dependency.contains("/h/Library/Caches/swift-mk/ModuleCache"))
+  #expect(!resolved.dependency.contains("/h/Library/Caches/swift-mk/CompilationCache"))
 }
 
 @Test
@@ -88,11 +92,15 @@ func buildBucketUsesResolvedDerivedDataRoot() {
 }
 
 @Test
-func buildBucketPersistsCompilationCacheForCAS() {
-  // The CAS gap: COMPILATION_CACHE_ENABLE_CACHING writes CompilationCache.noindex,
-  // which was never cached, so the Swift compilation cache produced no cross-run hit.
+func compilationCacheIsADependencyOutsideDerivedData() {
+  // The CAS store is the shared content-addressed path, NOT a DerivedData subdir, so
+  // the dead-code build's `rm -rf` of DerivedData cannot destroy it and cross-run
+  // replay survives. It must be in the dependency bucket and absent from the build
+  // bucket (no DerivedData CompilationCache.noindex entry).
   let resolved = CachePaths.resolve(sampleInputs())
-  #expect(resolved.build.contains("/ws/.derived-data/CompilationCache.noindex"))
+  #expect(resolved.dependency.contains("/h/Library/Caches/swift-mk/CompilationCache"))
+  #expect(!resolved.build.contains("/ws/.derived-data/CompilationCache.noindex"))
+  #expect(!resolved.build.contains(where: { $0.hasSuffix("/CompilationCache.noindex") }))
 }
 
 @Test

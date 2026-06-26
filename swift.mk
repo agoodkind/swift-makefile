@@ -359,6 +359,15 @@ SWIFT_MK_MODULE_CACHE ?= $(SWIFT_MK_CACHE_ROOT)/ModuleCache
 SWIFT_MK_SPM_CACHE ?= $(SWIFT_MK_CACHE_ROOT)/SourcePackages
 export SWIFT_MK_MODULE_CACHE
 export SWIFT_MK_SPM_CACHE
+# The LLVM compilation-cache (CAS) store. Kept OUTSIDE per-checkout DerivedData,
+# unlike Xcode's default of $(SWIFT_MK_DERIVED_DATA)/CompilationCache.noindex, so the
+# dead-code coverage build's `rm -rf $(SWIFT_MK_DERIVED_DATA)` cannot destroy it, and
+# shared across worktrees and clones like the module cache (the store is
+# content-addressed, so one shared copy is safe and maximizes reuse). The engine
+# injects COMPILATION_CACHE_CAS_PATH from this at the toolchain chokepoint; set it to
+# `off` to fall back to Xcode's in-DerivedData default.
+SWIFT_MK_XCODE_CACHE_PATH ?= $(SWIFT_MK_CACHE_ROOT)/CompilationCache
+export SWIFT_MK_XCODE_CACHE_PATH
 # Exported so `toolchain generate` can point Xcode.app's DerivedData at the same path.
 export SWIFT_MK_DERIVED_DATA
 SWIFT_MK_SWIFTPM_CACHE_ENABLED := NO
@@ -584,6 +593,7 @@ help:
 	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE=auto|1|0' 'override SwiftPM cache policy'
 	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE=auto|1|0' 'override local Xcode compilation cache policy'
 	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_PREFIX_MAP=auto|1|0' 'remap absolute paths for cross-runner cache hits'
+	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_PATH=...|off' 'shared CAS store path, kept outside DerivedData'
 	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_DIAGNOSTICS=1' 'emit Xcode compilation cache diagnostic remarks'
 	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE_ARGS=...' 'override shared SwiftPM cache flags'
 	@printf '  %-40s %s\n' 'ccache/sccache' 'C-family cache tools; not Swift compilation caches'
