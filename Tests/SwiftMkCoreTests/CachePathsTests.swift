@@ -100,7 +100,7 @@ func compilationCacheIsADependencyOutsideDerivedData() {
   let resolved = CachePaths.resolve(sampleInputs())
   #expect(resolved.dependency.contains("/h/Library/Caches/swift-mk/CompilationCache"))
   #expect(!resolved.build.contains("/ws/.derived-data/CompilationCache.noindex"))
-  #expect(!resolved.build.contains(where: { $0.hasSuffix("/CompilationCache.noindex") }))
+  #expect(!resolved.build.contains { $0.hasSuffix("/CompilationCache.noindex") })
 }
 
 @Test
