@@ -1,7 +1,8 @@
 # swift-makefile-owned OSV policy for shared gate dependencies. This file is the
 # single source of OSV exceptions. The audit gate reads only the fetched copy at
-# .make/osv-scanner.toml; a consumer cannot override it, so the gate cannot be
-# weakened downstream. Manage every exception here.
+# .make/osv-scanner.toml, and swift.mk override-locks the config path and the
+# scanner args so a consumer cannot redirect the gate to a different policy.
+# Manage every exception here.
 
 [[PackageOverrides]]
 name = "github.com/apple/swift-nio-http2"
