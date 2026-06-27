@@ -135,6 +135,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCLI/CodesignRun.swift \
 	Sources/SwiftMkCLI/NotarizeCommand.swift \
 	Sources/SwiftMkCLI/ToolchainCommand.swift \
+	Sources/SwiftMkCLI/CacheCommand.swift \
 	Sources/SwiftMkCore/Findings.swift \
 	Sources/SwiftMkCore/BaselineKey.swift \
 	Sources/SwiftMkCore/BaselineRecord.swift \
@@ -161,6 +162,9 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/DeadcodeBuildConfig.swift \
 	Sources/SwiftMkCore/WitnessFilter.swift \
 	Sources/SwiftMkCore/BuildCache.swift \
+	Sources/SwiftMkCore/CachePaths.swift \
+	Sources/SwiftMkCore/CachePlan.swift \
+	Sources/SwiftMkCore/CacheService.swift \
 	Sources/SwiftMkCore/Codesign.swift \
 	Sources/SwiftMkCore/Notarize.swift \
 	Sources/SwiftMkCore/SigningBuildConfig.swift \
@@ -199,6 +203,10 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/BaselineKeyTests.swift \
 	Tests/SwiftMkCoreTests/BaselineRecordTests.swift \
 	Tests/SwiftMkCoreTests/BuildCacheTests.swift \
+	Tests/SwiftMkCoreTests/CacheOutputTests.swift \
+	Tests/SwiftMkCoreTests/CachePathsTests.swift \
+	Tests/SwiftMkCoreTests/CachePlanTests.swift \
+	Tests/SwiftMkCoreTests/CacheServiceTests.swift \
 	Tests/SwiftMkCoreTests/CodesignTests.swift \
 	Tests/SwiftMkCoreTests/NotarizeTests.swift \
 	Tests/SwiftMkCoreTests/CountAwareGateTests.swift \
@@ -233,7 +241,12 @@ endif
 SWIFT_MK_SWIFTLINT_CONFIG ?= .make/swiftlint.yml
 SWIFT_MK_SWIFT_FORMAT_CONFIG ?= .make/swift-format.json
 SWIFT_MK_PERIPHERY_CONFIG ?= .make/periphery.yml
-SWIFT_MK_OSV_CONFIG ?= $(if $(wildcard osv-scanner.toml),osv-scanner.toml,.make/osv-scanner.toml)
+# swift-mk owns the OSV policy outright: the audit gate reads only the fetched,
+# centrally-owned .make/osv-scanner.toml. override locks the config path and the
+# scanner args (below) so a consumer cannot redirect them from the command line or
+# environment, the same pattern LINT_GATES uses, and there is no root-osv-scanner.toml
+# fallback. Manage every exception in swift-makefile's own osv-scanner.toml.
+override SWIFT_MK_OSV_CONFIG := .make/osv-scanner.toml
 # mise loads every file under .config/mise/conf.d/ automatically and has no
 # env var for an arbitrary config path, so the shared tool pins fetch into
 # that documented additive location. Consumers gitignore the fetched file and
@@ -254,14 +267,10 @@ SWIFT_MK_FETCHED_SWIFTLINT := $(call swift-mk-fetch-path,.swiftlint.yml,$(SWIFT_
 SWIFT_MK_FETCHED_SWIFT_FORMAT := $(call swift-mk-fetch-path,.swift-format,$(SWIFT_MK_SWIFT_FORMAT_CONFIG))
 SWIFT_MK_FETCHED_PERIPHERY := $(call swift-mk-fetch-path,.periphery.yml,$(SWIFT_MK_PERIPHERY_CONFIG))
 endif
-ifeq ($(SWIFT_MK_OSV_CONFIG),.make/osv-scanner.toml)
-ifneq ($(wildcard $(SWIFT_MK_OSV_CONFIG)),)
-SWIFT_MK_FETCHED_OSV := 1
-else ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
+ifneq ($(strip $(SWIFT_MK_BOOTSTRAP_FETCHED)$(SWIFT_MK_SKIP_FETCH)),)
 SWIFT_MK_FETCHED_OSV := $(call swift-mk-require-one,$(SWIFT_MK_OSV_CONFIG))
 else
 SWIFT_MK_FETCHED_OSV := $(call swift-mk-fetch-path,osv-scanner.toml,$(SWIFT_MK_OSV_CONFIG))
-endif
 endif
 
 # swift.mk owns the shared mise config outright: it is fetched here, not by the
@@ -304,7 +313,7 @@ PERIPHERY_DEFAULT_EXCLUDE_PATHS ?=
 PERIPHERY_EXCLUDE_PATHS ?=
 
 OSV_SCANNER ?= osv-scanner
-OSV_SCANNER_ARGS ?= --recursive --allow-no-lockfiles --config $(SWIFT_MK_OSV_CONFIG)
+override OSV_SCANNER_ARGS := --recursive --allow-no-lockfiles --config $(SWIFT_MK_OSV_CONFIG)
 
 LINT_CONCURRENCY ?= auto
 
