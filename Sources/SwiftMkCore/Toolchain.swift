@@ -147,7 +147,7 @@ public enum Toolchain {
   /// Fail the build when a request carries a signing setting that would beat the
   /// swift-mk override, returning a nonzero status so the build stops loudly. Returns
   /// nil when the request is clean, so each entry point guards with one line.
-  private static func rejectionForSigningOverride(_ request: Request) -> Int32? {
+  static func rejectionForSigningOverride(_ request: Request) -> Int32? {
     guard let key = forbiddenSigningSetting(in: request) else {
       return nil
     }
@@ -179,17 +179,14 @@ public enum Toolchain {
     // ungated artifact. The gate proof is anchored to the orchestrating `make`
     // process, so a legitimate secondary build (a Metal/resource compile, an
     // install/deploy step) still passes: that make is a live ancestor even after
-    // the gated `swift-mk build` child exits. The dead-code coverage build uses
-    // `buildForTesting`, left unguarded because it runs only inside the
-    // already-gated lint chain.
+    // the gated `swift-mk build` child exits. The in-process API path uses the
+    // `build(_:receipt:)` overload instead, which carries a `GateReceipt` that only
+    // a passed hard gate can mint, so a decoupled dev tool that never runs `make`
+    // still compiles only behind the gate.
     if let refusal = GateProof.refusal(entry: "toolchain build") {
       return refusal
     }
-    if let rejection = rejectionForSigningOverride(request) {
-      return rejection
-    }
-    return Shell.runForwardingOutput(
-      "xcodebuild", buildArguments(request), environment: signingEnvironment())
+    return buildWithoutGateCheck(request)
   }
 
   /// The signing override the chokepoint applies to a build, so swift-mk owns
@@ -228,43 +225,52 @@ public enum Toolchain {
     }
   }
 
-  /// Build-for-testing the scheme, the coverage build the dead-code gate runs to
-  /// fill the index store. Both generators build with xcodebuild against the
-  /// explicit container, so the external SPM dependency resolves and the index is
-  /// written under the consumer's `-derivedDataPath`.
+  /// Build-for-testing the scheme through the make path, the coverage build a
+  /// consumer's `SWIFT_DEADCODE_BUILD_CMD` runs as `swift-mk toolchain
+  /// build-for-testing`. It is a compile surface, so it refuses unless this process
+  /// is inside a swift-mk gated make flow: the make dead-code gate marks the gate
+  /// proof first, so the coverage subprocess has a live make/swift-mk ancestor and
+  /// passes, while a direct `swift-mk toolchain build-for-testing` from a shell with
+  /// no gate ancestor is refused. The in-process API path uses the
+  /// `buildForTesting(_:authorization:environment:)` overload instead.
   @discardableResult
   public static func buildForTesting(_ request: Request) -> Int32 {
-    if let rejection = rejectionForSigningOverride(request) {
-      return rejection
+    if let refusal = GateProof.refusal(entry: "toolchain build-for-testing") {
+      return refusal
     }
-    return Shell.runForwardingOutput(
-      "xcodebuild", xcodebuildArguments(request, action: "build-for-testing"))
+    return runXcodebuildForwarding(
+      request, actions: ["build-for-testing"], environment: [:])
   }
 
   /// Static-analyze the scheme with xcodebuild against the explicit container,
   /// applying the signing override like `build` so the analyze build signs the same
-  /// way a real build would.
+  /// way a real build would. It is a compile surface, so it refuses unless this
+  /// process is inside a swift-mk gated make flow.
   @discardableResult
   public static func analyze(_ request: Request) -> Int32 {
+    if let refusal = GateProof.refusal(entry: "toolchain analyze") {
+      return refusal
+    }
     if let rejection = rejectionForSigningOverride(request) {
       return rejection
     }
-    return Shell.runForwardingOutput(
-      "xcodebuild",
-      xcodebuildArguments(request, action: "analyze"),
-      environment: signingEnvironment()
-    )
+    return runXcodebuildForwarding(
+      request, actions: ["analyze"], environment: signingEnvironment())
   }
 
   /// Build the scheme writing the full xcodebuild output to `logPath`, optionally
   /// running `clean` before `build`. The swiftlint analyze flow feeds this compiler
   /// log to `swiftlint analyze`, so the invocation is captured to disk rather than
   /// streamed. Applies the signing override like `build`, so the analyze build signs
-  /// the same way a real build would.
+  /// the same way a real build would. It is a compile surface, so it refuses unless
+  /// this process is inside a swift-mk gated make flow.
   @discardableResult
   public static func buildWritingLog(
     _ request: Request, logPath: String, clean: Bool = false
   ) -> Int32 {
+    if let refusal = GateProof.refusal(entry: "toolchain build --log-path") {
+      return refusal
+    }
     let actions = clean ? ["clean", "build"] : ["build"]
     return Shell.runWritingOutput(
       "xcodebuild",
@@ -321,13 +327,6 @@ public enum Toolchain {
   }
 
   // MARK: Argument assembly (exposed for tests)
-
-  /// Build argument vector for xcodebuild. Both generators name an explicit
-  /// container, so xcodebuild never auto-discovers: `-workspace` for Tuist,
-  /// `-project` for xcodegen.
-  static func buildArguments(_ request: Request) -> [String] {
-    xcodebuildArguments(request, action: "build")
-  }
 
   /// Tuist native test argument vector: `tuist test <scheme> --configuration <c>
   /// --no-selective-testing [--derived-data-path <path>] [-- <KEY=value> ...]`.
@@ -665,5 +664,32 @@ extension Toolchain {
       return fallback
     }
     return trimmed
+  }
+}
+
+// MARK: - Raw xcodebuild invocation
+
+extension Toolchain {
+  /// The single module-internal site that streams an xcodebuild action vector.
+  /// Every build, build-for-testing, and analyze path funnels through here, so the
+  /// raw `xcodebuild` spawn lives in this one chokepoint file and the build-tooling
+  /// audit stays the only backstop against any other site naming it.
+  static func runXcodebuildForwarding(
+    _ request: Request, actions: [String], environment: [String: String]
+  ) -> Int32 {
+    Output.debug("toolchain: xcodebuild \(actions.joined(separator: " "))")
+    return Shell.runForwardingOutput(
+      "xcodebuild", xcodebuildArguments(request, actions: actions), environment: environment)
+  }
+
+  /// The captured-output variant of the raw invocation, capturing stdout in full
+  /// while forwarding stderr live, for the dead-code coverage build whose fail-hard
+  /// diagnosis needs the transcript.
+  static func runXcodebuildCapturing(
+    _ request: Request, actions: [String], environment: [String: String]
+  ) -> Shell.StreamingResult {
+    Output.debug("toolchain: xcodebuild (captured) \(actions.joined(separator: " "))")
+    return Shell.runStreamingStderr(
+      "xcodebuild", xcodebuildArguments(request, actions: actions), environment: environment)
   }
 }

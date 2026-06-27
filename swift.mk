@@ -170,6 +170,18 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/SigningBuildConfig.swift \
 	Sources/SwiftMkCore/SigningVerification.swift \
 	Sources/SwiftMkCore/Toolchain.swift \
+	Sources/SwiftMkCore/Toolchain+GatedCompile.swift \
+	Sources/SwiftMkCore/GatedBuild.swift \
+	Sources/SwiftMkCore/LintPolicy.swift \
+	Sources/SwiftMkCore/LintResources.swift \
+	Sources/SwiftMkCore/GeneratedFiles.swift \
+	Sources/SwiftMkCore/XcconfigValues.swift \
+	Sources/SwiftMkCore/DeadcodeCoverageAuthorization.swift \
+	Sources/SwiftMkCore/Resources/swiftlint.yml \
+	Sources/SwiftMkCore/Resources/swift-format.json \
+	Sources/SwiftMkCore/Resources/periphery.yml \
+	Sources/SwiftMkCore/Resources/osv-scanner.toml \
+	Sources/SwiftMkCore/Resources/mise.toml \
 	Sources/SwiftMkCore/BuildToolingAudit.swift \
 	Sources/SwiftMkCore/Build.swift \
 	Sources/SwiftMkCore/GateProof.swift \
@@ -198,6 +210,16 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/SigningBuildConfigTests.swift \
 	Tests/SwiftMkCoreTests/SigningVerificationTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainTests.swift \
+	Tests/SwiftMkCoreTests/ToolchainReceiptTests.swift \
+	Tests/SwiftMkCoreTests/GatedBuildHarness.swift \
+	Tests/SwiftMkCoreTests/GatedBuildTests.swift \
+	Tests/SwiftMkCoreTests/HardGateTests.swift \
+	Tests/SwiftMkCoreTests/LintSourceSetTests.swift \
+	Tests/SwiftMkCoreTests/NoMakeGatedBuildHarnessTests.swift \
+	Tests/SwiftMkCoreTests/DeadcodeCoverageTests.swift \
+	Tests/SwiftMkCoreTests/LintResourcesTests.swift \
+	Tests/SwiftMkCoreTests/XcconfigValuesTests.swift \
+	Tests/SwiftMkCoreTests/GeneratedFilesTests.swift \
 	Tests/SwiftMkCoreTests/BuildToolingAuditTests.swift \
 	Tests/SwiftMkCoreTests/AdHocSigningAllowlistTests.swift \
 	Tests/SwiftMkCoreTests/BaselineKeyTests.swift \

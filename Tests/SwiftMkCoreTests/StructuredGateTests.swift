@@ -168,28 +168,32 @@ enum StructuredGateTests {
   }
 
   private static func withTemporaryWorkingDirectory(_ run: (String) throws -> Void) throws {
-    let fileManager = FileManager.default
-    let originalPath = fileManager.currentDirectoryPath
-    let directory = fileManager.temporaryDirectory.appendingPathComponent(
-      "swift-mk-structured-gate-\(UUID().uuidString)",
-      isDirectory: true
-    )
-    try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+    // This test changes the process working directory, so it serializes against the
+    // gate tests that also chdir and the cache tests that read the working directory.
+    try TestGlobalLock.withLock {
+      let fileManager = FileManager.default
+      let originalPath = fileManager.currentDirectoryPath
+      let directory = fileManager.temporaryDirectory.appendingPathComponent(
+        "swift-mk-structured-gate-\(UUID().uuidString)",
+        isDirectory: true
+      )
+      try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
 
-    var didChangeDirectory = false
-    defer {
-      if didChangeDirectory {
-        _ = fileManager.changeCurrentDirectoryPath(originalPath)
+      var didChangeDirectory = false
+      defer {
+        if didChangeDirectory {
+          _ = fileManager.changeCurrentDirectoryPath(originalPath)
+        }
+        do {
+          try fileManager.removeItem(at: directory)
+        } catch {
+          Output.warning("cleanup failed: \(error.localizedDescription)")
+        }
       }
-      do {
-        try fileManager.removeItem(at: directory)
-      } catch {
-        Output.warning("cleanup failed: \(error.localizedDescription)")
-      }
+
+      didChangeDirectory = fileManager.changeCurrentDirectoryPath(directory.path)
+      try #require(didChangeDirectory)
+      try run(directory.path)
     }
-
-    didChangeDirectory = fileManager.changeCurrentDirectoryPath(directory.path)
-    try #require(didChangeDirectory)
-    try run(directory.path)
   }
 }
