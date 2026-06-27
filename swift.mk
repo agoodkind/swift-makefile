@@ -233,7 +233,7 @@ endif
 
 SWIFT_MK_MODULES ?=
 ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
-SWIFT_MK_FETCHED_MODULES := $(foreach m,$(SWIFT_MK_MODULES),$(if $(wildcard .make/$(m) $(SWIFT_MK_DEV_DIR)/$(m)),,$(error swift-makefile expected .make/$(m); rerun without SWIFT_MK_SKIP_FETCH)))
+SWIFT_MK_FETCHED_MODULES := $(foreach m,$(SWIFT_MK_MODULES),$(if $(wildcard .make/$(m) $(if $(strip $(SWIFT_MK_DEV_DIR)),$(SWIFT_MK_DEV_DIR)/$(m))),,$(error swift-makefile expected .make/$(m) (or $(SWIFT_MK_DEV_DIR)/$(m) when SWIFT_MK_DEV_DIR is set); rerun without SWIFT_MK_SKIP_FETCH)))
 else
 SWIFT_MK_FETCHED_MODULES := $(foreach m,$(SWIFT_MK_MODULES),$(call swift-mk-fetch-one,$(m)))
 endif
