@@ -104,6 +104,16 @@ func compilationCacheIsADependencyOutsideDerivedData() {
 }
 
 @Test
+func compilationCacheFallsBackToDerivedDataWhenSharedPathDisabled() {
+  // SWIFT_MK_XCODE_CACHE_PATH=off -> resolvedSharedCachePath returns nil, so Xcode keeps
+  // the CAS at its in-DerivedData default. resolve must still cache it there, so the
+  // opt-out path does not silently lose cross-run CAS persistence.
+  let resolved = CachePaths.resolve(sampleInputs(xcodeCachePath: nil))
+  #expect(resolved.build.contains("/ws/.derived-data/CompilationCache.noindex"))
+  #expect(!resolved.dependency.contains("/h/Library/Caches/swift-mk/CompilationCache"))
+}
+
+@Test
 func extraPathsAppendToBuildBucket() {
   let resolved = CachePaths.resolve(sampleInputs(extraPaths: ["custom/dir", "another/dir"]))
   #expect(resolved.build.contains("custom/dir"))

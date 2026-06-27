@@ -55,11 +55,13 @@ public enum CachePaths {
     public var build: [String]
   }
 
-  /// The DerivedData subdirectories worth caching: the incremental build database,
-  /// the Swift index store, and the resolved SPM checkouts. The LLVM CAS store is NOT
-  /// here: it is pinned outside DerivedData (see `Inputs.xcodeCachePath`) so the
-  /// dead-code coverage build's `rm -rf` of DerivedData cannot destroy it, and it is
-  /// cached as a content-addressed dependency instead of a per-commit build subdir.
+  /// The DerivedData subdirectories always worth caching: the incremental build
+  /// database, the Swift index store, and the resolved SPM checkouts. The LLVM CAS store
+  /// is normally NOT here: it is pinned outside DerivedData (see `Inputs.xcodeCachePath`)
+  /// so the dead-code coverage build's `rm -rf` of DerivedData cannot destroy it, and it
+  /// is cached as a content-addressed dependency. The one exception is when the shared
+  /// path is disabled (`SWIFT_MK_XCODE_CACHE_PATH=off`), where the CAS reverts to Xcode's
+  /// in-DerivedData default and `resolve` adds it to the build bucket so it still persists.
   static let derivedDataSubdirectories = [
     "Build/Intermediates.noindex",
     "Index.noindex",
@@ -107,6 +109,13 @@ public enum CachePaths {
     let derivedRoot = inputs.derivedDataPath
     for subdirectory in derivedDataSubdirectories {
       build.append("\(derivedRoot)/\(subdirectory)")
+    }
+    // When the CAS store is not pinned to a shared path (SWIFT_MK_XCODE_CACHE_PATH=off),
+    // Xcode keeps it at its default `<derivedDataPath>/CompilationCache.noindex`, so cache
+    // it there to preserve cross-run persistence. When it IS pinned, the store lives at the
+    // shared dependency path appended above and is never under DerivedData.
+    if inputs.xcodeCachePath == nil {
+      build.append("\(derivedRoot)/CompilationCache.noindex")
     }
     build.append(contentsOf: inputs.extraPaths)
 
