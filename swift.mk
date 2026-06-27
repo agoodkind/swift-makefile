@@ -232,8 +232,8 @@ endif
 endif
 
 SWIFT_MK_MODULES ?=
-ifneq ($(strip $(SWIFT_MK_BOOTSTRAP_FETCHED)$(SWIFT_MK_SKIP_FETCH)),)
-SWIFT_MK_FETCHED_MODULES := $(foreach m,$(SWIFT_MK_MODULES),$(if $(wildcard .make/$(m) $(SWIFT_MK_DEV_DIR)/$(m)),,$(error swift-makefile expected .make/$(m); rerun without SWIFT_MK_SKIP_FETCH)))
+ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
+SWIFT_MK_FETCHED_MODULES := $(foreach m,$(SWIFT_MK_MODULES),$(call swift-mk-require-one,.make/$(m)))
 else
 SWIFT_MK_FETCHED_MODULES := $(foreach m,$(SWIFT_MK_MODULES),$(call swift-mk-fetch-one,$(m)))
 endif
@@ -241,6 +241,30 @@ endif
 SWIFT_MK_SWIFTLINT_CONFIG ?= .make/swiftlint.yml
 SWIFT_MK_SWIFT_FORMAT_CONFIG ?= .make/swift-format.json
 SWIFT_MK_PERIPHERY_CONFIG ?= .make/periphery.yml
+
+# A consumer's own .swiftlint.yml / .swift-format / .periphery.yml is ignored in
+# favor of the shared fetched config. Warn once at the top level so the override
+# is visible. Set SWIFT_MK_ALLOW_LOCAL_CONFIGS to silence it.
+SWIFT_MK_ALLOW_LOCAL_CONFIGS ?=
+ifeq ($(strip $(SWIFT_MK_ALLOW_LOCAL_CONFIGS)),)
+ifeq ($(MAKELEVEL),0)
+ifneq ($(wildcard .swiftlint.yml),)
+ifneq ($(abspath $(SWIFT_MK_SWIFTLINT_CONFIG)),$(abspath .swiftlint.yml))
+$(warning swift-makefile: local .swiftlint.yml is ignored; shared SwiftLint config is $(SWIFT_MK_SWIFTLINT_CONFIG))
+endif
+endif
+ifneq ($(wildcard .swift-format),)
+ifneq ($(abspath $(SWIFT_MK_SWIFT_FORMAT_CONFIG)),$(abspath .swift-format))
+$(warning swift-makefile: local .swift-format is ignored; shared swift-format config is $(SWIFT_MK_SWIFT_FORMAT_CONFIG))
+endif
+endif
+ifneq ($(wildcard .periphery.yml),)
+ifneq ($(abspath $(SWIFT_MK_PERIPHERY_CONFIG)),$(abspath .periphery.yml))
+$(warning swift-makefile: local .periphery.yml is ignored; shared Periphery config is $(SWIFT_MK_PERIPHERY_CONFIG))
+endif
+endif
+endif
+endif
 # swift-mk owns the OSV policy outright: the audit gate reads only the fetched,
 # centrally-owned .make/osv-scanner.toml. override locks the config path and the
 # scanner args (below) so a consumer cannot redirect them from the command line or
@@ -258,7 +282,7 @@ SWIFT_MK_MISE_CONFIG ?= .config/mise/conf.d/swift-mk.toml
 # identity itself.
 XCODE_TEMPLATE_DIR ?= $(HOME)/Library/Developer/Xcode/UserData
 
-ifneq ($(strip $(SWIFT_MK_BOOTSTRAP_FETCHED)$(SWIFT_MK_SKIP_FETCH)),)
+ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
 SWIFT_MK_FETCHED_SWIFTLINT := $(call swift-mk-require-one,$(SWIFT_MK_SWIFTLINT_CONFIG))
 SWIFT_MK_FETCHED_SWIFT_FORMAT := $(call swift-mk-require-one,$(SWIFT_MK_SWIFT_FORMAT_CONFIG))
 SWIFT_MK_FETCHED_PERIPHERY := $(call swift-mk-require-one,$(SWIFT_MK_PERIPHERY_CONFIG))
@@ -267,7 +291,7 @@ SWIFT_MK_FETCHED_SWIFTLINT := $(call swift-mk-fetch-path,.swiftlint.yml,$(SWIFT_
 SWIFT_MK_FETCHED_SWIFT_FORMAT := $(call swift-mk-fetch-path,.swift-format,$(SWIFT_MK_SWIFT_FORMAT_CONFIG))
 SWIFT_MK_FETCHED_PERIPHERY := $(call swift-mk-fetch-path,.periphery.yml,$(SWIFT_MK_PERIPHERY_CONFIG))
 endif
-ifneq ($(strip $(SWIFT_MK_BOOTSTRAP_FETCHED)$(SWIFT_MK_SKIP_FETCH)),)
+ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
 SWIFT_MK_FETCHED_OSV := $(call swift-mk-require-one,$(SWIFT_MK_OSV_CONFIG))
 else
 SWIFT_MK_FETCHED_OSV := $(call swift-mk-fetch-path,osv-scanner.toml,$(SWIFT_MK_OSV_CONFIG))

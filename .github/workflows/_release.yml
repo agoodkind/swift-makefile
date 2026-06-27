@@ -242,13 +242,13 @@ jobs:
 
       - name: Attest provenance
         if: ${{ inputs.attest && steps.artifacts.outputs.list != '' }}
-        uses: actions/attest@v4.1.0
+        uses: actions/attest@v4.1.1
         with:
           subject-path: ${{ steps.artifacts.outputs.list }}
 
       - name: Attest SBOM
         if: ${{ inputs.attest && inputs.sbom-subject-path != '' && steps.artifacts.outputs.list != '' }}
-        uses: actions/attest@v4.1.0
+        uses: actions/attest@v4.1.1
         with:
           subject-path: ${{ steps.artifacts.outputs.list }}
           sbom-path: ${{ inputs.dist-dir }}/sbom-${{ needs.meta.outputs.tag }}.spdx.json
