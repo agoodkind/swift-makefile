@@ -234,7 +234,8 @@ enum DeadcodeScan {
   /// clear on a later run. A repo with an Xcode project and no `SWIFT_BUILD_CMD`
   /// cannot produce one, which is a hard fail.
   static func ensureIndexStore(rawPath: String) -> String? {
-    let derivedData = Env.get("SWIFT_MK_DERIVED_DATA")
+    let derivedData = DeadcodeBuildConfig.resolvedDerivedDataRoot(
+      Env.get("SWIFT_MK_DERIVED_DATA"))
     let buildCommand = coverageBuildCommand()
     guard !buildCommand.isEmpty else {
       failHard(
