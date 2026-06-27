@@ -380,8 +380,12 @@ func toolchainBuildReturnsRejectionStatusForSigningSetting() {
 @Suite(.serialized)
 enum ToolchainSharedCacheTests {
   @Test
-  static func buildSharesModuleCacheAndSpmCloneAcrossWorktrees() {
-    withSharedCacheEnv(module: "/tmp/swift-mk-mc", spm: "/tmp/swift-mk-spm") {
+  static func buildSharesModuleCacheSpmCloneAndCasAcrossWorktrees() {
+    withSharedCacheEnv(
+      module: "/tmp/swift-mk-mc",
+      spm: "/tmp/swift-mk-spm",
+      cas: "/tmp/swift-mk-cas"
+    ) {
       let request = Toolchain.Request(
         generator: .tuist,
         scheme: "App",
@@ -395,34 +399,42 @@ enum ToolchainSharedCacheTests {
       #expect(args.contains("-clonedSourcePackagesDirPath"))
       #expect(args.contains("/tmp/swift-mk-spm"))
       #expect(args.contains("MODULE_CACHE_DIR=/tmp/swift-mk-mc"))
+      // The CAS store is pinned outside DerivedData so the dead-code `rm` cannot wipe it.
+      #expect(args.contains("COMPILATION_CACHE_CAS_PATH=/tmp/swift-mk-cas"))
       #expect(args.last == "build")
     }
   }
 
   @Test
   static func sharedCachesOmittedWhenDisabled() {
-    withSharedCacheEnv(module: "off", spm: "none") {
+    withSharedCacheEnv(module: "off", spm: "none", cas: "off") {
       #expect(Toolchain.sharedCacheArguments().isEmpty)
     }
   }
 
   @Test
   static func sharedCachesFallBackToLibraryCachesWhenUnset() {
-    withSharedCacheEnv(module: nil, spm: nil) {
+    withSharedCacheEnv(module: nil, spm: nil, cas: nil) {
       let joined = Toolchain.sharedCacheArguments().joined(separator: " ")
       #expect(joined.contains("Library/Caches/swift-mk/ModuleCache"))
       #expect(joined.contains("Library/Caches/swift-mk/SourcePackages"))
+      #expect(joined.contains("Library/Caches/swift-mk/CompilationCache"))
     }
   }
 
-  private static func withSharedCacheEnv(module: String?, spm: String?, _ run: () -> Void) {
+  private static func withSharedCacheEnv(
+    module: String?, spm: String?, cas: String?, _ run: () -> Void
+  ) {
     let priorModule = ProcessInfo.processInfo.environment["SWIFT_MK_MODULE_CACHE"]
     let priorSpm = ProcessInfo.processInfo.environment["SWIFT_MK_SPM_CACHE"]
+    let priorCas = ProcessInfo.processInfo.environment["SWIFT_MK_XCODE_CACHE_PATH"]
     setOrUnset("SWIFT_MK_MODULE_CACHE", module)
     setOrUnset("SWIFT_MK_SPM_CACHE", spm)
+    setOrUnset("SWIFT_MK_XCODE_CACHE_PATH", cas)
     defer {
       setOrUnset("SWIFT_MK_MODULE_CACHE", priorModule)
       setOrUnset("SWIFT_MK_SPM_CACHE", priorSpm)
+      setOrUnset("SWIFT_MK_XCODE_CACHE_PATH", priorCas)
     }
     run()
   }
