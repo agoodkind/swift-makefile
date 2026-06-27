@@ -381,6 +381,18 @@ SWIFT_MK_XCODEBUILD_NO_CACHE_ARGS := COMPILATION_CACHE_ENABLE_CACHING=NO COMPILA
 # `xcodebuild -derivedDataPath` here, and the dead-code gate reads the index store
 # from the same place, so coverage analysis is deterministic across repos.
 SWIFT_MK_DERIVED_DATA ?= $(CURDIR)/.derived-data
+# Normalize to absolute once, at the source. Some consumers set this to a relative
+# value (BUILD_DIR, e.g. `build`), and a relative DerivedData leaks into build settings
+# that xcodebuild resolves against a different base than the consumer cwd: the dead-code
+# OBJROOT resolved a relative value against each SwiftPM package's source root, landing
+# coverage intermediates inside the shared SPM clone where `rm -rf` could not clear them.
+# Absolutizing the one exported variable makes every make and Swift reader relative-safe.
+# `override` so a relative command-line value is absolutized too (a plain `:=` loses to a
+# command-line assignment), matching the `override LINT_GATES` hardening pattern. abspath
+# is lexical (no stat), a no-op on an already-absolute value, and points a relative value
+# at the same physical dir the consumer cwd already implied, so packaging that reads
+# BUILD_DIR is unaffected.
+override SWIFT_MK_DERIVED_DATA := $(abspath $(if $(strip $(SWIFT_MK_DERIVED_DATA)),$(SWIFT_MK_DERIVED_DATA),$(CURDIR)/.derived-data))
 # Shared, content-addressed build caches reused across every worktree and clone.
 # DerivedData stays per checkout (above) so concurrent builds never collide, but the
 # Clang module cache and the SPM clone dir are keyed by content and revision, so one
