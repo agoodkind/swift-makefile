@@ -62,6 +62,16 @@ let package = Package(
         .product(name: "IndexStore", package: "swift-index-store"),
         .product(name: "XcodeProj", package: "XcodeProj"),
         .product(name: "PathKit", package: "PathKit"),
+      ],
+      // The gate configs ship as engine-owned resources so CI, make, and the
+      // in-process API all materialize byte-identical configs into `.make/`,
+      // and the no-make path works on a fresh checkout that has never fetched.
+      resources: [
+        .copy("Resources/swiftlint.yml"),
+        .copy("Resources/swift-format.json"),
+        .copy("Resources/periphery.yml"),
+        .copy("Resources/osv-scanner.toml"),
+        .copy("Resources/mise.toml"),
       ]
     ),
     .executableTarget(

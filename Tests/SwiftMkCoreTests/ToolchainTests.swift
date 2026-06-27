@@ -123,7 +123,7 @@ func toolchainTuistBuildNamesWorkspaceNeverAutoDiscovers() {
     configuration: "Debug",
     workspace: "App.xcworkspace"
   )
-  let args = Toolchain.buildArguments(request)
+  let args = Toolchain.xcodebuildArguments(request, action: "build")
   // The explicit -workspace is the Automerge-break fix: xcodebuild must not
   // auto-discover the bare app project.
   #expect(args.contains("-workspace"))
@@ -144,7 +144,7 @@ func toolchainTuistBuildPassesDerivedDataAndSettingsForPackaging() {
     derivedDataPath: "build",
     extraSettings: ["SMC_FAN_HELPER_APP": "/tmp/Helper.app"]
   )
-  let args = Toolchain.buildArguments(request)
+  let args = Toolchain.xcodebuildArguments(request, action: "build")
   // A consumer that packages its product needs a known -derivedDataPath, which
   // `tuist build` cannot provide; the xcodebuild -workspace form can.
   #expect(args.contains("-derivedDataPath"))
@@ -257,7 +257,7 @@ func toolchainXcodegenBuildNamesProjectNeverAutoDiscovers() {
     configuration: "Release",
     project: "App.xcodeproj"
   )
-  let args = Toolchain.buildArguments(request)
+  let args = Toolchain.xcodebuildArguments(request, action: "build")
   #expect(args.contains("-project"))
   #expect(args.contains("App.xcodeproj"))
   #expect(!args.contains("-workspace"))
@@ -303,7 +303,7 @@ func toolchainTuistBuildWithoutWorkspaceDegradesNotAutoDiscovers() {
   // A tuist build with no workspace is a programmer error; the assembler must
   // never emit a bare `build` that lets xcodebuild auto-discover a container.
   let request = Toolchain.Request(generator: .tuist, scheme: "App")
-  let args = Toolchain.buildArguments(request)
+  let args = Toolchain.xcodebuildArguments(request, action: "build")
   #expect(!args.contains("-scheme"))
   #expect(args == ["-version"])
 }
@@ -388,7 +388,7 @@ enum ToolchainSharedCacheTests {
         workspace: "App.xcworkspace",
         derivedDataPath: ".derived-data"
       )
-      let args = Toolchain.buildArguments(request)
+      let args = Toolchain.xcodebuildArguments(request, action: "build")
       // DerivedData stays per worktree; only the content-addressed caches are shared.
       #expect(args.contains("-derivedDataPath"))
       #expect(args.contains(".derived-data"))

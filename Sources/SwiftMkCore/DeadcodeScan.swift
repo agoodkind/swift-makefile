@@ -51,8 +51,13 @@ enum DeadcodeScan {
   /// Append Xcode dead-code findings to `rawPath`. Does nothing for a SwiftPM repo.
   /// Escalates `GateStatus.last` to a hard-fail status when the repo declares an
   /// Xcode project the gate cannot scan, so `runDeadcode` fails loudly.
-  static func appendXcodeFindings(rawPath: String) {
-    guard xcodeScanEnabled(Env.get("SWIFT_MK_XCODE_BUILD")) else {
+  ///
+  /// The Xcode scan runs when the consumer configures an Xcode build
+  /// (`SWIFT_MK_XCODE_BUILD == "1"`, the make path) or when the in-process API
+  /// supplies a `coverage` callback, which is the decoupled path's signal that this
+  /// is an Xcode consumer. With no env flag and no callback it stays a SwiftPM scan.
+  static func appendXcodeFindings(rawPath: String, coverage: DeadcodeCoverageBuild? = nil) {
+    guard xcodeScanEnabled(Env.get("SWIFT_MK_XCODE_BUILD")) || coverage != nil else {
       Output.debug(
         "deadcode: SwiftPM build (SWIFT_MK_XCODE_BUILD unset), skipping Xcode scan; "
           + "periphery's package scan covers the package")
@@ -72,7 +77,10 @@ enum DeadcodeScan {
           + "the gate runs")
     case .project(let reference):
       scanProject(
-        path: reference.path, isWorkspace: reference.isWorkspace, rawPath: rawPath)
+        path: reference.path,
+        isWorkspace: reference.isWorkspace,
+        rawPath: rawPath,
+        coverage: coverage)
     }
   }
 
@@ -167,7 +175,9 @@ enum DeadcodeScan {
 
   private static let buildLockPath = ".make/deadcode-build.lock"
 
-  private static func scanProject(path: String, isWorkspace: Bool, rawPath: String) {
+  private static func scanProject(
+    path: String, isWorkspace: Bool, rawPath: String, coverage: DeadcodeCoverageBuild? = nil
+  ) {
     let schemes = discoverSchemes(project: path, isWorkspace: isWorkspace)
     let packageTargets = packageTargetNames()
     let scanSchemes = schemesToScan(schemes, packageTargets: packageTargets)
@@ -183,7 +193,7 @@ enum DeadcodeScan {
     lock?.acquire { Output.info("deadcode: waiting for the build lock") }
     defer { lock?.release() }
 
-    guard let indexStore = ensureIndexStore(rawPath: rawPath) else {
+    guard let indexStore = ensureIndexStore(rawPath: rawPath, coverage: coverage) else {
       return
     }
     // A partial index is never scanned: periphery would read a missing
@@ -231,52 +241,53 @@ enum DeadcodeScan {
   /// writes the index store as background indexing finishes, which can lag the
   /// build command's exit, so the scan waits until the store stops growing to
   /// avoid reading a partial store and reporting phantom unused symbols that
-  /// clear on a later run. A repo with an Xcode project and no `SWIFT_BUILD_CMD`
-  /// cannot produce one, which is a hard fail.
-  static func ensureIndexStore(rawPath: String) -> String? {
+  /// clear on a later run. A repo with an Xcode project and no coverage build
+  /// (no `SWIFT_DEADCODE_BUILD_CMD`/`SWIFT_BUILD_CMD` and no callback) cannot
+  /// produce one, which is a hard fail.
+  ///
+  /// Two coverage paths share the failure and locate handling. The make path shells
+  /// the consumer's `SWIFT_DEADCODE_BUILD_CMD` with the signing-disabled
+  /// `DeadcodeBuildConfig` environment. The in-process API path mints a scoped
+  /// `DeadcodeCoverageAuthorization` and runs the consumer's `coverage` callback with
+  /// the same environment, so a decoupled build with no make ancestor still produces
+  /// a complete index without a subprocess.
+  static func ensureIndexStore(
+    rawPath: String, coverage: DeadcodeCoverageBuild? = nil
+  ) -> String? {
     let derivedData = Env.get("SWIFT_MK_DERIVED_DATA")
-    let buildCommand = coverageBuildCommand()
-    guard !buildCommand.isEmpty else {
-      failHard(
-        rawPath: rawPath,
-        message:
-          "lint-deadcode: an Xcode project exists but SWIFT_BUILD_CMD is unset; "
-          + "set it so the index store is produced under SWIFT_MK_DERIVED_DATA")
-      return nil
-    }
-    Output.info("deadcode: building via SWIFT_BUILD_CMD to refresh the index store")
     // Disable code signing for the coverage build only: it produces the index,
     // not a signed product, and a signed build can fail on provisioning and leave
     // a partial index. swift-mk owns this, so consumers need no configuration.
-    let result = Shell.runStreamingStderr(
-      "/bin/sh",
-      ["-c", buildCommand],
-      environment: DeadcodeBuildConfig.buildEnvironment(derivedData: derivedData))
-    if result.status != 0 {
-      // A failed build leaves a partial index whose missing references read as
-      // false "unused" findings, so the scan must not run. Save the output
-      // under a trace-scoped name, surface structured compiler errors, and fail.
-      let logPath = BuildFailureLog.write(
-        output: result.stdout,
-        logDirectory: Logging.logDirectory,
-        traceID: Logging.correlation.traceID)
-      let errorIssues = buildIssues(derivedData: derivedData).filter { issue in
-        issue.severity == "error"
+    let environment = DeadcodeBuildConfig.buildEnvironment(derivedData: derivedData)
+    let outcome: (status: Int32, output: String)
+    if let coverage {
+      // Mint the scoped capability here and hand it plus the signing-disabled
+      // environment to the consumer's coverage callback.
+      Output.info("deadcode: building via the in-process coverage callback")
+      let capability = DeadcodeCoverageAuthorization()
+      let result = coverage(capability, environment)
+      outcome = (result.status, result.output)
+    } else {
+      let buildCommand = coverageBuildCommand()
+      guard !buildCommand.isEmpty else {
+        failHard(
+          rawPath: rawPath,
+          message:
+            "lint-deadcode: an Xcode project exists but SWIFT_BUILD_CMD is unset; "
+            + "set it so the index store is produced under SWIFT_MK_DERIVED_DATA")
+        return nil
       }
-      for issue in errorIssues {
-        outputBuildIssue(issue)
-      }
-      if errorIssues.isEmpty {
-        Output.error(
-          "deadcode: no structured build issues found; full transcript at "
-            + (logPath ?? "(unavailable)"))
-      }
-      failHard(
+      Output.info("deadcode: building via SWIFT_BUILD_CMD to refresh the index store")
+      let result = Shell.runStreamingStderr(
+        "/bin/sh", ["-c", buildCommand], environment: environment)
+      outcome = (result.status, result.stdout)
+    }
+    if outcome.status != 0 {
+      diagnoseFailedCoverage(
         rawPath: rawPath,
-        message:
-          "lint-deadcode: SWIFT_BUILD_CMD failed status=\(result.status); the "
-          + "index store is incomplete, not scanning; full build output at "
-          + (logPath ?? "(build log unavailable)"))
+        status: outcome.status,
+        output: outcome.output,
+        derivedData: derivedData)
       return nil
     }
     if let produced = existingIndexStore(derivedData) {
@@ -287,7 +298,7 @@ enum DeadcodeScan {
     failHard(
       rawPath: rawPath,
       message:
-        "lint-deadcode: no index store under \(derivedData) after SWIFT_BUILD_CMD; "
+        "lint-deadcode: no index store under \(derivedData) after the coverage build; "
         + "ensure the build passes -derivedDataPath $(SWIFT_MK_DERIVED_DATA)")
     return nil
   }
@@ -405,6 +416,37 @@ enum DeadcodeScan {
 // MARK: - DeadcodeScan
 
 extension DeadcodeScan {
+  /// Diagnose a failed coverage build the same way for both coverage paths: save the
+  /// transcript under a trace-scoped name, surface the structured compiler errors
+  /// from the xcresult bundle, and fail hard so periphery never scans a partial
+  /// index. A partial index reads missing references as false "unused" findings, so
+  /// the scan must not run.
+  static func diagnoseFailedCoverage(
+    rawPath: String, status: Int32, output: String, derivedData: String
+  ) {
+    let logPath = BuildFailureLog.write(
+      output: output,
+      logDirectory: Logging.logDirectory,
+      traceID: Logging.correlation.traceID)
+    let errorIssues = buildIssues(derivedData: derivedData).filter { issue in
+      issue.severity == "error"
+    }
+    for issue in errorIssues {
+      outputBuildIssue(issue)
+    }
+    if errorIssues.isEmpty {
+      Output.error(
+        "deadcode: no structured build issues found; full transcript at "
+          + (logPath ?? "(unavailable)"))
+    }
+    failHard(
+      rawPath: rawPath,
+      message:
+        "lint-deadcode: the coverage build failed status=\(status); the index store is "
+        + "incomplete, not scanning; full build output at "
+        + (logPath ?? "(build log unavailable)"))
+  }
+
   static func existingIndexStore(_ derivedData: String) -> String? {
     guard !derivedData.isEmpty else {
       return nil
