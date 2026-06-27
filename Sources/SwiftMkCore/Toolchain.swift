@@ -462,12 +462,21 @@ extension Toolchain {
 
   /// Shared, content-addressed caches reused across every worktree and clone.
   /// `-derivedDataPath` stays per checkout so concurrent builds never collide, but the
-  /// Clang module cache (`MODULE_CACHE_DIR`) and the SPM clone dir
-  /// (`-clonedSourcePackagesDirPath`) are keyed by content and revision, so pointing
-  /// every build at one location reuses them safely and avoids a multi-GB module cache
-  /// per worktree. `SWIFT_MK_MODULE_CACHE` / `SWIFT_MK_SPM_CACHE` set the locations (the
-  /// make layer exports the defaults under `~/Library/Caches/swift-mk`); an env value
-  /// of `off`/`none` opts out, and an unset value falls back to the built-in default.
+  /// Clang module cache (`MODULE_CACHE_DIR`), the SPM clone dir
+  /// (`-clonedSourcePackagesDirPath`), and the LLVM compilation-cache store
+  /// (`COMPILATION_CACHE_CAS_PATH`) are keyed by content, so pointing every build at one
+  /// location reuses them safely and avoids a multi-GB copy per worktree.
+  /// `SWIFT_MK_MODULE_CACHE` / `SWIFT_MK_SPM_CACHE` / `SWIFT_MK_XCODE_CACHE_PATH` set the
+  /// locations (the make layer exports the defaults under `~/Library/Caches/swift-mk`);
+  /// an env value of `off`/`none` opts out, and an unset value falls back to the
+  /// built-in default.
+  ///
+  /// The CAS store is pinned OUTSIDE DerivedData on purpose. Xcode defaults it to
+  /// `<derivedDataPath>/CompilationCache.noindex`, where the dead-code coverage build's
+  /// `rm -rf` of DerivedData would destroy it between runs, so cross-run replay never
+  /// happened. Pinning it to the shared root makes the store survive that wipe and
+  /// persist across runners. The setting is inert when compilation caching is off (the
+  /// no-cache coverage build), so injecting it on every path is safe.
   static func sharedCacheArguments() -> [String] {
     var args: [String] = []
     let spm = resolvedSharedCachePath(
@@ -479,6 +488,11 @@ extension Toolchain {
       "SWIFT_MK_MODULE_CACHE", defaultSubdirectory: "ModuleCache")
     if let module {
       args.append("MODULE_CACHE_DIR=\(module)")
+    }
+    let cas = resolvedSharedCachePath(
+      "SWIFT_MK_XCODE_CACHE_PATH", defaultSubdirectory: "CompilationCache")
+    if let cas {
+      args.append("COMPILATION_CACHE_CAS_PATH=\(cas)")
     }
     return args
   }

@@ -28,11 +28,14 @@ import Foundation
 ///    after a `rm -rf $(SWIFT_MK_DERIVED_DATA)`, so the next build is incremental,
 ///    skips compilation, and writes no index records, leaving the index empty even
 ///    though the build exits 0. Pointing `OBJROOT` inside the derived-data directory
-///    makes the consumer's `rm` clear the build database too, so every coverage build
-///    recompiles and the index is complete. Only `OBJROOT` is redirected, not
-///    `SYMROOT`: a build's final products must stay where the consumer expects them,
-///    since a step may copy a product from a fixed path (for example building a helper
-///    app and copying it into place).
+///    makes the consumer's `rm` clear the build database too, so every coverage
+///    build recompiles and the index is complete. A relative
+///    `SWIFT_MK_DERIVED_DATA` is anchored to the consumer working directory before
+///    writing `OBJROOT`, so SwiftPM dependency targets do not write intermediates
+///    into the shared SPM clone. Only `OBJROOT` is redirected, not `SYMROOT`: a
+///    build's final products must stay where the consumer expects them, since a
+///    step may copy a product from a fixed path (for example building a helper app
+///    and copying it into place).
 ///
 /// Only the coverage build is affected; a normal `build` still signs and keeps its
 /// own intermediates.
@@ -52,23 +55,43 @@ enum DeadcodeBuildConfig {
     COMPILER_INDEX_STORE_ENABLE = YES
     """
 
-  /// The full xcconfig text. When a derived-data path is known, also redirect the
-  /// build intermediates and products under it, so a `rm -rf` of that directory
-  /// makes the next coverage build clean and the index complete. When a
-  /// development team is known, carry it through: this xcconfig displaces the
+  static func resolvedDerivedDataRoot(
+    _ derivedData: String,
+    currentDirectory: String = FileManager.default.currentDirectoryPath
+  ) -> String {
+    let trimmed = derivedData.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+      return ""
+    }
+    if (trimmed as NSString).isAbsolutePath {
+      return (trimmed as NSString).standardizingPath
+    }
+    let anchored = (currentDirectory as NSString).appendingPathComponent(trimmed)
+    return (anchored as NSString).standardizingPath
+  }
+
+  /// The full xcconfig text. When a derived-data path is known, redirect build
+  /// intermediates under it, so a `rm -rf` of that directory makes the next
+  /// coverage build clean and the index complete. When a development team is
+  /// known, carry it through: this xcconfig displaces the
   /// signing xcconfig that would otherwise supply `DEVELOPMENT_TEAM`, and the team
   /// is non-signing context a consumer's build scripts may require (a config
   /// generator rendering the team into a plist), so dropping it fails the coverage
   /// build on machines with no team in their project xcconfigs. Signing stays
   /// disabled regardless because `CODE_SIGNING_ALLOWED = NO` wins.
-  static func contents(derivedData: String, developmentTeam: String = "") -> String {
+  static func contents(
+    derivedData: String,
+    developmentTeam: String = "",
+    currentDirectory: String = FileManager.default.currentDirectoryPath
+  ) -> String {
     var text = baseContents
     let team = developmentTeam.trimmingCharacters(in: .whitespaces)
     if !team.isEmpty {
       text += "\nDEVELOPMENT_TEAM = \(team)"
     }
-    let trimmed = derivedData.trimmingCharacters(in: .whitespaces)
-    guard !trimmed.isEmpty else {
+    let resolvedDerivedData = resolvedDerivedDataRoot(
+      derivedData, currentDirectory: currentDirectory)
+    guard !resolvedDerivedData.isEmpty else {
       return text
     }
     return text + """
@@ -78,7 +101,7 @@ enum DeadcodeBuildConfig {
       // `rm -rf $(SWIFT_MK_DERIVED_DATA)` clears them too and every coverage build
       // recompiles rather than skipping and leaving the index empty. SYMROOT is
       // left alone so final products stay where the consumer expects them.
-      OBJROOT = \(trimmed)/DeadcodeBuild/Intermediates.noindex
+      OBJROOT = \(resolvedDerivedData)/DeadcodeBuild/Intermediates.noindex
       """
   }
 
@@ -88,14 +111,19 @@ enum DeadcodeBuildConfig {
   /// index rather than this masking it.
   static func buildEnvironment(
     derivedData: String,
-    makeDir: String = ".make"
+    makeDir: String = ".make",
+    currentDirectory: String = FileManager.default.currentDirectoryPath
   ) -> [String: String] {
     let path = (makeDir as NSString).appendingPathComponent(fileName)
     do {
       try FileManager.default.createDirectory(
         atPath: makeDir, withIntermediateDirectories: true)
-      try contents(derivedData: derivedData, developmentTeam: Env.get("DEVELOPMENT_TEAM"))
-        .write(toFile: path, atomically: true, encoding: .utf8)
+      try contents(
+        derivedData: derivedData,
+        developmentTeam: Env.get("DEVELOPMENT_TEAM"),
+        currentDirectory: currentDirectory
+      )
+      .write(toFile: path, atomically: true, encoding: .utf8)
     } catch {
       Output.error(
         "deadcode: could not write \(path), coverage build keeps signing: \(error)")
@@ -104,9 +132,10 @@ enum DeadcodeBuildConfig {
     let absolutePath = URL(fileURLWithPath: path).standardizedFileURL.path
     Output.info("deadcode: coverage build runs with code signing disabled via \(absolutePath)")
     var environment = ["XCODE_XCCONFIG_FILE": absolutePath]
-    let trimmed = derivedData.trimmingCharacters(in: .whitespaces)
-    if !trimmed.isEmpty {
-      environment["SWIFT_MK_RESULT_BUNDLE_DIR"] = "\(trimmed)/ResultBundles"
+    let resolvedDerivedData = resolvedDerivedDataRoot(
+      derivedData, currentDirectory: currentDirectory)
+    if !resolvedDerivedData.isEmpty {
+      environment["SWIFT_MK_RESULT_BUNDLE_DIR"] = "\(resolvedDerivedData)/ResultBundles"
     }
     return environment
   }

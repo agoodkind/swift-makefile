@@ -254,7 +254,10 @@ enum DeadcodeScan {
   static func ensureIndexStore(
     rawPath: String, coverage: DeadcodeCoverageBuild? = nil
   ) -> String? {
-    let derivedData = Env.get("SWIFT_MK_DERIVED_DATA")
+    // Absolutize the derived-data root (PR #32) so a relative SWIFT_MK_DERIVED_DATA
+    // does not resolve OBJROOT against each SwiftPM package's source root.
+    let derivedData = DeadcodeBuildConfig.resolvedDerivedDataRoot(
+      Env.get("SWIFT_MK_DERIVED_DATA"))
     // Disable code signing for the coverage build only: it produces the index,
     // not a signed product, and a signed build can fail on provisioning and leave
     // a partial index. swift-mk owns this, so consumers need no configuration.

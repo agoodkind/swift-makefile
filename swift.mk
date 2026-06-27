@@ -254,8 +254,8 @@ endif
 endif
 
 SWIFT_MK_MODULES ?=
-ifneq ($(strip $(SWIFT_MK_BOOTSTRAP_FETCHED)$(SWIFT_MK_SKIP_FETCH)),)
-SWIFT_MK_FETCHED_MODULES := $(foreach m,$(SWIFT_MK_MODULES),$(if $(wildcard .make/$(m) $(SWIFT_MK_DEV_DIR)/$(m)),,$(error swift-makefile expected .make/$(m); rerun without SWIFT_MK_SKIP_FETCH)))
+ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
+SWIFT_MK_FETCHED_MODULES := $(foreach m,$(SWIFT_MK_MODULES),$(call swift-mk-require-one,.make/$(m)))
 else
 SWIFT_MK_FETCHED_MODULES := $(foreach m,$(SWIFT_MK_MODULES),$(call swift-mk-fetch-one,$(m)))
 endif
@@ -263,6 +263,30 @@ endif
 SWIFT_MK_SWIFTLINT_CONFIG ?= .make/swiftlint.yml
 SWIFT_MK_SWIFT_FORMAT_CONFIG ?= .make/swift-format.json
 SWIFT_MK_PERIPHERY_CONFIG ?= .make/periphery.yml
+
+# A consumer's own .swiftlint.yml / .swift-format / .periphery.yml is ignored in
+# favor of the shared fetched config. Warn once at the top level so the override
+# is visible. Set SWIFT_MK_ALLOW_LOCAL_CONFIGS to silence it.
+SWIFT_MK_ALLOW_LOCAL_CONFIGS ?=
+ifeq ($(strip $(SWIFT_MK_ALLOW_LOCAL_CONFIGS)),)
+ifeq ($(MAKELEVEL),0)
+ifneq ($(wildcard .swiftlint.yml),)
+ifneq ($(abspath $(SWIFT_MK_SWIFTLINT_CONFIG)),$(abspath .swiftlint.yml))
+$(warning swift-makefile: local .swiftlint.yml is ignored; shared SwiftLint config is $(SWIFT_MK_SWIFTLINT_CONFIG))
+endif
+endif
+ifneq ($(wildcard .swift-format),)
+ifneq ($(abspath $(SWIFT_MK_SWIFT_FORMAT_CONFIG)),$(abspath .swift-format))
+$(warning swift-makefile: local .swift-format is ignored; shared swift-format config is $(SWIFT_MK_SWIFT_FORMAT_CONFIG))
+endif
+endif
+ifneq ($(wildcard .periphery.yml),)
+ifneq ($(abspath $(SWIFT_MK_PERIPHERY_CONFIG)),$(abspath .periphery.yml))
+$(warning swift-makefile: local .periphery.yml is ignored; shared Periphery config is $(SWIFT_MK_PERIPHERY_CONFIG))
+endif
+endif
+endif
+endif
 # swift-mk owns the OSV policy outright: the audit gate reads only the fetched,
 # centrally-owned .make/osv-scanner.toml. override locks the config path and the
 # scanner args (below) so a consumer cannot redirect them from the command line or
@@ -280,7 +304,7 @@ SWIFT_MK_MISE_CONFIG ?= .config/mise/conf.d/swift-mk.toml
 # identity itself.
 XCODE_TEMPLATE_DIR ?= $(HOME)/Library/Developer/Xcode/UserData
 
-ifneq ($(strip $(SWIFT_MK_BOOTSTRAP_FETCHED)$(SWIFT_MK_SKIP_FETCH)),)
+ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
 SWIFT_MK_FETCHED_SWIFTLINT := $(call swift-mk-require-one,$(SWIFT_MK_SWIFTLINT_CONFIG))
 SWIFT_MK_FETCHED_SWIFT_FORMAT := $(call swift-mk-require-one,$(SWIFT_MK_SWIFT_FORMAT_CONFIG))
 SWIFT_MK_FETCHED_PERIPHERY := $(call swift-mk-require-one,$(SWIFT_MK_PERIPHERY_CONFIG))
@@ -289,7 +313,7 @@ SWIFT_MK_FETCHED_SWIFTLINT := $(call swift-mk-fetch-path,.swiftlint.yml,$(SWIFT_
 SWIFT_MK_FETCHED_SWIFT_FORMAT := $(call swift-mk-fetch-path,.swift-format,$(SWIFT_MK_SWIFT_FORMAT_CONFIG))
 SWIFT_MK_FETCHED_PERIPHERY := $(call swift-mk-fetch-path,.periphery.yml,$(SWIFT_MK_PERIPHERY_CONFIG))
 endif
-ifneq ($(strip $(SWIFT_MK_BOOTSTRAP_FETCHED)$(SWIFT_MK_SKIP_FETCH)),)
+ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
 SWIFT_MK_FETCHED_OSV := $(call swift-mk-require-one,$(SWIFT_MK_OSV_CONFIG))
 else
 SWIFT_MK_FETCHED_OSV := $(call swift-mk-fetch-path,osv-scanner.toml,$(SWIFT_MK_OSV_CONFIG))
@@ -353,16 +377,44 @@ SWIFT_MK_XCODE_CACHE_ENABLED := NO
 else ifneq ($(filter $(SWIFT_MK_XCODE_CACHE),auto AUTO),)
 SWIFT_MK_XCODE_CACHE_ENABLED := $(SWIFT_MK_XCODE_CACHE_AUTO_ENABLED)
 endif
+# Prefix mapping rewrites absolute path prefixes (SDK, toolchain, source root) out of
+# the compilation-cache keys so a cache entry produced on one machine or CI runner
+# hits on another whose checkout path differs. Without it the keys embed absolute
+# paths and every cross-runner restore misses. Defaults to the Xcode cache policy, so
+# it follows caching on Xcode 26+ and a consumer can drop just the mapping (keeping the
+# local cache) with SWIFT_MK_XCODE_CACHE_PREFIX_MAP=0 if a path-sensitive input (a
+# bridging header) regresses.
+SWIFT_MK_XCODE_CACHE_PREFIX_MAP ?= $(SWIFT_MK_XCODE_CACHE)
+SWIFT_MK_XCODE_CACHE_PREFIX_MAP_ENABLED := NO
+ifneq ($(filter $(SWIFT_MK_XCODE_CACHE_PREFIX_MAP),1 true TRUE yes YES on ON),)
+SWIFT_MK_XCODE_CACHE_PREFIX_MAP_ENABLED := YES
+else ifneq ($(filter $(SWIFT_MK_XCODE_CACHE_PREFIX_MAP),0 false FALSE no NO off OFF),)
+SWIFT_MK_XCODE_CACHE_PREFIX_MAP_ENABLED := NO
+else ifneq ($(filter $(SWIFT_MK_XCODE_CACHE_PREFIX_MAP),auto AUTO),)
+SWIFT_MK_XCODE_CACHE_PREFIX_MAP_ENABLED := $(SWIFT_MK_XCODE_CACHE_AUTO_ENABLED)
+endif
 SWIFT_MK_XCODE_CACHE_DIAGNOSTICS_ENABLED := NO
 ifneq ($(filter $(SWIFT_MK_XCODE_CACHE_DIAGNOSTICS),1 true TRUE yes YES on ON),)
 SWIFT_MK_XCODE_CACHE_DIAGNOSTICS_ENABLED := YES
 endif
-SWIFT_MK_XCODEBUILD_ARGS := $(strip $(if $(filter YES,$(SWIFT_MK_XCODE_CACHE_ENABLED)),COMPILATION_CACHE_ENABLE_CACHING=YES $(if $(filter YES,$(SWIFT_MK_XCODE_CACHE_DIAGNOSTICS_ENABLED)),COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=YES,),))
+SWIFT_MK_XCODEBUILD_ARGS := $(strip $(if $(filter YES,$(SWIFT_MK_XCODE_CACHE_ENABLED)),COMPILATION_CACHE_ENABLE_CACHING=YES $(if $(filter YES,$(SWIFT_MK_XCODE_CACHE_PREFIX_MAP_ENABLED)),SWIFT_ENABLE_PREFIX_MAPPING=YES CLANG_ENABLE_PREFIX_MAPPING=YES,) $(if $(filter YES,$(SWIFT_MK_XCODE_CACHE_DIAGNOSTICS_ENABLED)),COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=YES,),))
 SWIFT_MK_XCODEBUILD_NO_CACHE_ARGS := COMPILATION_CACHE_ENABLE_CACHING=NO COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=NO
 # Canonical DerivedData path. A consumer that builds Xcode targets routes its
 # `xcodebuild -derivedDataPath` here, and the dead-code gate reads the index store
 # from the same place, so coverage analysis is deterministic across repos.
 SWIFT_MK_DERIVED_DATA ?= $(CURDIR)/.derived-data
+# Normalize to absolute once, at the source. Some consumers set this to a relative
+# value (BUILD_DIR, e.g. `build`), and a relative DerivedData leaks into build settings
+# that xcodebuild resolves against a different base than the consumer cwd: the dead-code
+# OBJROOT resolved a relative value against each SwiftPM package's source root, landing
+# coverage intermediates inside the shared SPM clone where `rm -rf` could not clear them.
+# Absolutizing the one exported variable makes every make and Swift reader relative-safe.
+# `override` so a relative command-line value is absolutized too (a plain `:=` loses to a
+# command-line assignment), matching the `override LINT_GATES` hardening pattern. abspath
+# is lexical (no stat), a no-op on an already-absolute value, and points a relative value
+# at the same physical dir the consumer cwd already implied, so packaging that reads
+# BUILD_DIR is unaffected.
+override SWIFT_MK_DERIVED_DATA := $(abspath $(if $(strip $(SWIFT_MK_DERIVED_DATA)),$(SWIFT_MK_DERIVED_DATA),$(CURDIR)/.derived-data))
 # Shared, content-addressed build caches reused across every worktree and clone.
 # DerivedData stays per checkout (above) so concurrent builds never collide, but the
 # Clang module cache and the SPM clone dir are keyed by content and revision, so one
@@ -374,6 +426,15 @@ SWIFT_MK_MODULE_CACHE ?= $(SWIFT_MK_CACHE_ROOT)/ModuleCache
 SWIFT_MK_SPM_CACHE ?= $(SWIFT_MK_CACHE_ROOT)/SourcePackages
 export SWIFT_MK_MODULE_CACHE
 export SWIFT_MK_SPM_CACHE
+# The LLVM compilation-cache (CAS) store. Kept OUTSIDE per-checkout DerivedData,
+# unlike Xcode's default of $(SWIFT_MK_DERIVED_DATA)/CompilationCache.noindex, so the
+# dead-code coverage build's `rm -rf $(SWIFT_MK_DERIVED_DATA)` cannot destroy it, and
+# shared across worktrees and clones like the module cache (the store is
+# content-addressed, so one shared copy is safe and maximizes reuse). The engine
+# injects COMPILATION_CACHE_CAS_PATH from this at the toolchain chokepoint; set it to
+# `off` to fall back to Xcode's in-DerivedData default.
+SWIFT_MK_XCODE_CACHE_PATH ?= $(SWIFT_MK_CACHE_ROOT)/CompilationCache
+export SWIFT_MK_XCODE_CACHE_PATH
 # Exported so `toolchain generate` can point Xcode.app's DerivedData at the same path.
 export SWIFT_MK_DERIVED_DATA
 SWIFT_MK_SWIFTPM_CACHE_ENABLED := NO
@@ -512,6 +573,7 @@ export SWIFT_MK_XCODE_VERSION_MAJOR
 export SWIFT_MK_SWIFT_CACHE
 export SWIFT_MK_SWIFTPM_CACHE
 export SWIFT_MK_XCODE_CACHE
+export SWIFT_MK_XCODE_CACHE_PREFIX_MAP
 export SWIFT_MK_XCODE_CACHE_DIAGNOSTICS
 export SWIFT_MK_XCODEBUILD_ARGS
 export SWIFT_MK_XCODEBUILD_NO_CACHE_ARGS
@@ -597,6 +659,8 @@ help:
 	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFT_CACHE=auto|1|0' 'default local SwiftPM and Xcode cache policy'
 	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE=auto|1|0' 'override SwiftPM cache policy'
 	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE=auto|1|0' 'override local Xcode compilation cache policy'
+	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_PREFIX_MAP=auto|1|0' 'remap absolute paths for cross-runner cache hits'
+	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_PATH=...|off' 'shared CAS store path, kept outside DerivedData'
 	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_DIAGNOSTICS=1' 'emit Xcode compilation cache diagnostic remarks'
 	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE_ARGS=...' 'override shared SwiftPM cache flags'
 	@printf '  %-40s %s\n' 'ccache/sccache' 'C-family cache tools; not Swift compilation caches'
