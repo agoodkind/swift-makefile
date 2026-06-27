@@ -42,6 +42,14 @@ func deadcodeBuildConfigRedirectsObjrootButNotSymroot() {
 }
 
 @Test
+func deadcodeBuildConfigResolvesRelativeObjrootAgainstConsumerRoot() {
+  let text = DeadcodeBuildConfig.contents(
+    derivedData: "build", currentDirectory: "/repo/Consumer")
+  #expect(text.contains("OBJROOT = /repo/Consumer/build/DeadcodeBuild/Intermediates.noindex"))
+  #expect(!text.contains("OBJROOT = build/DeadcodeBuild"))
+}
+
+@Test
 func deadcodeBuildConfigWritesXcconfigAndReturnsAbsolutePath() throws {
   let makeDir = NSTemporaryDirectory() + "swiftmk-xcconfig-" + UUID().uuidString
   let environment = DeadcodeBuildConfig.buildEnvironment(
@@ -63,6 +71,14 @@ func deadcodeBuildConfigSetsResultBundleDirectoryWithDerivedData() {
     derivedData: "/proj/build/DerivedData", makeDir: makeDir)
   #expect(
     environment["SWIFT_MK_RESULT_BUNDLE_DIR"] == "/proj/build/DerivedData/ResultBundles")
+}
+
+@Test
+func deadcodeBuildConfigResultBundleUsesResolvedDerivedData() {
+  let makeDir = NSTemporaryDirectory() + "swiftmk-xcconfig-" + UUID().uuidString
+  let environment = DeadcodeBuildConfig.buildEnvironment(
+    derivedData: "build", makeDir: makeDir, currentDirectory: "/repo/Consumer")
+  #expect(environment["SWIFT_MK_RESULT_BUNDLE_DIR"] == "/repo/Consumer/build/ResultBundles")
 }
 
 @Test

@@ -400,6 +400,25 @@ enum ToolchainSharedCacheTests {
   }
 
   @Test
+  static func buildForTestingSharesModuleCacheAndSpmCloneAcrossWorktrees() {
+    withSharedCacheEnv(module: "/tmp/swift-mk-mc", spm: "/tmp/swift-mk-spm") {
+      let request = Toolchain.Request(
+        generator: .tuist,
+        scheme: "App",
+        workspace: "App.xcworkspace",
+        derivedDataPath: ".derived-data"
+      )
+      let args = Toolchain.xcodebuildArguments(request, action: "build-for-testing")
+      #expect(args.contains("-derivedDataPath"))
+      #expect(args.contains(".derived-data"))
+      #expect(args.contains("-clonedSourcePackagesDirPath"))
+      #expect(args.contains("/tmp/swift-mk-spm"))
+      #expect(args.contains("MODULE_CACHE_DIR=/tmp/swift-mk-mc"))
+      #expect(args.last == "build-for-testing")
+    }
+  }
+
+  @Test
   static func sharedCachesOmittedWhenDisabled() {
     withSharedCacheEnv(module: "off", spm: "none") {
       #expect(Toolchain.sharedCacheArguments().isEmpty)
