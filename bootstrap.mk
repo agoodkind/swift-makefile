@@ -11,7 +11,7 @@ SWIFT_MK_API_REF ?= main
 SWIFT_MK_SWIFTLINT_CONFIG ?= .make/swiftlint.yml
 SWIFT_MK_SWIFT_FORMAT_CONFIG ?= .make/swift-format.json
 SWIFT_MK_PERIPHERY_CONFIG ?= .make/periphery.yml
-SWIFT_MK_OSV_CONFIG ?= .make/osv-scanner.toml
+override SWIFT_MK_OSV_CONFIG := .make/osv-scanner.toml
 SWIFT_MK_ALLOW_LOCAL_CONFIGS ?=
 
 ifeq ($(strip $(SWIFT_MK_ALLOW_LOCAL_CONFIGS)),)
