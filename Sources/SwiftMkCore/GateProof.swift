@@ -116,6 +116,18 @@ public enum GateProof {
     return refusedExitStatus
   }
 
+  /// Whether a live swift-mk gate currently covers this process, exposed so a
+  /// consumer's build command can route an in-gate compile through the `GateProof`
+  /// make path and a decoupled compile through `GatedBuild.run`. This is a routing
+  /// signal only: both paths are independently authorized (the make path by this
+  /// same proof, the decoupled path by a `GateReceipt` minted after the hard gate),
+  /// so reading it to choose a path never weakens the gate. A consumer that lies
+  /// about being gated still meets `Toolchain.build`'s `GateProof` check or
+  /// `GatedBuild.run`'s hard gate, whichever path it takes.
+  public static func isCurrentlyGated(context: PathContext = .current()) -> Bool {
+    isGated(context: context)
+  }
+
   /// Whether a valid gate proof covers this process. Pure of side effects so it
   /// is testable; `refusal` wraps it with the loud message and a status.
   ///

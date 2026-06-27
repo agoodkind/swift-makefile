@@ -120,6 +120,10 @@ public enum GatedBuild {
     // (1) Write the bundled gate configs into the checkout, so a fresh checkout that
     // never ran `make` has byte-identical configs before the gate reads them.
     LintResources.ensure(context: request.context)
+    // (1a) Locate the swiftcheck-extra analyzer source the same place the make layer
+    // points it, so the decoupled gate runs swiftcheck without the consumer setting
+    // any environment variable.
+    ensureSwiftcheckBuildRepo()
     // (2) Signing preflight: a consumer that requires signing must resolve a team
     // before the compile, the same precondition `make build` enforces.
     guard SigningBuildConfig.checkSigningPreflight() else {
@@ -136,5 +140,29 @@ public enum GatedBuild {
     // (6) Mint the receipt only now, after the gate passed, and (7) run the compile.
     let receipt = GateReceipt()
     return request.compile(receipt)
+  }
+
+  /// Default `SWIFTCHECK_EXTRA_BUILD_REPO` for the decoupled gate when the consumer
+  /// has not set it, mirroring the make layer's resolution: prefer the swiftcheck
+  /// package inside the local swift-mk dev checkout (`SWIFT_MK_DEV_DIR/swiftcheck`),
+  /// then the fetched `.make/swiftcheck`. This lets `LintPolicy.swiftcheck` build and
+  /// run the analyzer with no consumer-set environment variable. Leaves an
+  /// already-set value untouched so the make path keeps its own resolution.
+  static func ensureSwiftcheckBuildRepo() {
+    guard Env.get("SWIFTCHECK_EXTRA_BUILD_REPO").isEmpty else {
+      return
+    }
+    let manager = FileManager.default
+    let devDir = Env.get("SWIFT_MK_DEV_DIR").trimmingCharacters(in: .whitespaces)
+    if !devDir.isEmpty,
+      manager.fileExists(atPath: devDir + "/swiftcheck/Package.swift")
+    {
+      setenv("SWIFTCHECK_EXTRA_BUILD_REPO", devDir + "/swiftcheck", 1)
+      return
+    }
+    let fetched = ".make/swiftcheck"
+    if manager.fileExists(atPath: fetched + "/Package.swift") {
+      setenv("SWIFTCHECK_EXTRA_BUILD_REPO", fetched, 1)
+    }
   }
 }
