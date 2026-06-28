@@ -363,12 +363,11 @@ enum DeadcodeScan {
   /// drop package targets from the Xcode scan since the package scan owns them.
   static func packageTargetNames() -> Set<String> {
     Output.debug("deadcode: reading swift package targets")
-    let result = Shell.run("swift", ["package", "describe", "--type", "json"])
-    if result.status != 0 {
+    guard let json = SwiftPM.describePackageJSON() else {
       Output.debug("deadcode: swift package describe failed; no package targets to exclude")
       return []
     }
-    return parsePackageTargets(result.stdout)
+    return parsePackageTargets(json)
   }
 
   static func parsePackageTargets(_ json: String) -> Set<String> {

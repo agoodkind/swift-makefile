@@ -175,8 +175,38 @@ public enum SwiftPM {
     guard result.status == 0 else {
       return nil
     }
-    let trimmed = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    // Take the last non-empty line: `--show-bin-path` prints the path last, after any
+    // package-resolution notes.
+    let lines = result.stdout.split(whereSeparator: \.isNewline)
+    guard let last = lines.last else {
+      return nil
+    }
+    let trimmed = last.trimmingCharacters(in: .whitespaces)
     return trimmed.isEmpty ? nil : trimmed
+  }
+
+  /// `swift package describe --type json` for the package, captured. A read-only query
+  /// (no artifact, so no gate), wrapped in the build lock because it resolves the
+  /// package and may write `.build`. Returns nil on a nonzero status.
+  public static func describePackageJSON(_ request: Request = Request()) -> String? {
+    let arguments = ["package"] + packageArguments(request) + ["describe", "--type", "json"]
+    let result = BuildLock.withLock {
+      Shell.run("swift", arguments, environment: request.environment)
+    }
+    guard result.status == 0 else {
+      return nil
+    }
+    return result.stdout
+  }
+
+  // MARK: Engine-internal
+
+  /// Build a product for an engine-owned tool (the swiftcheck analyzer) with the build
+  /// lock but NOT the gate. This builds swift-mk's own tooling while a gate is already
+  /// running, so there is no consumer-product gate to satisfy and it must not be
+  /// refused. Engine callers in `SwiftMkCore` only.
+  static func buildProductInternal(_ request: Request) -> ProductBuild {
+    buildProductWithoutGateCheck(request)
   }
 
   // MARK: Shared bodies
