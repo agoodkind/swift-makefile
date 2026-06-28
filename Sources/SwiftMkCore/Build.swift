@@ -61,7 +61,13 @@ public enum Build {
     }
     Output.info("build: running configured build command")
     let cacheEnvironment = BuildCache.environment() ?? [:]
-    return Shell.runForwardingOutput("/bin/sh", ["-c", command], environment: cacheEnvironment)
+    // Serialize against any other build in this worktree (a dev-tool SwiftPM build, the
+    // dead-code coverage build) so two builds never share one `.build`/DerivedData and
+    // corrupt each other. Re-entrant, so a `toolchain build`/`swiftpm build` child the
+    // command spawns inherits this hold instead of deadlocking on it.
+    return BuildLock.withLock {
+      Shell.runForwardingOutput("/bin/sh", ["-c", command], environment: cacheEnvironment)
+    }
   }
 
   /// Run a compile command under the gate proof: refuse loud when this process is
@@ -75,6 +81,8 @@ public enum Build {
       return refusal
     }
     let cacheEnvironment = BuildCache.environment() ?? [:]
-    return Shell.runForwardingOutput("/bin/sh", ["-c", command], environment: cacheEnvironment)
+    return BuildLock.withLock {
+      Shell.runForwardingOutput("/bin/sh", ["-c", command], environment: cacheEnvironment)
+    }
   }
 }
