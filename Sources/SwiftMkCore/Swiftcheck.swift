@@ -57,17 +57,21 @@ public enum Swiftcheck {
     } catch {
       Output.error("swiftcheck-extra: could not create output directory: \(error)")
     }
-    let build = Shell.run(
-      "swift", ["build", "--package-path", repo, "-c", "release", "--product", product])
-    if build.status != 0 {
-      Output.emitStandardError(build.combined)
+    // Build the analyzer through the engine SwiftPM chokepoint (lock, no gate: this
+    // builds swift-mk's own tool while the gate runs), so no raw `swift` lives here.
+    let result = SwiftPM.buildProductInternal(
+      SwiftPM.Request(packagePath: repo, configuration: .release, product: product))
+    if result.status != 0 {
+      Output.error(
+        "swiftcheck-extra: building \(product) from \(repo) failed (status \(result.status))")
       return false
     }
-    let binPathOutput = Shell.run(
-      "swift", ["build", "--package-path", repo, "-c", "release", "--show-bin-path"]
-    ).stdout
-    let binDir = binPathOutput.split(separator: "\n").last.map(String.init) ?? ""
-    let built = binDir + "/" + product
+    guard let built = result.executablePath else {
+      Output.error(
+        "swiftcheck-extra: built \(product) but could not resolve its binary "
+          + "(bin path \(result.binPath ?? "unresolved"))")
+      return false
+    }
     removeIfPresent(output)
     do {
       try FileManager.default.copyItem(atPath: built, toPath: output)
