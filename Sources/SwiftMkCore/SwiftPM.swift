@@ -166,6 +166,7 @@ public enum SwiftPM {
   /// produces no artifact, so it needs no gate, but it resolves the package and may
   /// write `.build`, so it still takes the build lock.
   public static func binPath(_ request: Request) -> String? {
+    Output.debug("swiftpm: resolving bin path")
     let arguments =
       ["build"] + cacheArguments() + packageArguments(request)
       + configurationArguments(request) + ["--show-bin-path"]
@@ -189,6 +190,7 @@ public enum SwiftPM {
   /// (no artifact, so no gate), wrapped in the build lock because it resolves the
   /// package and may write `.build`. Returns nil on a nonzero status.
   public static func describePackageJSON(_ request: Request = Request()) -> String? {
+    Output.debug("swiftpm: describing package targets")
     let arguments = ["package"] + packageArguments(request) + ["describe", "--type", "json"]
     let result = BuildLock.withLock {
       Shell.run("swift", arguments, environment: request.environment)

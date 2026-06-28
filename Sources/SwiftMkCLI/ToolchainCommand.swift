@@ -246,6 +246,8 @@ struct ToolchainSwiftPM: ParsableCommand {
   )
 }
 
+// MARK: - SwiftPMBuild
+
 struct SwiftPMBuild: ParsableCommand {
   static let configuration = CommandConfiguration(commandName: "build")
   @OptionGroup var options: SwiftPMRequestOptions
@@ -257,6 +259,8 @@ struct SwiftPMBuild: ParsableCommand {
     try toolchainExit(SwiftPM.build(options.request(extraArguments: passthrough)))
   }
 }
+
+// MARK: - SwiftPMTest
 
 struct SwiftPMTest: ParsableCommand {
   static let configuration = CommandConfiguration(commandName: "test")
@@ -284,6 +288,8 @@ struct SwiftPMTest: ParsableCommand {
   }
 }
 
+// MARK: - SwiftPMRun
+
 struct SwiftPMRun: ParsableCommand {
   static let configuration = CommandConfiguration(commandName: "run")
   @OptionGroup var options: SwiftPMRequestOptions
@@ -292,18 +298,22 @@ struct SwiftPMRun: ParsableCommand {
   var arguments: [String] = []
 
   func run() throws {
-    guard options.product != nil else {
+    guard let product = options.product else {
       throw ValidationError("swiftpm run requires --product")
     }
+    Output.debug("swiftpm run: \(product)")
     try toolchainExit(SwiftPM.run(options.request(), arguments: arguments))
   }
 }
+
+// MARK: - SwiftPMBinPath
 
 struct SwiftPMBinPath: ParsableCommand {
   static let configuration = CommandConfiguration(commandName: "bin-path")
   @OptionGroup var options: SwiftPMRequestOptions
 
   func run() throws {
+    Output.debug("swiftpm bin-path")
     guard let path = SwiftPM.binPath(options.request()) else {
       throw ExitCode(1)
     }
@@ -328,9 +338,10 @@ struct ToolchainRunTool: ParsableCommand {
   var arguments: [String] = []
 
   func run() throws {
-    guard options.product != nil else {
+    guard let product = options.product else {
       throw ValidationError("run-tool requires --product")
     }
+    Output.debug("toolchain run-tool: \(product)")
     try toolchainExit(SwiftPM.run(options.request(), arguments: arguments))
   }
 }

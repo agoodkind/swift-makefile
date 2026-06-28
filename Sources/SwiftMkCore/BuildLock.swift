@@ -31,6 +31,9 @@ import Foundation
 public enum BuildLock {
   static let envMarker = "SWIFT_MK_BUILD_LOCK_HELD"
 
+  /// The marker value is "<pid> <root>", two space-separated fields.
+  private static let markerFieldCount = 2
+
   nonisolated(unsafe) private static var depth = 0
   nonisolated(unsafe) private static var cachedRoot: String?
 
@@ -41,6 +44,7 @@ public enum BuildLock {
     if let cachedRoot {
       return cachedRoot
     }
+    Output.debug("build-lock: resolving worktree root via git toplevel")
     let workingDirectory = FileManager.default.currentDirectoryPath
     let result = Shell.run("git", ["rev-parse", "--show-toplevel"])
     let resolved: String
@@ -83,9 +87,15 @@ public enum BuildLock {
     }
 
     let path = lockPath(root: root)
-    try? FileManager.default.createDirectory(
-      atPath: (path as NSString).deletingLastPathComponent,
-      withIntermediateDirectories: true)
+    do {
+      try FileManager.default.createDirectory(
+        atPath: (path as NSString).deletingLastPathComponent,
+        withIntermediateDirectories: true)
+    } catch {
+      // Non-fatal: fall through and let the FileLock open attempt below decide. Logged
+      // so a missing lock directory is visible rather than silently swallowed.
+      Output.error("build-lock: could not create lock directory: \(error)")
+    }
     guard let lock = FileLock(path: path) else {
       return body()
     }
@@ -124,7 +134,7 @@ public enum BuildLock {
       return false
     }
     let parts = raw.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: false)
-    guard parts.count == 2, String(parts[1]) == root else {
+    guard parts.count == markerFieldCount, String(parts[1]) == root else {
       return false
     }
     guard let pid = Int32(parts[0]) else {

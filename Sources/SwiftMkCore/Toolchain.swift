@@ -678,13 +678,8 @@ extension Toolchain {
     _ request: Request, actions: [String], environment: [String: String]
   ) -> Int32 {
     Output.debug("toolchain: xcodebuild \(actions.joined(separator: " "))")
-    // Serialize against any other build in this worktree so an xcodebuild and a
-    // concurrent build never race the shared DerivedData. Re-entrant, so a coverage
-    // build already inside the dead-code lock just re-enters.
-    return BuildLock.withLock {
-      Shell.runForwardingOutput(
-        "xcodebuild", xcodebuildArguments(request, actions: actions), environment: environment)
-    }
+    return Shell.runForwardingOutput(
+      "xcodebuild", xcodebuildArguments(request, actions: actions), environment: environment)
   }
 
   /// The captured-output variant of the raw invocation, capturing stdout in full
@@ -694,9 +689,7 @@ extension Toolchain {
     _ request: Request, actions: [String], environment: [String: String]
   ) -> Shell.StreamingResult {
     Output.debug("toolchain: xcodebuild (captured) \(actions.joined(separator: " "))")
-    return BuildLock.withLock {
-      Shell.runStreamingStderr(
-        "xcodebuild", xcodebuildArguments(request, actions: actions), environment: environment)
-    }
+    return Shell.runStreamingStderr(
+      "xcodebuild", xcodebuildArguments(request, actions: actions), environment: environment)
   }
 }

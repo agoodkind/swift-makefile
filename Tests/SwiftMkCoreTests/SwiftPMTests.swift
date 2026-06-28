@@ -26,17 +26,16 @@ enum SwiftPMTests {
 
   @Test
   static func packageArgumentsOnlyWhenPathIsSet() {
-    #expect(SwiftPM.packageArguments(SwiftPM.Request()) == [])
-    #expect(
-      SwiftPM.packageArguments(SwiftPM.Request(packagePath: "Tools")) == ["--package-path", "Tools"])
+    #expect(SwiftPM.packageArguments(SwiftPM.Request()).isEmpty)
+    let withPath = SwiftPM.packageArguments(SwiftPM.Request(packagePath: "Tools"))
+    #expect(withPath == ["--package-path", "Tools"])
   }
 
   @Test
   static func productArgumentsOnlyWhenProductIsSet() {
-    #expect(SwiftPM.productArguments(SwiftPM.Request()) == [])
-    #expect(
-      SwiftPM.productArguments(SwiftPM.Request(product: "CellTunnelDev"))
-        == ["--product", "CellTunnelDev"])
+    #expect(SwiftPM.productArguments(SwiftPM.Request()).isEmpty)
+    let withProduct = SwiftPM.productArguments(SwiftPM.Request(product: "CellTunnelDev"))
+    #expect(withProduct == ["--product", "CellTunnelDev"])
   }
 
   @Test
