@@ -12,17 +12,19 @@ import SwiftMkCore
 
 // MARK: - ToolchainCommand
 
-/// `swift-mk toolchain <op>`: the only CLI surface that spawns tuist, xcodegen, or
-/// xcodebuild. Make consumers route generate/install/build/test through here so no
-/// consumer Makefile names the build toolchain directly.
+/// `swift-mk toolchain <op>`: the only CLI surface that spawns tuist, xcodegen,
+/// xcodebuild, or the `swift` package manager. Make consumers route
+/// generate/install/build/test/clean and dev-tool runs through here so no consumer
+/// Makefile names the build toolchain or raw `swift` directly.
 struct ToolchainCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "toolchain",
-    abstract: "Drive the Xcode build toolchain (tuist/xcodegen/xcodebuild).",
+    abstract: "Drive the Xcode toolchain (tuist/xcodegen/xcodebuild) and SwiftPM.",
     subcommands: [
       ToolchainGenerate.self, ToolchainInstall.self, ToolchainBuild.self,
       ToolchainBuildForTesting.self, ToolchainTest.self, ToolchainAnalyze.self,
       ToolchainVersion.self, ToolchainDownloadComponent.self,
+      ToolchainSwiftPM.self, ToolchainRunTool.self,
     ]
   )
 }
@@ -197,6 +199,165 @@ struct ToolchainDownloadComponent: ParsableCommand {
   var component: String
 
   func run() throws { try toolchainExit(Toolchain.downloadComponent(component)) }
+}
+
+// MARK: - SwiftPMRequestOptions
+
+/// Shared options for the `swiftpm` subcommands and `run-tool`. The `swift` package
+/// manager only knows `debug`/`release`, so the Xcode-style `--configuration` name is
+/// lowered: any value containing "release" selects release, everything else debug.
+struct SwiftPMRequestOptions: ParsableArguments {
+  @Option(
+    name: .customLong("package-path"),
+    help: "SwiftPM --package-path (default: the current directory's package).")
+  var packagePath: String?
+
+  @Option(name: .long, help: "Build configuration (Debug or Release).")
+  var configuration: String = "Debug"
+
+  @Option(name: .long, help: "SwiftPM --product to build or run.")
+  var product: String?
+
+  func swiftPMConfiguration() -> SwiftPM.Configuration {
+    configuration.lowercased().contains("release") ? .release : .debug
+  }
+
+  func request(extraArguments: [String] = []) -> SwiftPM.Request {
+    SwiftPM.Request(
+      packagePath: packagePath,
+      configuration: swiftPMConfiguration(),
+      product: product,
+      extraArguments: extraArguments)
+  }
+}
+
+// MARK: - ToolchainSwiftPM
+
+/// `swift-mk toolchain swiftpm <op>`: the only CLI surface that drives `swift build`,
+/// `swift test`, and `swift run`, the SwiftPM peer of the xcodebuild subcommands. A
+/// make consumer routes its SwiftPM build/test through here so no consumer Makefile
+/// names raw `swift`.
+struct ToolchainSwiftPM: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "swiftpm",
+    abstract: "Drive the swift package manager (build/test/run) through the engine.",
+    subcommands: [
+      SwiftPMBuild.self, SwiftPMTest.self, SwiftPMRun.self, SwiftPMBinPath.self,
+      SwiftPMClean.self,
+    ]
+  )
+}
+
+// MARK: - SwiftPMBuild
+
+struct SwiftPMBuild: ParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "build")
+  @OptionGroup var options: SwiftPMRequestOptions
+
+  @Argument(help: "Extra swift build arguments (after --).")
+  var passthrough: [String] = []
+
+  func run() throws {
+    try toolchainExit(SwiftPM.build(options.request(extraArguments: passthrough)))
+  }
+}
+
+// MARK: - SwiftPMTest
+
+struct SwiftPMTest: ParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "test")
+  @OptionGroup var options: SwiftPMRequestOptions
+
+  @Flag(name: .customLong("build-tests"), help: "Run `swift build --build-tests` first.")
+  var buildTests = false
+
+  @Flag(name: .customLong("skip-build"), help: "Pass --skip-build to swift test.")
+  var skipBuild = false
+
+  @Option(name: .long, help: "Pass --filter to swift test.")
+  var filter: String?
+
+  @Argument(help: "Extra swift test arguments (after --).")
+  var passthrough: [String] = []
+
+  func run() throws {
+    let request = SwiftPM.TestRequest(
+      package: options.request(extraArguments: passthrough),
+      buildTests: buildTests,
+      skipBuild: skipBuild,
+      filter: filter)
+    try toolchainExit(SwiftPM.test(request))
+  }
+}
+
+// MARK: - SwiftPMRun
+
+struct SwiftPMRun: ParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "run")
+  @OptionGroup var options: SwiftPMRequestOptions
+
+  @Argument(help: "Arguments forwarded to the product (after --).")
+  var arguments: [String] = []
+
+  func run() throws {
+    guard let product = options.product else {
+      throw ValidationError("swiftpm run requires --product")
+    }
+    Output.debug("swiftpm run: \(product)")
+    try toolchainExit(SwiftPM.run(options.request(), arguments: arguments))
+  }
+}
+
+// MARK: - SwiftPMBinPath
+
+struct SwiftPMBinPath: ParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "bin-path")
+  @OptionGroup var options: SwiftPMRequestOptions
+
+  func run() throws {
+    Output.debug("swiftpm bin-path")
+    guard let path = SwiftPM.binPath(options.request()) else {
+      throw ExitCode(1)
+    }
+    Output.log(path)
+  }
+}
+
+// MARK: - SwiftPMClean
+
+struct SwiftPMClean: ParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "clean")
+  @OptionGroup var options: SwiftPMRequestOptions
+
+  func run() throws {
+    Output.debug("swiftpm clean")
+    try toolchainExit(SwiftPM.clean(options.request()))
+  }
+}
+
+// MARK: - ToolchainRunTool
+
+/// `swift-mk toolchain run-tool --package-path P --product X -- <args>`: build a
+/// SwiftPM dev-tool product through the engine, then run it as a child process and wait
+/// for it to exit. This replaces a consumer's hand-rolled bootstrap wrapper
+/// (`swift Tools/<tool>.swift`), so the dev tool's compile is gated and serialized like
+/// every other build instead of a raw `swift build` that races the worktree's `.build`.
+struct ToolchainRunTool: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "run-tool",
+    abstract: "Build a SwiftPM dev-tool product through the engine, then run it.")
+  @OptionGroup var options: SwiftPMRequestOptions
+
+  @Argument(help: "Arguments forwarded to the dev tool (after --).")
+  var arguments: [String] = []
+
+  func run() throws {
+    guard let product = options.product else {
+      throw ValidationError("run-tool requires --product")
+    }
+    Output.debug("toolchain run-tool: \(product)")
+    try toolchainExit(SwiftPM.run(options.request(), arguments: arguments))
+  }
 }
 
 // MARK: - BuildToolingAuditCommand
