@@ -490,19 +490,19 @@ SWIFT_BUILD_CMD ?= "$(SWIFT_MK_BIN)" toolchain build --generator $(SWIFT_XCODE_G
 # only affects the static-framework test build, never the SwiftPM executable build.
 SWIFT_TEST_MODE ?= xcode
 ifeq ($(strip $(SWIFT_TEST_MODE)),spm)
-SWIFT_TEST_CMD ?= swift test $(SWIFT_MK_SWIFTPM_CACHE_ARGS)
+SWIFT_TEST_CMD ?= "$(SWIFT_MK_BIN)" toolchain swiftpm test
 else
 SWIFT_TEST_CMD ?= "$(SWIFT_MK_BIN)" toolchain test --generator $(SWIFT_XCODE_GENERATOR) $(SWIFT_XCODE_CONTAINER_ARG) --scheme $(SWIFT_XCODE_SCHEME) --configuration Debug --derived-data-path $(SWIFT_MK_DERIVED_DATA) $(SWIFT_MK_XCODEBUILD_ARGS)
 endif
 SWIFT_DEADCODE_BUILD_CMD ?= rm -rf "$(SWIFT_MK_DERIVED_DATA)" && "$(SWIFT_MK_BIN)" toolchain install --generator $(SWIFT_XCODE_GENERATOR) && "$(SWIFT_MK_BIN)" toolchain generate --generator $(SWIFT_XCODE_GENERATOR) && "$(SWIFT_MK_BIN)" toolchain build-for-testing --generator $(SWIFT_XCODE_GENERATOR) $(SWIFT_XCODE_CONTAINER_ARG) --scheme $(SWIFT_XCODE_SCHEME) --configuration $(SWIFT_XCODE_COVERAGE_CONFIGURATION) --derived-data-path $(SWIFT_MK_DERIVED_DATA) COMPILER_INDEX_STORE_ENABLE=YES ONLY_ACTIVE_ARCH=YES $(SWIFT_XCODE_BUILD_SETTINGS) $(SWIFT_MK_XCODEBUILD_NO_CACHE_ARGS)
 endif
 
-SWIFT_BUILD_CMD ?= swift build $(SWIFT_MK_SWIFTPM_CACHE_ARGS)
+SWIFT_BUILD_CMD ?= "$(SWIFT_MK_BIN)" toolchain swiftpm build
 # The build the dead-code gate runs to refresh the index store. Defaults to
 # SWIFT_BUILD_CMD; set it when SWIFT_BUILD_CMD needs a target argument or builds a
 # single platform, so the gate has a target-free build that covers every platform.
 SWIFT_DEADCODE_BUILD_CMD ?=
-SWIFT_TEST_CMD ?= swift test $(SWIFT_MK_SWIFTPM_CACHE_ARGS)
+SWIFT_TEST_CMD ?= "$(SWIFT_MK_BIN)" toolchain swiftpm test
 SWIFT_RUN_CMD ?=
 SWIFT_GENERATE_CMD ?=
 SWIFT_CLEAN_CMD ?= swift package clean
