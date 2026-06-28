@@ -199,6 +199,8 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/IndexStoreSettle.swift \
 	Sources/SwiftMkCore/IndexCompleteness.swift \
 	Sources/SwiftMkCore/FileLock.swift \
+	Sources/SwiftMkCore/BuildLock.swift \
+	Sources/SwiftMkCore/SwiftPM.swift \
 	Tests/SwiftMkRenderCoreTests/TemplateRendererTests.swift \
 	Tests/SwiftMkCoreTests/SwiftMkCoreTests.swift \
 	Tests/SwiftMkCoreTests/BuildTests.swift \
@@ -242,6 +244,8 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/StructuredGateTests.swift \
 	Tests/SwiftMkCoreTests/SwiftcheckTests.swift \
 	Tests/SwiftMkCoreTests/XCResultTests.swift \
+	Tests/SwiftMkCoreTests/BuildLockTests.swift \
+	Tests/SwiftMkCoreTests/SwiftPMTests.swift \
 	notices.txt \
 	templates/xcode/IDETemplateMacros.plist.template
 

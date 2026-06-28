@@ -173,8 +173,6 @@ enum DeadcodeScan {
 
   // MARK: Scan
 
-  private static let buildLockPath = ".make/deadcode-build.lock"
-
   private static func scanProject(
     path: String, isWorkspace: Bool, rawPath: String, coverage: DeadcodeCoverageBuild? = nil
   ) {
@@ -187,36 +185,37 @@ enum DeadcodeScan {
         message: "lint-deadcode: no Xcode schemes to scan in \(path)")
       return
     }
-    // Serialize the coverage build so two gate runs never build at the same
-    // time and corrupt each other's index store. `.make` already exists.
-    let lock = FileLock(path: buildLockPath)
-    lock?.acquire { Output.info("deadcode: waiting for the build lock") }
-    defer { lock?.release() }
-
-    guard let indexStore = ensureIndexStore(rawPath: rawPath, coverage: coverage) else {
-      return
+    // Serialize the coverage build against every other build in this worktree (a make
+    // build, a dev-tool SwiftPM build) so two builds never share `.build`/DerivedData
+    // and corrupt each other's index store. This per-worktree lock replaces the old
+    // dead-code-only `.make/deadcode-build.lock`, and is re-entrant so the coverage
+    // build's own nested engine calls do not self-deadlock.
+    BuildLock.withLock {
+      guard let indexStore = ensureIndexStore(rawPath: rawPath, coverage: coverage) else {
+        return
+      }
+      // A partial index is never scanned: periphery would read a missing
+      // reference as a false unused finding. The exact missing list goes to a
+      // trace-scoped log, so a failure is debuggable from the run's trace id.
+      let outcome = IndexCompleteness.verify(
+        indexStorePath: indexStore,
+        projectPath: path,
+        isWorkspace: isWorkspace,
+        excludeTargets: packageTargets)
+      switch outcome {
+      case .complete(let message):
+        Output.info(message)
+      case .incomplete(let message):
+        failHard(rawPath: rawPath, message: message)
+        return
+      }
+      runPeriphery(
+        project: path,
+        schemes: scanSchemes,
+        excludeTargets: Array(packageTargets).sorted(),
+        indexStore: indexStore,
+        rawPath: rawPath)
     }
-    // A partial index is never scanned: periphery would read a missing
-    // reference as a false unused finding. The exact missing list goes to a
-    // trace-scoped log, so a failure is debuggable from the run's trace id.
-    let outcome = IndexCompleteness.verify(
-      indexStorePath: indexStore,
-      projectPath: path,
-      isWorkspace: isWorkspace,
-      excludeTargets: packageTargets)
-    switch outcome {
-    case .complete(let message):
-      Output.info(message)
-    case .incomplete(let message):
-      failHard(rawPath: rawPath, message: message)
-      return
-    }
-    runPeriphery(
-      project: path,
-      schemes: scanSchemes,
-      excludeTargets: Array(packageTargets).sorted(),
-      indexStore: indexStore,
-      rawPath: rawPath)
   }
 
   /// The schemes to scan: every Xcode scheme whose name is not a Swift package
