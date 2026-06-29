@@ -55,6 +55,71 @@ enum SwiftPMTests {
   }
 
   @Test
+  static func compileCacheFlagsAppendedWhenEnabled() {
+    let priorEnabled = getenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED")
+    let priorPath = getenv("SWIFT_MK_SWIFTPM_CACHE_PATH")
+    let priorDiag = getenv("SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS")
+    setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", "YES", 1)
+    setenv("SWIFT_MK_SWIFTPM_CACHE_PATH", "/tmp/x", 1)
+    unsetenv("SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS")
+    defer {
+      if let v = priorEnabled {
+        setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", v, 1)
+      } else {
+        unsetenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED")
+      }
+      if let v = priorPath {
+        setenv("SWIFT_MK_SWIFTPM_CACHE_PATH", v, 1)
+      } else {
+        unsetenv("SWIFT_MK_SWIFTPM_CACHE_PATH")
+      }
+      if let v = priorDiag {
+        setenv("SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS", v, 1)
+      } else {
+        unsetenv("SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS")
+      }
+    }
+    let args = SwiftPM.cacheArguments()
+    let expected = [
+      "-Xswiftc", "-explicit-module-build",
+      "-Xswiftc", "-cache-compile-job",
+      "-Xswiftc", "-cas-path",
+      "-Xswiftc", "/tmp/x",
+    ]
+    let suffix = Array(args.suffix(expected.count))
+    #expect(suffix == expected, "expected compile-cache flags at end of \(args)")
+    #expect(!args.contains("-Rcache-compile-job"), "diagnostics flag must be absent when unset")
+  }
+
+  @Test
+  static func compileCacheFlagsAbsentWhenDisabled() {
+    let priorEnabled = getenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED")
+    let priorPath = getenv("SWIFT_MK_SWIFTPM_CACHE_PATH")
+    defer {
+      if let v = priorEnabled {
+        setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", v, 1)
+      } else {
+        unsetenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED")
+      }
+      if let v = priorPath {
+        setenv("SWIFT_MK_SWIFTPM_CACHE_PATH", v, 1)
+      } else {
+        unsetenv("SWIFT_MK_SWIFTPM_CACHE_PATH")
+      }
+    }
+    unsetenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED")
+    setenv("SWIFT_MK_SWIFTPM_CACHE_PATH", "/tmp/x", 1)
+    #expect(!SwiftPM.cacheArguments().contains("-explicit-module-build"))
+
+    setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", "NO", 1)
+    #expect(!SwiftPM.cacheArguments().contains("-explicit-module-build"))
+
+    setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", "YES", 1)
+    setenv("SWIFT_MK_SWIFTPM_CACHE_PATH", "off", 1)
+    #expect(!SwiftPM.cacheArguments().contains("-explicit-module-build"))
+  }
+
+  @Test
   static func executablePathJoinsBinPathAndProduct() {
     #expect(
       SwiftPM.executablePath(binPath: "/x/.build/debug", product: "Tool") == "/x/.build/debug/Tool")
