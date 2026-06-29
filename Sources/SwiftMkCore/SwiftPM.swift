@@ -162,7 +162,7 @@ public enum SwiftPM {
     return testWithoutGateCheck(request)
   }
 
-  // MARK: Read-only query (no gate, no artifact)
+  // MARK: No-artifact operations (no gate, lock only)
 
   /// The package's built-products directory from `swift build --show-bin-path`. It
   /// produces no artifact, so it needs no gate, but it resolves the package and may
@@ -186,6 +186,22 @@ public enum SwiftPM {
     }
     let trimmed = last.trimmingCharacters(in: .whitespaces)
     return trimmed.isEmpty ? nil : trimmed
+  }
+
+  /// Remove the package build directory with `swift package clean`. It produces no build
+  /// artifact, so it needs no gate, but it mutates `.build`, so it runs under the build
+  /// lock to never race a build in the same worktree. Output is forwarded, not captured,
+  /// so a `clean` failure shows the user the underlying error rather than a bare status.
+  @discardableResult
+  public static func clean(_ request: Request = Request()) -> Int32 {
+    Output.debug("swiftpm: cleaning the package build directory")
+    return BuildLock.withLock {
+      Shell.runForwardingOutput(
+        "swift",
+        ["package"] + packageArguments(request) + ["clean"],
+        environment: request.environment
+      )
+    }
   }
 
   /// `swift package describe --type json` for the package, captured. A read-only query
