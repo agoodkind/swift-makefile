@@ -219,6 +219,16 @@ public enum SwiftPM {
     return result.stdout
   }
 
+  // MARK: Engine-internal
+
+  /// Build a product for an engine-owned tool (the swiftcheck analyzer) with the build
+  /// lock but NOT the gate. This builds swift-mk's own tooling while a gate is already
+  /// running, so there is no consumer-product gate to satisfy and it must not be
+  /// refused. Engine callers in `SwiftMkCore` only.
+  static func buildProductInternal(_ request: Request) -> ProductBuild {
+    buildProductWithoutGateCheck(request)
+  }
+
   // MARK: Shared bodies
 
   static func buildWithoutGateCheck(_ request: Request) -> Int32 {
