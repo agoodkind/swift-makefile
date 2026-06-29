@@ -63,6 +63,9 @@ enum DeadcodeScan {
           + "periphery's package scan covers the package")
       return
     }
+    // Label the second of the two scans so its output, and any failure, is never
+    // read as contradicting the package scan's "No unused code detected" above.
+    Output.log("deadcode: xcode scan (Xcode project targets)")
     Output.debug("deadcode: resolving Xcode project shape")
     ensureProjectGenerated()
     switch projectShape() {

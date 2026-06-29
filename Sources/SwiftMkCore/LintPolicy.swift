@@ -311,10 +311,12 @@ enum LintPolicy {
     let config = Env.get("SWIFT_MK_PERIPHERY_CONFIG", ".make/periphery.yml")
     let args = Env.words(
       Env.get("PERIPHERY_ARGS", "scan --config \(config) --strict"))
+    Output.log("deadcode: package scan (Swift package targets)")
     let result = Shell.run(
       Env.get("PERIPHERY", "periphery"), args, environment: Lint.lintEnvironment())
     GateStatus.last = result.status
     Capture.write(result.combined, to: raw)
+    Output.log(result.combined.trimmingCharacters(in: .newlines))
     DeadcodeScan.appendXcodeFindings(rawPath: raw, coverage: coverage)
     Capture.extractFindings(
       rawPath: raw,
@@ -322,20 +324,10 @@ enum LintPolicy {
       excludePattern: Lint.peripheryExclude(),
       context: context)
     let status = GateStatus.last
-    let compileErrors = Text.readLines(raw).filter(Lint.isSwiftCompileError)
-    if !compileErrors.isEmpty {
-      Output.log("lint-deadcode: FAILED")
-      Output.log(
-        "  The dead-code build did not compile; fix the compile error before this gate "
-          + "can run.")
-      Output.log("Compile errors:")
-      Output.log(compileErrors.joined(separator: "\n"))
-      return false
-    }
-    if status >= Lint.deadcodeHardFailStatus {
-      Output.log("lint-deadcode: FAILED")
-      Output.log("  Periphery exited \(status)")
-      Output.log(Text.readLines(raw).joined(separator: "\n"))
+    // Shared with the make path: classify the compile error and the index/build
+    // failures, print the verdict line, and fail on the real cause before any
+    // baseline comparison.
+    if Lint.reportDeadcodeBuildFailure(rawPath: raw, status: status) {
       return false
     }
     let parsed = Lint.parseDeadcodeFindings(findingsPath: findingsPath, context: context)
