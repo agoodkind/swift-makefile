@@ -243,9 +243,13 @@ jobs:
           else
             # Curl the capacity endpoint; any error (timeout, non-200, malformed
             # body) falls through to hosted so the pool never blocks a gate.
+            # Pick the query separator so a capacity URL that already carries a
+            # query string stays valid instead of producing a double '?'.
+            sep='?'
+            case "${CAPACITY_URL}" in *\?*) sep='&' ;; esac
             response=$(curl -sf --max-time 5 \
               -H "Authorization: Bearer ${CAPACITY_TOKEN}" \
-              "${CAPACITY_URL}?repo=${REPO}&run_id=${RUN_ID}" 2>/dev/null || printf '')
+              "${CAPACITY_URL}${sep}repo=${REPO}&run_id=${RUN_ID}" 2>/dev/null || printf '')
             available=$(printf '%s' "${response}" | jq -r '.available // false' 2>/dev/null || printf 'false')
             if [[ "${available}" == "true" ]]; then
               label="${POOL_LABEL}"
@@ -262,7 +266,8 @@ jobs:
 
   # ── Build ──────────────────────────────────────────────────────────────────
   # build-pool: first attempt on the planned runner (pool or hosted).
-  # build-hosted: hosted-only fallback that runs only when build-pool fails.
+  # build-hosted: hosted-only fallback that runs when build-pool fails or is
+  # cancelled (a pool runner that disconnects mid-job ends as cancelled).
   # build: tiny aggregator that is the single required status check for Build.
   build-pool:
     name: Build (pool attempt)
@@ -325,7 +330,7 @@ jobs:
   build-hosted:
     name: Build (hosted fallback)
     needs: build-pool
-    if: ${{ needs.build-pool.result == 'failure' }}
+    if: ${{ needs.build-pool.result == 'failure' || needs.build-pool.result == 'cancelled' }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
@@ -407,7 +412,8 @@ jobs:
 
   # ── Test ───────────────────────────────────────────────────────────────────
   # test-pool: first attempt on the planned runner (pool or hosted).
-  # test-hosted: hosted-only fallback that runs only when test-pool fails.
+  # test-hosted: hosted-only fallback that runs when test-pool fails or is
+  # cancelled (a pool runner that disconnects mid-job ends as cancelled).
   # test: tiny aggregator that is the single required status check for Test.
   test-pool:
     name: Test (pool attempt)
@@ -470,7 +476,7 @@ jobs:
   test-hosted:
     name: Test (hosted fallback)
     needs: test-pool
-    if: ${{ needs.test-pool.result == 'failure' }}
+    if: ${{ needs.test-pool.result == 'failure' || needs.test-pool.result == 'cancelled' }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
@@ -552,7 +558,8 @@ jobs:
 
   # ── Extra Targets ──────────────────────────────────────────────────────────
   # extra-targets-pool: first attempt on the planned runner (pool or hosted).
-  # extra-targets-hosted: hosted-only fallback that runs only when pool fails.
+  # extra-targets-hosted: hosted-only fallback that runs when the pool attempt
+  # fails or is cancelled (a pool runner that disconnects ends as cancelled).
   # extra-targets: tiny aggregator that is the single required status check.
   # Both attempts skip when there are no bespoke targets to run.
   extra-targets-pool:
@@ -621,7 +628,7 @@ jobs:
   extra-targets-hosted:
     name: Extra Targets (hosted fallback)
     needs: extra-targets-pool
-    if: ${{ (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') && needs.extra-targets-pool.result == 'failure' }}
+    if: ${{ (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') && (needs.extra-targets-pool.result == 'failure' || needs.extra-targets-pool.result == 'cancelled') }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
