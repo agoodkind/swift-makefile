@@ -701,11 +701,18 @@ jobs:
         env:
           POOL_RESULT: ${{ needs.extra-targets-pool.result }}
           HOSTED_RESULT: ${{ needs.extra-targets-hosted.result }}
+          # True when bespoke targets are configured, so both attempts skipping
+          # means an upstream gate failed rather than a legitimate no-op.
+          HAS_EXTRA: ${{ inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]' }}
         run: |
           if [[ "${POOL_RESULT}" == "success" ]] || [[ "${HOSTED_RESULT}" == "success" ]]; then
             printf 'Extra targets passed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}"
           elif [[ "${POOL_RESULT}" == "skipped" ]] && [[ "${HOSTED_RESULT}" == "skipped" ]]; then
-            printf 'Extra targets skipped (pool=skipped, hosted=skipped); no targets configured or upstream step failed\n'
+            if [[ "${HAS_EXTRA}" == "true" ]]; then
+              printf 'Extra targets were configured but both attempts skipped; an upstream gate failed\n' >&2
+              exit 1
+            fi
+            printf 'Extra targets skipped (no bespoke targets configured)\n'
           else
             printf 'Extra targets failed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}" >&2
             exit 1
