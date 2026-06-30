@@ -35,7 +35,8 @@ enum NoLibSwiftPMImportTests {
       offenders.isEmpty,
       """
       SwiftMkCore must drive the swift CLI through the SwiftPM chokepoint, not link \
-      libSwiftPM. Remove these imports: \(offenders)
+      libSwiftPM. Remove these imports:
+      \(offenders.joined(separator: "\n"))
       """)
   }
 

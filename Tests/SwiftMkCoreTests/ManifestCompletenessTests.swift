@@ -28,7 +28,8 @@ enum ManifestCompletenessTests {
       missing.isEmpty,
       """
       these Sources/SwiftMkCore files are absent from SWIFT_MK_SCRIPT_FILES in \
-      swift.mk, so they would not be fetched into consumers: \(missing)
+      swift.mk, so they would not be fetched into consumers:
+      \(missing.joined(separator: "\n"))
       """)
   }
 
@@ -41,7 +42,8 @@ enum ManifestCompletenessTests {
       missing.isEmpty,
       """
       these Tests/SwiftMkCoreTests files are absent from SWIFT_MK_SCRIPT_FILES in \
-      swift.mk: \(missing)
+      swift.mk:
+      \(missing.joined(separator: "\n"))
       """)
   }
 
