@@ -58,3 +58,27 @@ func indexCompletenessKeepsRealOnDiskSource() {
   // resolves and is kept; no temp file or cleanup is needed.
   #expect(!IndexCompleteness.isUnresolvedSourceReference(#filePath))
 }
+
+@Test
+func indexCompletenessDropsTargetTheBuildNeverCompiled() {
+  // A target with no indexed source was not built, so a partial build does not
+  // read as incomplete: the target is out of scope.
+  let targetFiles: Set<String> = ["/proj/B/One.swift", "/proj/B/Two.swift"]
+  let indexed: Set<String> = ["/proj/A/Only.swift"]
+  #expect(!IndexCompleteness.targetIsInScope(targetFiles: targetFiles, indexed: indexed))
+}
+
+@Test
+func indexCompletenessKeepsTargetTheBuildCompiled() {
+  // A target with at least one indexed source was built, so the gate expects the
+  // rest of its sources too; a partially-indexed built target stays catchable.
+  let targetFiles: Set<String> = ["/proj/A/One.swift", "/proj/A/Two.swift"]
+  let indexed: Set<String> = ["/proj/A/One.swift"]
+  #expect(IndexCompleteness.targetIsInScope(targetFiles: targetFiles, indexed: indexed))
+}
+
+@Test
+func indexCompletenessTargetWithNoSourcesIsOutOfScope() {
+  #expect(
+    !IndexCompleteness.targetIsInScope(targetFiles: [], indexed: ["/proj/A/One.swift"]))
+}
