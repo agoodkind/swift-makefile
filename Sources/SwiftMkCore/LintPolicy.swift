@@ -317,7 +317,7 @@ enum LintPolicy {
     GateStatus.last = result.status
     Capture.write(DeadcodeScan.packageScanLabel + "\n" + result.combined, to: raw)
     Output.log(result.combined.trimmingCharacters(in: .newlines))
-    DeadcodeScan.appendXcodeFindings(rawPath: raw, coverage: coverage)
+    let indexStore = DeadcodeScan.appendXcodeFindings(rawPath: raw, coverage: coverage)
     Capture.extractFindings(
       rawPath: raw,
       findingsPath: findingsPath,
@@ -328,6 +328,16 @@ enum LintPolicy {
     // failures, print the verdict line, and fail on the real cause before any
     // baseline comparison.
     if Lint.reportDeadcodeBuildFailure(rawPath: raw, status: status) {
+      return false
+    }
+    // Unbypassable coverage check, shared with the make path: every owned Swift source
+    // must be covered by the package scan or the Xcode index, so own code in an Xcode
+    // target with no coverage build is not silently unscanned.
+    if case .incomplete(let message) = DeadcodeCoverageCompleteness.assert(
+      xcodeIndexStorePath: indexStore, context: context)
+    {
+      Output.log("lint-deadcode: FAILED")
+      Output.log(message)
       return false
     }
     let parsed = Lint.parseDeadcodeFindings(findingsPath: findingsPath, context: context)

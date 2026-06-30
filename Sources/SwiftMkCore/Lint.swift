@@ -199,11 +199,14 @@ public enum Lint {
       Env.get("PERIPHERY_DEFAULT_EXCLUDE_PATHS"), Env.get("PERIPHERY_EXCLUDE_PATHS"))
   }
 
+  /// Returns the Xcode index store the scan read, or nil when no Xcode scan ran, so
+  /// the runner can hand it to the coverage-completeness check.
+  @discardableResult
   public static func captureDeadcode(
     rawPath: String,
     findingsPath: String,
     context: PathContext
-  ) {
+  ) -> String? {
     Output.debug("periphery: capturing dead-code findings")
     // Label the first of the two scans, then echo its result, so the package scan's
     // "No unused code detected" is plainly the package half and is never confused
@@ -217,7 +220,7 @@ public enum Lint {
     GateStatus.last = result.status
     Capture.write(DeadcodeScan.packageScanLabel + "\n" + result.combined, to: rawPath)
     Output.log(result.combined.trimmingCharacters(in: .newlines))
-    DeadcodeScan.appendXcodeFindings(rawPath: rawPath)
+    let indexStore = DeadcodeScan.appendXcodeFindings(rawPath: rawPath)
     Capture.extractFindings(
       rawPath: rawPath,
       findingsPath: findingsPath,
@@ -225,6 +228,7 @@ public enum Lint {
       context: context
     )
     applyLineRanges(findingsPath)
+    return indexStore
   }
 
   /// Whether a build-output line is a Swift compiler error
@@ -250,7 +254,7 @@ public enum Lint {
     Output.debug("lint-deadcode: running gate")
     let raw = ".make/periphery.raw.out"
     let findings = ".make/periphery.out"
-    captureDeadcode(rawPath: raw, findingsPath: findings, context: context)
+    let indexStore = captureDeadcode(rawPath: raw, findingsPath: findings, context: context)
     let status = GateStatus.last
     // A compile error during periphery's own build leaves a partial index, and
     // periphery then reports referenced declarations as unused. Periphery does not
@@ -260,6 +264,17 @@ public enum Lint {
     // detects the compile error and the index/build failures, prints the classifying
     // verdict, and fails on the real cause first.
     if reportDeadcodeBuildFailure(rawPath: raw, status: status) {
+      Baseline.recordFailedGate("lint-deadcode")
+      return false
+    }
+    // Unbypassable coverage check: every owned Swift source must be covered by the
+    // package scan or the Xcode index. A consumer with own code only in Xcode targets
+    // and no coverage build configured would otherwise leave it silently unscanned.
+    if case .incomplete(let message) = DeadcodeCoverageCompleteness.assert(
+      xcodeIndexStorePath: indexStore, context: context)
+    {
+      Output.log("lint-deadcode: FAILED")
+      Output.log(message)
       Baseline.recordFailedGate("lint-deadcode")
       return false
     }

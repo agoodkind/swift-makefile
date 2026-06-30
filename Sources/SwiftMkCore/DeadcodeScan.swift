@@ -62,12 +62,18 @@ enum DeadcodeScan {
   /// (`SWIFT_MK_XCODE_BUILD == "1"`, the make path) or when the in-process API
   /// supplies a `coverage` callback, which is the decoupled path's signal that this
   /// is an Xcode consumer. With no env flag and no callback it stays a SwiftPM scan.
-  static func appendXcodeFindings(rawPath: String, coverage: DeadcodeCoverageBuild? = nil) {
+  /// Returns the index store the Xcode scan read when it ran cleanly, so the runner
+  /// can hand it to the coverage-completeness check, or nil when no Xcode scan ran or
+  /// it failed.
+  @discardableResult
+  static func appendXcodeFindings(
+    rawPath: String, coverage: DeadcodeCoverageBuild? = nil
+  ) -> String? {
     guard xcodeScanEnabled(Env.get("SWIFT_MK_XCODE_BUILD")) || coverage != nil else {
       Output.debug(
         "deadcode: SwiftPM build (SWIFT_MK_XCODE_BUILD unset), skipping Xcode scan; "
           + "periphery's package scan covers the package")
-      return
+      return nil
     }
     // Label the second of the two scans so its output, and any failure, is never
     // read as contradicting the package scan's "No unused code detected" above. The
@@ -79,6 +85,7 @@ enum DeadcodeScan {
     switch projectShape() {
     case .swiftPMOnly:
       Output.debug("deadcode: SwiftPM-only repo, no Xcode scan")
+      return nil
     case .manifestWithoutProject(let manifest):
       failHard(
         rawPath: rawPath,
@@ -86,8 +93,9 @@ enum DeadcodeScan {
           "lint-deadcode: \(manifest) declares an Xcode project but none was "
           + "generated; set SWIFT_GENERATE_CMD so the project is produced before "
           + "the gate runs")
+      return nil
     case .project(let reference):
-      scanProject(
+      return scanProject(
         path: reference.path,
         isWorkspace: reference.isWorkspace,
         rawPath: rawPath,
@@ -184,9 +192,11 @@ enum DeadcodeScan {
 
   // MARK: Scan
 
+  /// Returns the index store the scan read when it ran cleanly, so the runner can
+  /// hand it to the coverage-completeness check, or nil on any failure or skip.
   private static func scanProject(
     path: String, isWorkspace: Bool, rawPath: String, coverage: DeadcodeCoverageBuild? = nil
-  ) {
+  ) -> String? {
     let schemes = discoverSchemes(project: path, isWorkspace: isWorkspace)
     let packageTargets = packageTargetNames()
     let scanSchemes = schemesToScan(schemes, packageTargets: packageTargets)
@@ -194,16 +204,16 @@ enum DeadcodeScan {
       failHard(
         rawPath: rawPath,
         message: "lint-deadcode: no Xcode schemes to scan in \(path)")
-      return
+      return nil
     }
     // Serialize the coverage build against every other build in this worktree (a make
     // build, a dev-tool SwiftPM build) so two builds never share `.build`/DerivedData
     // and corrupt each other's index store. This per-worktree lock replaces the old
     // dead-code-only `.make/deadcode-build.lock`, and is re-entrant so the coverage
     // build's own nested engine calls do not self-deadlock.
-    BuildLock.withLock {
+    return BuildLock.withLock { () -> String? in
       guard let indexStore = ensureIndexStore(rawPath: rawPath, coverage: coverage) else {
-        return
+        return nil
       }
       // A partial index is never scanned: periphery would read a missing
       // reference as a false unused finding. The exact missing list goes to a
@@ -218,7 +228,7 @@ enum DeadcodeScan {
         Output.info(message)
       case .incomplete(let message):
         failHard(rawPath: rawPath, message: message)
-        return
+        return nil
       }
       runPeriphery(
         project: path,
@@ -226,6 +236,7 @@ enum DeadcodeScan {
         excludeTargets: Array(packageTargets).sorted(),
         indexStore: indexStore,
         rawPath: rawPath)
+      return indexStore
     }
   }
 
@@ -555,12 +566,17 @@ struct XcodeList: Decodable {
 
 // MARK: - PackageDescription
 
-/// The subset of `swift package describe --type json` the gate reads: the target
-/// names of the Swift package.
+/// The subset of `swift package describe --type json` the gate reads: the package
+/// root path and, per target, the name plus the source-file list the coverage check
+/// needs. `path` and `sources` are optional so a describe output without them still
+/// decodes for `parsePackageTargets`, which reads only `name`.
 struct PackageDescription: Decodable {
   struct Target: Decodable {
     let name: String
+    let path: String?
+    let sources: [String]?
   }
 
+  let path: String?
   let targets: [Target]
 }
