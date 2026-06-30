@@ -18,7 +18,7 @@ SwiftPM compilation caching is off by default. A consumer turns it on with `SWIF
 
 The reason is the required flag. `swift build` only caches when it runs in explicit-module-build mode, so the engine passes `-Xswiftc -explicit-module-build` alongside `-Xswiftc -cache-compile-job` and `-Xswiftc -cas-path`. Without `-explicit-module-build`, `swift build` prints `cannot be used without explicit module build, turn off caching` and the store stays empty.
 
-Explicit module builds change how the compiler resolves modules, which can break a macro or C-interop target that an implicit-module build compiled. The off-by-default knob keeps that risk on the consumer that opts in, not on every `swift build` the engine runs. The make layer also forces the enable flag to NO when the toolchain does not advertise `-cache-compile-job`, so an older toolchain never receives the flags.
+Explicit module builds change how the compiler resolves modules, which can break a macro or C-interop target that an implicit-module build compiled. The off-by-default knob keeps that risk on the consumer that opts in, not on every `swift build` the engine runs. When a consumer opts in, the make layer enables the flags only on a supporting toolchain: it detects the capability from the frontend help, and falls back to a Swift 6.3 version floor when that help text is absent, so an older toolchain never receives the flags.
 
 `SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS=1` adds `-Xswiftc -Rcache-compile-job`, which prints a replay or miss remark per output file. Use it to confirm replay.
 
