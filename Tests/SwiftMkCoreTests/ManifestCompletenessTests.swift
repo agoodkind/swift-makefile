@@ -47,7 +47,10 @@ enum ManifestCompletenessTests {
 
   // MARK: helpers
 
-  enum ManifestError: Error { case manifestNotFound }
+  enum ManifestError: Error {
+    case directoryUnreadable(String)
+    case manifestNotFound
+  }
 
   /// Walk up from this test file to the directory holding `swift.mk`, the engine repo
   /// root in any checkout or worktree, and read the manifest text.
@@ -63,16 +66,19 @@ enum ManifestCompletenessTests {
     throw ManifestError.manifestNotFound
   }
 
-  /// The `.swift` files in `directory` (relative to the repo root) whose repo-relative
-  /// path does not appear verbatim in the manifest text.
+  /// The `.swift` files under `directory` (relative to the repo root), recursively,
+  /// whose repo-relative path does not appear verbatim in the manifest text. Recurses
+  /// so a file in a nested subdirectory cannot slip past the invariant.
   static func filesMissingFromManifest(
     directory: String, root: String, manifest: String
   ) throws -> [String] {
     let absolute = (root as NSString).appendingPathComponent(directory)
-    let entries = try FileManager.default.contentsOfDirectory(atPath: absolute)
+    guard let enumerator = FileManager.default.enumerator(atPath: absolute) else {
+      throw ManifestError.directoryUnreadable(absolute)
+    }
     var missing: [String] = []
-    for entry in entries where entry.hasSuffix(".swift") {
-      let relativePath = directory + "/" + entry
+    for case let relative as String in enumerator where relative.hasSuffix(".swift") {
+      let relativePath = directory + "/" + relative
       if !manifest.contains(relativePath) {
         missing.append(relativePath)
       }
