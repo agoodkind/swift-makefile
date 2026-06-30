@@ -54,6 +54,15 @@ enum GatedBuildHarness {
     let xcodebuildMarker: String
   }
 
+  /// A SwiftPM manifest with one target covering Sources, so the coverage-completeness
+  /// gate sees the checkout's `App.swift` as package-scanned.
+  private static let packageManifest = """
+    // swift-tools-version: 6.0
+    import PackageDescription
+    let package = Package(name: "App", targets: [.target(name: "App", path: "Sources")])
+
+    """
+
   /// Run `body` inside a fake checkout, restoring the working directory and the
   /// mutated environment afterward. Serialize callers (the working directory and
   /// process environment are global).
@@ -79,9 +88,10 @@ enum GatedBuildHarness {
     try manager.createDirectory(atPath: binDir, withIntermediateDirectories: true)
     try "// fake source\nlet appValue = 1\n".write(
       toFile: root + "/Sources/App.swift", atomically: true, encoding: .utf8)
-    try
-      "// swift-tools-version: 6.0\nimport PackageDescription\nlet package = Package(name: \"App\")\n"
-      .write(toFile: root + "/Package.swift", atomically: true, encoding: .utf8)
+    // packageManifest declares a target covering Sources so the coverage gate sees
+    // App.swift as package-scanned, the way a real consumer's package covers its
+    // sources; a degenerate no-target package would read as an unscanned-own-code bypass.
+    try packageManifest.write(toFile: root + "/Package.swift", atomically: true, encoding: .utf8)
 
     let xcodebuildMarker = root + "/xcodebuild-ran"
     try writeFakes(binDir: binDir)
