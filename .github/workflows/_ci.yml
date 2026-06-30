@@ -219,6 +219,12 @@ jobs:
       build_label: ${{ steps.pick.outputs.build_label }}
       test_label: ${{ steps.pick.outputs.test_label }}
       extra_targets_label: ${{ steps.pick.outputs.extra_targets_label }}
+      # on_pool: the gates were routed to the self-hosted pool, so a hosted
+      # fallback is meaningful. extra_targets_enabled: the run configured any
+      # extra targets. Both name the intent the gnarly fallback if: needs, so it
+      # reads as "always, was on the pool, the pool did not pass".
+      on_pool: ${{ steps.pick.outputs.on_pool }}
+      extra_targets_enabled: ${{ inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]' }}
     steps:
       - name: Pick runner labels
         id: pick
@@ -258,10 +264,19 @@ jobs:
             fi
           fi
 
+          # on_pool is true only when a pool label was actually chosen, so the
+          # hosted fallback never re-runs a gate that already ran on hosted.
+          if [[ "${label}" != "${HOSTED_LABEL}" ]]; then
+            on_pool=true
+          else
+            on_pool=false
+          fi
+
           {
             printf 'build_label=%s\n' "${label}"
             printf 'test_label=%s\n' "${label}"
             printf 'extra_targets_label=%s\n' "${label}"
+            printf 'on_pool=%s\n' "${on_pool}"
           } >> "${GITHUB_OUTPUT}"
 
   # ── Build ──────────────────────────────────────────────────────────────────
@@ -294,7 +309,9 @@ jobs:
   build-hosted:
     name: Build (hosted fallback)
     needs: [plan-runners, build-pool]
-    if: ${{ needs.plan-runners.outputs.build_label != inputs.runner && (needs.build-pool.result == 'failure' || needs.build-pool.result == 'cancelled') }}
+    # always() defeats GitHub's implicit skip so the fallback runs when the pool
+    # attempt fails; on_pool gates it to pool-routed runs.
+    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && (needs.build-pool.result == 'failure' || needs.build-pool.result == 'cancelled') }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: build
@@ -368,7 +385,8 @@ jobs:
   test-hosted:
     name: Test (hosted fallback)
     needs: [plan-runners, test-pool]
-    if: ${{ needs.plan-runners.outputs.test_label != inputs.runner && (needs.test-pool.result == 'failure' || needs.test-pool.result == 'cancelled') }}
+    # See the build-hosted note: always() + on_pool + a failed pool attempt.
+    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && (needs.test-pool.result == 'failure' || needs.test-pool.result == 'cancelled') }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: test
@@ -423,7 +441,7 @@ jobs:
     # always() defeats the implicit skip that fires when a needed job uses
     # if: always() (the build/test aggregates do); the explicit result checks
     # keep this gated on every upstream gate actually succeeding.
-    if: ${{ always() && needs.plan-runners.result == 'success' && needs.quality.result == 'success' && needs.build.result == 'success' && needs.test.result == 'success' && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') }}
+    if: ${{ always() && needs.plan-runners.result == 'success' && needs.quality.result == 'success' && needs.build.result == 'success' && needs.test.result == 'success' && needs.plan-runners.outputs.extra_targets_enabled == 'true' }}
     needs: [plan-runners, quality, build, test]
     uses: ./.github/workflows/_ci-gate.yml
     with:
@@ -449,7 +467,9 @@ jobs:
   extra-targets-hosted:
     name: Extra Targets (hosted fallback)
     needs: [plan-runners, extra-targets-pool]
-    if: ${{ (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') && needs.plan-runners.outputs.extra_targets_label != inputs.runner && (needs.extra-targets-pool.result == 'failure' || needs.extra-targets-pool.result == 'cancelled') }}
+    # See the build-hosted note, plus extra_targets_enabled so it only runs when
+    # extra targets were configured.
+    if: ${{ always() && needs.plan-runners.outputs.extra_targets_enabled == 'true' && needs.plan-runners.outputs.on_pool == 'true' && (needs.extra-targets-pool.result == 'failure' || needs.extra-targets-pool.result == 'cancelled') }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: extra-targets

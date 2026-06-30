@@ -55,6 +55,120 @@ enum SwiftPMTests {
   }
 
   @Test
+  static func compileCacheFlagsAppendedWhenEnabled() {
+    let priorEnabled = getenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED").map { String(cString: $0) }
+    let priorPath = getenv("SWIFT_MK_SWIFTPM_CACHE_PATH").map { String(cString: $0) }
+    let priorDiag = getenv("SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS").map { String(cString: $0) }
+    let priorArgs = getenv("SWIFT_MK_SWIFTPM_CACHE_ARGS").map { String(cString: $0) }
+    setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", "YES", 1)
+    setenv("SWIFT_MK_SWIFTPM_CACHE_PATH", "/tmp/x", 1)
+    unsetenv("SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS")
+    unsetenv("SWIFT_MK_SWIFTPM_CACHE_ARGS")
+    defer {
+      if let value = priorEnabled {
+        setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", value, 1)
+      } else {
+        unsetenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED")
+      }
+      if let value = priorPath {
+        setenv("SWIFT_MK_SWIFTPM_CACHE_PATH", value, 1)
+      } else {
+        unsetenv("SWIFT_MK_SWIFTPM_CACHE_PATH")
+      }
+      if let value = priorDiag {
+        setenv("SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS", value, 1)
+      } else {
+        unsetenv("SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS")
+      }
+      if let value = priorArgs {
+        setenv("SWIFT_MK_SWIFTPM_CACHE_ARGS", value, 1)
+      } else {
+        unsetenv("SWIFT_MK_SWIFTPM_CACHE_ARGS")
+      }
+    }
+    let args = SwiftPM.cacheArguments()
+    let expected = [
+      "-Xswiftc", "-explicit-module-build",
+      "-Xswiftc", "-cache-compile-job",
+      "-Xswiftc", "-cas-path",
+      "-Xswiftc", "/tmp/x",
+    ]
+    let suffix = Array(args.suffix(expected.count))
+    #expect(suffix == expected, "expected compile-cache flags at end of \(args)")
+    #expect(!args.contains("-Rcache-compile-job"), "diagnostics flag must be absent when unset")
+  }
+
+  @Test
+  static func compileCacheFlagsAbsentWhenDisabled() {
+    let priorEnabled = getenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED").map { String(cString: $0) }
+    let priorPath = getenv("SWIFT_MK_SWIFTPM_CACHE_PATH").map { String(cString: $0) }
+    let priorArgs = getenv("SWIFT_MK_SWIFTPM_CACHE_ARGS").map { String(cString: $0) }
+    defer {
+      if let value = priorEnabled {
+        setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", value, 1)
+      } else {
+        unsetenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED")
+      }
+      if let value = priorPath {
+        setenv("SWIFT_MK_SWIFTPM_CACHE_PATH", value, 1)
+      } else {
+        unsetenv("SWIFT_MK_SWIFTPM_CACHE_PATH")
+      }
+      if let value = priorArgs {
+        setenv("SWIFT_MK_SWIFTPM_CACHE_ARGS", value, 1)
+      } else {
+        unsetenv("SWIFT_MK_SWIFTPM_CACHE_ARGS")
+      }
+    }
+    unsetenv("SWIFT_MK_SWIFTPM_CACHE_ARGS")
+    unsetenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED")
+    setenv("SWIFT_MK_SWIFTPM_CACHE_PATH", "/tmp/x", 1)
+    #expect(!SwiftPM.cacheArguments().contains("-explicit-module-build"))
+
+    setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", "NO", 1)
+    #expect(!SwiftPM.cacheArguments().contains("-explicit-module-build"))
+
+    setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", "YES", 1)
+    setenv("SWIFT_MK_SWIFTPM_CACHE_PATH", "off", 1)
+    #expect(!SwiftPM.cacheArguments().contains("-explicit-module-build"))
+  }
+
+  @Test
+  static func compileCacheDiagnosticsFlagAppendedWhenSet() {
+    let priorEnabled = getenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED").map { String(cString: $0) }
+    let priorPath = getenv("SWIFT_MK_SWIFTPM_CACHE_PATH").map { String(cString: $0) }
+    let priorDiag = getenv("SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS").map { String(cString: $0) }
+    let priorArgs = getenv("SWIFT_MK_SWIFTPM_CACHE_ARGS").map { String(cString: $0) }
+    setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", "YES", 1)
+    setenv("SWIFT_MK_SWIFTPM_CACHE_PATH", "/tmp/x", 1)
+    setenv("SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS", "1", 1)
+    unsetenv("SWIFT_MK_SWIFTPM_CACHE_ARGS")
+    defer {
+      if let value = priorEnabled {
+        setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", value, 1)
+      } else {
+        unsetenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED")
+      }
+      if let value = priorPath {
+        setenv("SWIFT_MK_SWIFTPM_CACHE_PATH", value, 1)
+      } else {
+        unsetenv("SWIFT_MK_SWIFTPM_CACHE_PATH")
+      }
+      if let value = priorDiag {
+        setenv("SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS", value, 1)
+      } else {
+        unsetenv("SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS")
+      }
+      if let value = priorArgs {
+        setenv("SWIFT_MK_SWIFTPM_CACHE_ARGS", value, 1)
+      } else {
+        unsetenv("SWIFT_MK_SWIFTPM_CACHE_ARGS")
+      }
+    }
+    #expect(SwiftPM.cacheArguments().contains("-Rcache-compile-job"))
+  }
+
+  @Test
   static func executablePathJoinsBinPathAndProduct() {
     #expect(
       SwiftPM.executablePath(binPath: "/x/.build/debug", product: "Tool") == "/x/.build/debug/Tool")

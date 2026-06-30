@@ -46,7 +46,8 @@ public enum IndexCompleteness {
       let expected = try expectedSwiftFiles(
         projectPath: projectPath,
         isWorkspace: isWorkspace,
-        excludeTargets: excludeTargets)
+        excludeTargets: excludeTargets,
+        indexed: indexed)
       missing = expected.subtracting(indexed).sorted()
       expectedCount = expected.count
     } catch {
@@ -61,9 +62,32 @@ public enum IndexCompleteness {
       traceID: Logging.correlation.traceID,
       name: "deadcode-index-incomplete")
     return .incomplete(
-      "lint-deadcode: index incomplete, \(missing.count) of \(expectedCount) "
-        + "target sources not indexed, not scanning; missing list at "
-        + (logPath ?? "(log unavailable)"))
+      incompleteMessage(
+        missingCount: missing.count,
+        expectedCount: expectedCount,
+        logPath: logPath ?? "(log unavailable)"))
+  }
+
+  /// The gate's incomplete-index message, worded to read as a build failure rather
+  /// than a transient index race, so an agent reads the cause and the action instead
+  /// of clearing DerivedData and retrying. Splits the empty case (the coverage build
+  /// produced nothing) from the partial case (some targets did not build). The
+  /// `produced no index` and `unbuilt)` markers are what the runner classifies on for
+  /// its verdict line, so keep them in sync with `Lint.classifyDeadcodeFailure`.
+  public static func incompleteMessage(
+    missingCount: Int, expectedCount: Int, logPath: String
+  ) -> String {
+    let indexedCount = expectedCount - missingCount
+    if indexedCount <= 0 {
+      return "lint-deadcode: the coverage build produced no index "
+        + "(0 of \(expectedCount) sources indexed).\n"
+        + "  Cause: the build failed, crashed, or did nothing. Not a flake. "
+        + "Fix the build; re-running unchanged repeats it. Missing list: \(logPath)"
+    }
+    return "lint-deadcode: the coverage build indexed \(indexedCount) of "
+      + "\(expectedCount) sources (\(missingCount) targets unbuilt).\n"
+      + "  Cause: those targets did not build. Not a flake. "
+      + "Fix them; re-running unchanged repeats it. Missing list: \(logPath)"
   }
 
   /// The absolute `.swift` paths the index store recorded, from the units the
@@ -81,12 +105,23 @@ public enum IndexCompleteness {
     return files
   }
 
-  /// The absolute `.swift` paths that the project's non-test, non-excluded targets
-  /// contain, read from each target's source build phase through `XcodeProj`.
-  public static func expectedSwiftFiles(
+  /// The absolute `.swift` paths the in-scope targets contain, read from each target's
+  /// source build phase through `XcodeProj`. A target is in scope only when the index
+  /// recorded at least one of its sources, which means the build compiled it. A target
+  /// the build did not compile has no indexed source, so it is not expected and a
+  /// partial build does not read as incomplete. A built target whose sources only
+  /// partially indexed is in scope, so its un-indexed files still show as missing. The
+  /// index is the authoritative record of what was built (the same signal periphery
+  /// uses), so this is robust to implicitly-built targets, which appear in the index.
+  ///
+  /// Internal, not public: the only caller is `verify`, so the index-scoped signature
+  /// is not part of the engine's public API surface and adding the `indexed` parameter
+  /// breaks no external consumer.
+  static func expectedSwiftFiles(
     projectPath: String,
     isWorkspace: Bool,
-    excludeTargets: Set<String>
+    excludeTargets: Set<String>,
+    indexed: Set<String>
   ) throws -> Set<String> {
     let projectPaths =
       isWorkspace
@@ -105,6 +140,7 @@ public enum IndexCompleteness {
         else {
           continue
         }
+        var targetFiles: Set<String> = []
         for buildFile in buildFiles {
           guard let element = buildFile.file,
             let fullPath = try element.fullPath(sourceRoot: sourceRoot),
@@ -117,11 +153,22 @@ public enum IndexCompleteness {
           if isUnresolvedSourceReference(resolved) {
             continue
           }
-          files.insert(resolved)
+          targetFiles.insert(resolved)
+        }
+        if targetIsInScope(targetFiles: targetFiles, indexed: indexed) {
+          files.formUnion(targetFiles)
         }
       }
     }
     return files
+  }
+
+  /// A target is in scope for the completeness check only when the index recorded at
+  /// least one of its sources. That means the build compiled the target, so the gate
+  /// should expect the rest of its sources to be indexed too. A target with no indexed
+  /// source was not built, so a partial build does not read as incomplete.
+  static func targetIsInScope(targetFiles: Set<String>, indexed: Set<String>) -> Bool {
+    !targetFiles.isDisjoint(with: indexed)
   }
 
   /// True when a target source path is a vendored SPM dependency, not the project's
