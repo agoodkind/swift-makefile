@@ -294,7 +294,10 @@ jobs:
   build-hosted:
     name: Build (hosted fallback)
     needs: [plan-runners, build-pool]
-    if: ${{ needs.plan-runners.outputs.build_label != inputs.runner && (needs.build-pool.result == 'failure' || needs.build-pool.result == 'cancelled') }}
+    # always() is required: without a status function, GitHub's implicit skip
+    # drops this job when build-pool fails, so the hosted fallback would never
+    # run on a real pool failure. The explicit result checks keep it gated.
+    if: ${{ always() && needs.plan-runners.outputs.build_label != inputs.runner && (needs.build-pool.result == 'failure' || needs.build-pool.result == 'cancelled') }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: build
@@ -368,7 +371,9 @@ jobs:
   test-hosted:
     name: Test (hosted fallback)
     needs: [plan-runners, test-pool]
-    if: ${{ needs.plan-runners.outputs.test_label != inputs.runner && (needs.test-pool.result == 'failure' || needs.test-pool.result == 'cancelled') }}
+    # always() is required so the hosted fallback runs when test-pool fails;
+    # see the build-hosted note above.
+    if: ${{ always() && needs.plan-runners.outputs.test_label != inputs.runner && (needs.test-pool.result == 'failure' || needs.test-pool.result == 'cancelled') }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: test
@@ -449,7 +454,9 @@ jobs:
   extra-targets-hosted:
     name: Extra Targets (hosted fallback)
     needs: [plan-runners, extra-targets-pool]
-    if: ${{ (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') && needs.plan-runners.outputs.extra_targets_label != inputs.runner && (needs.extra-targets-pool.result == 'failure' || needs.extra-targets-pool.result == 'cancelled') }}
+    # always() is required so the hosted fallback runs when extra-targets-pool
+    # fails; see the build-hosted note above.
+    if: ${{ always() && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') && needs.plan-runners.outputs.extra_targets_label != inputs.runner && (needs.extra-targets-pool.result == 'failure' || needs.extra-targets-pool.result == 'cancelled') }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: extra-targets
