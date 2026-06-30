@@ -46,7 +46,8 @@ public enum IndexCompleteness {
       let expected = try expectedSwiftFiles(
         projectPath: projectPath,
         isWorkspace: isWorkspace,
-        excludeTargets: excludeTargets)
+        excludeTargets: excludeTargets,
+        indexed: indexed)
       missing = expected.subtracting(indexed).sorted()
       expectedCount = expected.count
     } catch {
@@ -104,12 +105,19 @@ public enum IndexCompleteness {
     return files
   }
 
-  /// The absolute `.swift` paths that the project's non-test, non-excluded targets
-  /// contain, read from each target's source build phase through `XcodeProj`.
+  /// The absolute `.swift` paths the in-scope targets contain, read from each target's
+  /// source build phase through `XcodeProj`. A target is in scope only when the index
+  /// recorded at least one of its sources, which means the build compiled it. A target
+  /// the build did not compile has no indexed source, so it is not expected and a
+  /// partial build does not read as incomplete. A built target whose sources only
+  /// partially indexed is in scope, so its un-indexed files still show as missing. The
+  /// index is the authoritative record of what was built (the same signal periphery
+  /// uses), so this is robust to implicitly-built targets, which appear in the index.
   public static func expectedSwiftFiles(
     projectPath: String,
     isWorkspace: Bool,
-    excludeTargets: Set<String>
+    excludeTargets: Set<String>,
+    indexed: Set<String>
   ) throws -> Set<String> {
     let projectPaths =
       isWorkspace
@@ -128,6 +136,7 @@ public enum IndexCompleteness {
         else {
           continue
         }
+        var targetFiles: Set<String> = []
         for buildFile in buildFiles {
           guard let element = buildFile.file,
             let fullPath = try element.fullPath(sourceRoot: sourceRoot),
@@ -140,11 +149,22 @@ public enum IndexCompleteness {
           if isUnresolvedSourceReference(resolved) {
             continue
           }
-          files.insert(resolved)
+          targetFiles.insert(resolved)
+        }
+        if targetIsInScope(targetFiles: targetFiles, indexed: indexed) {
+          files.formUnion(targetFiles)
         }
       }
     }
     return files
+  }
+
+  /// A target is in scope for the completeness check only when the index recorded at
+  /// least one of its sources. That means the build compiled the target, so the gate
+  /// should expect the rest of its sources to be indexed too. A target with no indexed
+  /// source was not built, so a partial build does not read as incomplete.
+  static func targetIsInScope(targetFiles: Set<String>, indexed: Set<String>) -> Bool {
+    !targetFiles.isDisjoint(with: indexed)
   }
 
   /// True when a target source path is a vendored SPM dependency, not the project's
