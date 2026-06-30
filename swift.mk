@@ -683,7 +683,7 @@ help:
 	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_PATH=...|off' 'shared CAS store path, kept outside DerivedData'
 	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_DIAGNOSTICS=1' 'emit Xcode compilation cache diagnostic remarks'
 	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE_PATH=...|off' 'shared CAS store for swift build compilation caching'
-	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_COMPILE_CACHE=auto|off' 'opt-in swift build compilation caching (off by default)'
+	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_COMPILE_CACHE=auto|1|0' 'opt-in swift build compilation caching (off by default)'
 	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS=1' 'emit swift build compilation cache diagnostic remarks'
 	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE_ARGS=...' 'override shared SwiftPM cache flags'
 	@printf '  %-40s %s\n' 'ccache/sccache' 'C-family cache tools; not Swift compilation caches'

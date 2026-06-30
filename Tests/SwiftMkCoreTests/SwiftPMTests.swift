@@ -59,9 +59,11 @@ enum SwiftPMTests {
     let priorEnabled = getenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED").map { String(cString: $0) }
     let priorPath = getenv("SWIFT_MK_SWIFTPM_CACHE_PATH").map { String(cString: $0) }
     let priorDiag = getenv("SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS").map { String(cString: $0) }
+    let priorArgs = getenv("SWIFT_MK_SWIFTPM_CACHE_ARGS").map { String(cString: $0) }
     setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", "YES", 1)
     setenv("SWIFT_MK_SWIFTPM_CACHE_PATH", "/tmp/x", 1)
     unsetenv("SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS")
+    unsetenv("SWIFT_MK_SWIFTPM_CACHE_ARGS")
     defer {
       if let value = priorEnabled {
         setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", value, 1)
@@ -77,6 +79,11 @@ enum SwiftPMTests {
         setenv("SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS", value, 1)
       } else {
         unsetenv("SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS")
+      }
+      if let value = priorArgs {
+        setenv("SWIFT_MK_SWIFTPM_CACHE_ARGS", value, 1)
+      } else {
+        unsetenv("SWIFT_MK_SWIFTPM_CACHE_ARGS")
       }
     }
     let args = SwiftPM.cacheArguments()
@@ -95,6 +102,7 @@ enum SwiftPMTests {
   static func compileCacheFlagsAbsentWhenDisabled() {
     let priorEnabled = getenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED").map { String(cString: $0) }
     let priorPath = getenv("SWIFT_MK_SWIFTPM_CACHE_PATH").map { String(cString: $0) }
+    let priorArgs = getenv("SWIFT_MK_SWIFTPM_CACHE_ARGS").map { String(cString: $0) }
     defer {
       if let value = priorEnabled {
         setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", value, 1)
@@ -106,7 +114,13 @@ enum SwiftPMTests {
       } else {
         unsetenv("SWIFT_MK_SWIFTPM_CACHE_PATH")
       }
+      if let value = priorArgs {
+        setenv("SWIFT_MK_SWIFTPM_CACHE_ARGS", value, 1)
+      } else {
+        unsetenv("SWIFT_MK_SWIFTPM_CACHE_ARGS")
+      }
     }
+    unsetenv("SWIFT_MK_SWIFTPM_CACHE_ARGS")
     unsetenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED")
     setenv("SWIFT_MK_SWIFTPM_CACHE_PATH", "/tmp/x", 1)
     #expect(!SwiftPM.cacheArguments().contains("-explicit-module-build"))
@@ -124,9 +138,11 @@ enum SwiftPMTests {
     let priorEnabled = getenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED").map { String(cString: $0) }
     let priorPath = getenv("SWIFT_MK_SWIFTPM_CACHE_PATH").map { String(cString: $0) }
     let priorDiag = getenv("SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS").map { String(cString: $0) }
+    let priorArgs = getenv("SWIFT_MK_SWIFTPM_CACHE_ARGS").map { String(cString: $0) }
     setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", "YES", 1)
     setenv("SWIFT_MK_SWIFTPM_CACHE_PATH", "/tmp/x", 1)
     setenv("SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS", "1", 1)
+    unsetenv("SWIFT_MK_SWIFTPM_CACHE_ARGS")
     defer {
       if let value = priorEnabled {
         setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", value, 1)
@@ -142,6 +158,11 @@ enum SwiftPMTests {
         setenv("SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS", value, 1)
       } else {
         unsetenv("SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS")
+      }
+      if let value = priorArgs {
+        setenv("SWIFT_MK_SWIFTPM_CACHE_ARGS", value, 1)
+      } else {
+        unsetenv("SWIFT_MK_SWIFTPM_CACHE_ARGS")
       }
     }
     #expect(SwiftPM.cacheArguments().contains("-Rcache-compile-job"))
