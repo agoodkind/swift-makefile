@@ -233,9 +233,9 @@ enum DeadcodeCoverageCompleteness {
     let body = lines.joined(separator: "\n")
     let fullList = logPath ?? "(log unavailable)"
     let remediation =
-      "  Configure the Xcode coverage build so these are scanned: set "
-      + "SWIFT_XCODE_SCHEME, and SWIFT_DEADCODE_BUILD_CMD if the build needs a target "
-      + "argument. Full list: \(fullList)"
+      "  Cover each file by adding it to a SwiftPM target, or configure the Xcode "
+      + "coverage build (set SWIFT_XCODE_SCHEME, and SWIFT_DEADCODE_BUILD_CMD if the "
+      + "build needs a target argument). Full list: \(fullList)"
     return [header, body, remediation].joined(separator: "\n")
   }
 
