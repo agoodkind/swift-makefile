@@ -6,10 +6,22 @@ The cache subsystem speeds builds across runs and across worktrees, and the engi
 
 [`CachePlan`](../../Sources/SwiftMkCore/CachePlan.swift), [`CachePaths`](../../Sources/SwiftMkCore/CachePaths.swift), and [`CacheService`](../../Sources/SwiftMkCore/CacheService.swift) compute the cache plan, resolve the cache paths, and run the cache operations. [`BuildCache`](../../Sources/SwiftMkCore/BuildCache.swift) auto-detects ccache and compiles through it. The deleted `cache-plan.sh` does not return; the logic is Swift.
 
+## Three cache buckets
+
+[`CachePaths`](../../Sources/SwiftMkCore/CachePaths.swift) sorts the cacheable directories into three buckets, because they have different lifetimes and writers:
+
+- The dependency bucket holds job-invariant downloads: SPM checkouts, the module cache, and mise installs. Every gate fetches the same ones, so one shared key is correct.
+- The build bucket holds commit-keyed intermediates: the `.build` dirs and the DerivedData build database.
+- The compile bucket holds the compilation cache (CAS) stores. These are build products, not downloads, and only the compiling gates fill them, so they get their own bucket and their own keying.
+
 ## Compile-cache stores live outside DerivedData
 
 The compilation cache stores sit under `~/Library/Caches/swift-mk`, outside DerivedData, so the dead-code coverage build's `rm -rf` of DerivedData cannot destroy them. The two stores and the SwiftPM compile cache are described in [build chokepoints](../build-chokepoints.md), and the cache plan and paths in [caching](../caching.md).
 
+## The compile bucket rolls per writer
+
+GitHub `actions/cache` saves the first entry under a key and refuses later saves, so a compile cache filed under one shared key freezes on its first save, and the gate that compiles nothing finishes first and freezes it empty. [`CachePlan`](../../Sources/SwiftMkCore/CachePlan.swift) keys the compile bucket as a rolling cache instead: the key carries the writing gate and a value unique to the run attempt, so every save lands under a fresh name and the pile accumulates across runs and re-runs. Restore-keys prefer the gate's own latest pile, then any sibling gate's pile for the same dependencies. Only a compiling gate (build, test, dead-code) restores and saves the compile bucket, so a lint gate cannot freeze an empty pile. Locally there is no race, because every worktree appends to one live content-addressed folder; the rolling key is how that same pile is carried across separate CI machines, which have no shared folder.
+
 ## Cross-runner reuse
 
-Xcode compilation caching uses prefix mapping and a shared store so a cache built on one runner replays on another. The SwiftPM compile cache is opt-in and routed through the [`SwiftPM`](../../Sources/SwiftMkCore/SwiftPM.swift) chokepoint, because explicit-module builds change the build mode.
+The compile bucket is content-addressed and restored by architecture-stable keys, so a pile built on one runner replays on another, pool or hosted. The SwiftPM compile cache is opt-in and routed through the [`SwiftPM`](../../Sources/SwiftMkCore/SwiftPM.swift) chokepoint, because explicit-module builds change the build mode.
