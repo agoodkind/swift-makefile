@@ -225,12 +225,18 @@ enum DeadcodeCoverageCompleteness {
     if missing.count > inlineLimit {
       lines.append("  ... and \(missing.count - inlineLimit) more")
     }
-    return "lint-deadcode: \(missing.count) owned Swift source(s) are scanned by no "
-      + "dead-code scan, so unused code in them is never caught:\n"
-      + lines.joined(separator: "\n") + "\n"
-      + "  Configure the Xcode coverage build so these are scanned: set "
+    // Built from named parts so the compiler type-checks each in reasonable time; one
+    // long `+` chain with interpolation can exceed the type-check budget on CI.
+    let header =
+      "lint-deadcode: \(missing.count) owned Swift source(s) are scanned by no "
+      + "dead-code scan, so unused code in them is never caught:"
+    let body = lines.joined(separator: "\n")
+    let fullList = logPath ?? "(log unavailable)"
+    let remediation =
+      "  Configure the Xcode coverage build so these are scanned: set "
       + "SWIFT_XCODE_SCHEME, and SWIFT_DEADCODE_BUILD_CMD if the build needs a target "
-      + "argument. Full list: " + (logPath ?? "(log unavailable)")
+      + "argument. Full list: \(fullList)"
+    return [header, body, remediation].joined(separator: "\n")
   }
 
   /// Display a path relative to the working directory when it sits under it.
