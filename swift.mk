@@ -160,6 +160,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/DeadcodeScan.swift \
 	Sources/SwiftMkCore/DeadcodeScan+Witness.swift \
 	Sources/SwiftMkCore/Lint+DeadcodeVerdict.swift \
+	Sources/SwiftMkCore/DeadcodeCoverageCompleteness.swift \
 	Sources/SwiftMkCore/DeadcodeBuildConfig.swift \
 	Sources/SwiftMkCore/WitnessFilter.swift \
 	Sources/SwiftMkCore/BuildCache.swift \
@@ -237,6 +238,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/CountAwareGateTests.swift \
 	Tests/SwiftMkCoreTests/DeadcodeScanTests.swift \
 	Tests/SwiftMkCoreTests/DeadcodeVerdictTests.swift \
+	Tests/SwiftMkCoreTests/DeadcodeCoverageCompletenessTests.swift \
 	Tests/SwiftMkCoreTests/FindingsSourceTests.swift \
 	Tests/SwiftMkCoreTests/FindingTests.swift \
 	Tests/SwiftMkCoreTests/LoggingTests.swift \
