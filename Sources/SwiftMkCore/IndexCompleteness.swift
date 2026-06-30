@@ -113,7 +113,11 @@ public enum IndexCompleteness {
   /// partially indexed is in scope, so its un-indexed files still show as missing. The
   /// index is the authoritative record of what was built (the same signal periphery
   /// uses), so this is robust to implicitly-built targets, which appear in the index.
-  public static func expectedSwiftFiles(
+  ///
+  /// Internal, not public: the only caller is `verify`, so the index-scoped signature
+  /// is not part of the engine's public API surface and adding the `indexed` parameter
+  /// breaks no external consumer.
+  static func expectedSwiftFiles(
     projectPath: String,
     isWorkspace: Bool,
     excludeTargets: Set<String>,
