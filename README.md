@@ -112,6 +112,10 @@ The multi-rule `swiftlint` gate supports scoping to one rule. Set `RULE=<rule_id
 
 `notices.txt` holds append-only records as `id<TAB>directive<TAB>summary`. A directive is either `-` for an announcement or `GATE=swiftlint RULE=<id>` for an auto-baseline scope. `swift-mk notice` runs as an order-only prerequisite of `lint`. For a notice whose directive is not yet applied, it auto-baselines only that rule's existing findings and asks the reader to review and commit the result. Applied notice ids are recorded in the committed `.swift-mk-applied-notices`, one id per line; commit it so a fresh checkout does not re-grandfather later violations. The last printed notice id is recorded in the gitignored `.make/.swift-mk-notice-seen`.
 
+## Build architecture
+
+The engine runs every build through one of two chokepoints, so the gate, the build lock, and the shared cache flags apply in one place. `Toolchain` is the one site that runs `xcodebuild`. `SwiftPM` is the one site that runs `swift build`, `swift test`, and `swift run`. [docs/build-chokepoints.md](docs/build-chokepoints.md) covers the chokepoints, the authorization gate, and the per-worktree build lock.
+
 ## Build caching
 
 - `SWIFT_MK_SWIFT_CACHE` defaults to `auto` and is the shared local Swift cache policy for SwiftPM and Xcode builds.
@@ -122,6 +126,7 @@ The multi-rule `swiftlint` gate supports scoping to one rule. Set `RULE=<rule_id
 - `SWIFT_MK_SWIFTPM_CACHE` and `SWIFT_MK_XCODE_CACHE` override the SwiftPM-specific and Xcode-specific cache policies when one build surface needs different behavior.
 - `SWIFT_MK_XCODE_CACHE_DIAGNOSTICS=1` enables compilation-cache diagnostic remarks for `xcodebuild` paths.
 - `SWIFT_MK_SWIFTPM_CACHE_ARGS` defaults to the supported shared SwiftPM cache flags exposed by the local toolchain.
+- `SWIFT_MK_SWIFTPM_COMPILE_CACHE` is off by default and opts a `swift build` consumer into LLVM compilation caching. A consumer sets it to `auto` after validating its own build, because the required `-explicit-module-build` mode can break a macro or C-interop target. [docs/caching.md](docs/caching.md) covers the two cache stores, the opt-in, and the cross-runner behavior.
 - `ccache` and `sccache` are C-family compiler-wrapper tools. They are not Swift compilation caches in `swift-makefile`.
 - Shared GitHub Actions CI and release jobs default to `cache-profile: safe`. The safe profile restores dependency caches and build intermediates, including SwiftPM, Tuist, mise, ccache/sccache, `.build`, and Xcode intermediate paths under `build`, `.derived-data`, `DerivedData`, or `Derived`. It does not cache `Products`, `dist`, keychains, provisioning profiles, notarization files, or signed final artifacts.
 - `cache-profile: dependencies` restores only dependency caches. `cache-profile: off` disables the shared cache setup.
