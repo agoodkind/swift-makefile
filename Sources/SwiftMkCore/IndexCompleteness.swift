@@ -61,9 +61,32 @@ public enum IndexCompleteness {
       traceID: Logging.correlation.traceID,
       name: "deadcode-index-incomplete")
     return .incomplete(
-      "lint-deadcode: index incomplete, \(missing.count) of \(expectedCount) "
-        + "target sources not indexed, not scanning; missing list at "
-        + (logPath ?? "(log unavailable)"))
+      incompleteMessage(
+        missingCount: missing.count,
+        expectedCount: expectedCount,
+        logPath: logPath ?? "(log unavailable)"))
+  }
+
+  /// The gate's incomplete-index message, worded to read as a build failure rather
+  /// than a transient index race, so an agent reads the cause and the action instead
+  /// of clearing DerivedData and retrying. Splits the empty case (the coverage build
+  /// produced nothing) from the partial case (some targets did not build). The
+  /// `produced no index` and `unbuilt)` markers are what the runner classifies on for
+  /// its verdict line, so keep them in sync with `Lint.classifyDeadcodeFailure`.
+  public static func incompleteMessage(
+    missingCount: Int, expectedCount: Int, logPath: String
+  ) -> String {
+    let indexedCount = expectedCount - missingCount
+    if indexedCount <= 0 {
+      return "lint-deadcode: the coverage build produced no index "
+        + "(0 of \(expectedCount) sources indexed).\n"
+        + "  Cause: the build failed, crashed, or did nothing. Not a flake. "
+        + "Fix the build; re-running unchanged repeats it. Missing list: \(logPath)"
+    }
+    return "lint-deadcode: the coverage build indexed \(indexedCount) of "
+      + "\(expectedCount) sources (\(missingCount) targets unbuilt).\n"
+      + "  Cause: those targets did not build. Not a flake. "
+      + "Fix them; re-running unchanged repeats it. Missing list: \(logPath)"
   }
 
   /// The absolute `.swift` paths the index store recorded, from the units the

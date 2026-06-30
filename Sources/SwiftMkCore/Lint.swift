@@ -205,12 +205,18 @@ public enum Lint {
     context: PathContext
   ) {
     Output.debug("periphery: capturing dead-code findings")
+    // Label the first of the two scans, then echo its result, so the package scan's
+    // "No unused code detected" is plainly the package half and is never confused
+    // with the Xcode scan's verdict below. The label goes into the raw capture too,
+    // so a later `Output:` dump of the capture stays self-describing.
+    Output.log(DeadcodeScan.packageScanLabel)
     let args = Env.words(
       Env.get("PERIPHERY_ARGS", "scan --config .make/periphery.yml --strict"))
     let result = Shell.run(
       Env.get("PERIPHERY", "periphery"), args, environment: lintEnvironment())
     GateStatus.last = result.status
-    Capture.write(result.combined, to: rawPath)
+    Capture.write(DeadcodeScan.packageScanLabel + "\n" + result.combined, to: rawPath)
+    Output.log(result.combined.trimmingCharacters(in: .newlines))
     DeadcodeScan.appendXcodeFindings(rawPath: rawPath)
     Capture.extractFindings(
       rawPath: rawPath,
@@ -250,24 +256,10 @@ public enum Lint {
     // periphery then reports referenced declarations as unused. Periphery does not
     // fail loudly on this (it builds what it can and analyzes the rest), so without
     // this check the gate passes the resulting phantom findings to the baseline
-    // diff, where a real build break masquerades as dead code. Detect Swift compiler
-    // errors in the build output and fail on the real cause first.
-    let compileErrors = Text.readLines(raw).filter(isSwiftCompileError)
-    if !compileErrors.isEmpty {
-      Output.log("lint-deadcode: FAILED")
-      Output.log(
-        "  The dead-code build did not compile; fix the compile error before this gate can run.")
-      Output.log("  Periphery's findings are unreliable against a partial index.\n")
-      Output.log("Compile errors:")
-      Output.log(compileErrors.joined(separator: "\n"))
-      Baseline.recordFailedGate("lint-deadcode")
-      return false
-    }
-    if status >= deadcodeHardFailStatus {
-      Output.log("lint-deadcode: FAILED")
-      Output.log("  Exit status: \(status)\n")
-      Output.log("Output:")
-      Output.log(Text.readLines(raw).joined(separator: "\n"))
+    // diff, where a real build break masquerades as dead code. The shared reporter
+    // detects the compile error and the index/build failures, prints the classifying
+    // verdict, and fails on the real cause first.
+    if reportDeadcodeBuildFailure(rawPath: raw, status: status) {
       Baseline.recordFailedGate("lint-deadcode")
       return false
     }
