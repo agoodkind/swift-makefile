@@ -458,7 +458,7 @@ export SWIFT_MK_SWIFTPM_CACHE_PATH
 SWIFT_MK_SWIFTPM_COMPILE_CACHE ?=
 SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED := NO
 ifneq ($(filter $(SWIFT_MK_SWIFTPM_COMPILE_CACHE),1 true TRUE yes YES on ON auto AUTO),)
-SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED := $(shell sc=$$(command -v swiftc 2>/dev/null || true); if [ -n "$$sc" ] && "$$sc" -frontend -help-hidden 2>&1 | grep -q -- '-cache-compile-job'; then printf 'YES'; else v=$$(swift -version 2>&1 | sed -n 's/.*Swift version \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p'); set -- $$v; maj=$${1:-0}; min=$${2:-0}; if [ "$$maj" -gt 6 ] || { [ "$$maj" -eq 6 ] && [ "$$min" -ge 3 ]; }; then printf 'YES'; else printf 'NO'; fi; fi)
+SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED := $(shell sc=$$(command -v swiftc 2>/dev/null || true); if [ -z "$$sc" ]; then printf 'NO'; elif "$$sc" -frontend -help-hidden 2>&1 | grep -q -- '-cache-compile-job'; then printf 'YES'; else v=$$("$$sc" -version 2>&1 | sed -n 's/.*Swift version \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p'); set -- $$v; maj=$${1:-0}; min=$${2:-0}; if [ "$$maj" -gt 6 ] || { [ "$$maj" -eq 6 ] && [ "$$min" -ge 3 ]; }; then printf 'YES'; else printf 'NO'; fi; fi)
 else ifneq ($(filter $(SWIFT_MK_SWIFTPM_COMPILE_CACHE),0 false FALSE no NO off OFF),)
 SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED := NO
 endif
