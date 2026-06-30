@@ -154,6 +154,7 @@ jobs:
           cache-profile: ${{ inputs.cache-profile }}
           cache-version: ${{ inputs.cache-version }}
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
+          gate: ${{ inputs.gate }}
 
       - name: Setup Swift build env
         if: ${{ (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && github.repository != 'agoodkind/swift-makefile' }}
@@ -164,6 +165,7 @@ jobs:
           cache-profile: ${{ inputs.cache-profile }}
           cache-version: ${{ inputs.cache-version }}
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
+          gate: ${{ inputs.gate }}
 
       - name: Validate signing inputs
         if: ${{ (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && (inputs.import-signing-cert || inputs.install-provisioning-profile) }}
