@@ -98,6 +98,21 @@ jobs:
       # consumers. A reusable workflow can set this at job level, so no env step.
       SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
     steps:
+      # Hard-fail on an unknown gate so a typo cannot run setup and then skip
+      # every make step, which would otherwise be a false-green CI run.
+      - name: Validate gate input
+        shell: bash
+        env:
+          GATE: ${{ inputs.gate }}
+        run: |
+          case "${GATE}" in
+            build | test | extra-targets) ;;
+            *)
+              printf 'unknown gate %s; expected build, test, or extra-targets\n' "${GATE}" >&2
+              exit 1
+              ;;
+          esac
+
       - uses: actions/checkout@v7
         with:
           fetch-depth: ${{ inputs.fetch-depth }}
