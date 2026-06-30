@@ -20,4 +20,7 @@ jobs:
     uses: ./.github/workflows/_ci.yml
     with:
       extra-targets: '["smoke-fetch"]'
+      # Route heavy gates to the self-hosted M1 pool when it reports capacity;
+      # an empty/unset URL or an unreachable broker falls back to hosted.
+      local-pool-capacity-url: ${{ vars.BROKER_CAPACITY_URL }}
     secrets: inherit
