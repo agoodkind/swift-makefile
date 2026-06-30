@@ -40,6 +40,17 @@ public enum CachePlan {
     public var xcodeVersion: String
     public var swiftVersion: String
     public var weeklyEpoch: String
+    /// The gate writing the compile cache (the make target / CI gate name). It scopes
+    /// the rolling compile key, so each gate keeps its own pile and a gate that
+    /// compiles one configuration never overwrites a gate that compiles another.
+    public var compileWriter: String
+    /// A value unique to this run attempt, appended to the compile key so every save
+    /// lands under a fresh name (the cache action only saves when the exact key is
+    /// new), which is what lets the pile roll forward instead of freezing.
+    public var compileRunUnique: String
+    /// Whether this gate actually compiles. Only a compiling gate restores and saves
+    /// the compile cache, so a lint gate cannot freeze an empty pile.
+    public var isCompileWriter: Bool
 
     public init(
       profile: String,
@@ -50,7 +61,10 @@ public enum CachePlan {
       runnerArch: String,
       xcodeVersion: String,
       swiftVersion: String,
-      weeklyEpoch: String
+      weeklyEpoch: String,
+      compileWriter: String = "",
+      compileRunUnique: String = "",
+      isCompileWriter: Bool = false
     ) {
       self.profile = profile
       self.version = version
@@ -61,16 +75,22 @@ public enum CachePlan {
       self.xcodeVersion = xcodeVersion
       self.swiftVersion = swiftVersion
       self.weeklyEpoch = weeklyEpoch
+      self.compileWriter = compileWriter
+      self.compileRunUnique = compileRunUnique
+      self.isCompileWriter = isCompileWriter
     }
   }
 
   public struct Result: Equatable {
     public var dependencyCacheEnabled: Bool
     public var buildCacheEnabled: Bool
+    public var compileCacheEnabled: Bool
     public var dependencyKey: String
     public var dependencyRestoreKeys: [String]
     public var buildKey: String
     public var buildRestoreKeys: [String]
+    public var compileKey: String
+    public var compileRestoreKeys: [String]
   }
 
   private static let allowedKeyCharacters: Set<Character> = Set(
@@ -132,14 +152,29 @@ public enum CachePlan {
 
     let prefix = "\(runnerOS)-\(runnerArch)-swift-mk-\(version)-\(xcode)-\(swift)"
 
+    // The compile cache rolls: it participates only on a compiling gate, and only when
+    // any caching is on (the same profiles that restore the cross-commit dependency
+    // bucket). A lint gate never touches it, so it cannot freeze an empty pile.
+    let compileEnabled = dependencyEnabled && inputs.isCompileWriter
+    let writer = sanitizeKeyPart(inputs.compileWriter.isEmpty ? "gate" : inputs.compileWriter)
+    let runUnique = sanitizeKeyPart(inputs.compileRunUnique.isEmpty ? "0" : inputs.compileRunUnique)
+    let compileFamily = "\(prefix)-compile-deps-\(dependencyHash)"
+
     return Result(
       dependencyCacheEnabled: dependencyEnabled,
       buildCacheEnabled: buildEnabled,
+      compileCacheEnabled: compileEnabled,
       dependencyKey: "\(prefix)-deps-\(dependencyHash)",
       dependencyRestoreKeys: ["\(prefix)-deps-"],
       buildKey: "\(prefix)-build-\(inputs.weeklyEpoch)-deps-\(dependencyHash)-build-\(buildHash)",
       // Deliberately empty: a fallback restore can mix incompatible compiled
       // module maps across different dependency or build hashes.
-      buildRestoreKeys: [])
+      buildRestoreKeys: [],
+      // The unique run value makes every save land under a fresh name, so the pile
+      // rolls forward. Restore prefers this gate's own latest pile, then falls back to
+      // any sibling gate's pile for the same dependencies (content-addressing keeps only
+      // the matching entries, so a mismatched sibling pile is harmless, never wrong).
+      compileKey: "\(compileFamily)-\(writer)-\(runUnique)",
+      compileRestoreKeys: ["\(compileFamily)-\(writer)-", "\(compileFamily)-"])
   }
 }

@@ -26,7 +26,10 @@ private func goldenInputs(
   profile: String = "safe",
   version: String = "v1",
   dependencyHash: String = "deadbeef",
-  buildHash: String = "cafef00d"
+  buildHash: String = "cafef00d",
+  compileWriter: String = "",
+  compileRunUnique: String = "",
+  isCompileWriter: Bool = false
 ) -> CachePlan.Inputs {
   CachePlan.Inputs(
     profile: profile,
@@ -37,7 +40,10 @@ private func goldenInputs(
     runnerArch: "ARM64",
     xcodeVersion: goldenXcode,
     swiftVersion: goldenSwift,
-    weeklyEpoch: "2026w25")
+    weeklyEpoch: "2026w25",
+    compileWriter: compileWriter,
+    compileRunUnique: compileRunUnique,
+    isCompileWriter: isCompileWriter)
 }
 
 @Test
@@ -103,6 +109,48 @@ func unknownProfileThrows() {
   #expect(throws: CachePlan.PlanError.self) {
     _ = try CachePlan.compute(goldenInputs(profile: "turbo"))
   }
+}
+
+@Test
+func compileCacheRollsForACompilingGate() throws {
+  let result = try CachePlan.compute(
+    goldenInputs(compileWriter: "build", compileRunUnique: "1001-1", isCompileWriter: true))
+  #expect(result.compileCacheEnabled)
+  // The key carries the writer and the unique run value, so each save lands fresh.
+  #expect(result.compileKey == "\(goldenPrefix)-compile-deps-deadbeef-build-1001-1")
+  // Restore prefers the gate's own latest pile, then any sibling pile for the same deps.
+  #expect(
+    result.compileRestoreKeys == [
+      "\(goldenPrefix)-compile-deps-deadbeef-build-",
+      "\(goldenPrefix)-compile-deps-deadbeef-",
+    ])
+}
+
+@Test
+func compileKeyRollsWithRunUniqueButRestoreKeysStayStable() throws {
+  let first = try CachePlan.compute(
+    goldenInputs(compileWriter: "build", compileRunUnique: "1001-1", isCompileWriter: true))
+  let second = try CachePlan.compute(
+    goldenInputs(compileWriter: "build", compileRunUnique: "1002-1", isCompileWriter: true))
+  // A new run yields a new key (so the post-job save always lands and the pile rolls)...
+  #expect(first.compileKey != second.compileKey)
+  // ...but the restore prefix is identical, so the next run finds the latest prior pile.
+  #expect(first.compileRestoreKeys == second.compileRestoreKeys)
+}
+
+@Test
+func compileCacheDisabledForANonCompilingGate() throws {
+  let result = try CachePlan.compute(
+    goldenInputs(compileWriter: "lint-format", compileRunUnique: "1001-1", isCompileWriter: false))
+  #expect(!result.compileCacheEnabled)
+}
+
+@Test
+func compileCacheDisabledWhenCachingIsOff() throws {
+  let result = try CachePlan.compute(
+    goldenInputs(
+      profile: "off", compileWriter: "build", compileRunUnique: "1001-1", isCompileWriter: true))
+  #expect(!result.compileCacheEnabled)
 }
 
 @Test
