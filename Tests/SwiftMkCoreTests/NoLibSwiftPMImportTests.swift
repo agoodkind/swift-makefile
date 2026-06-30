@@ -31,10 +31,12 @@ enum NoLibSwiftPMImportTests {
   static func swiftMkCoreImportsNoLibSwiftPMModule() throws {
     let root = try engineRepoRoot()
     let offenders = try bannedImports(inDirectory: root + "/Sources/SwiftMkCore")
-    let message =
-      "SwiftMkCore must drive the swift CLI through the SwiftPM chokepoint, not link "
-      + "libSwiftPM. Remove these imports: \(offenders)"
-    #expect(offenders.isEmpty, Comment(rawValue: message))
+    #expect(
+      offenders.isEmpty,
+      """
+      SwiftMkCore must drive the swift CLI through the SwiftPM chokepoint, not link \
+      libSwiftPM. Remove these imports: \(offenders)
+      """)
   }
 
   @Test
@@ -43,13 +45,18 @@ enum NoLibSwiftPMImportTests {
     #expect(importedModule("@_implementationOnly import PackageGraph") == "PackageGraph")
     #expect(importedModule("import struct PackageModel.Manifest") == "PackageModel")
     #expect(importedModule("@testable import SwiftMkCore") == "SwiftMkCore")
+    #expect(importedModule("import\tPackageModel") == "PackageModel")
+    #expect(importedModule("import   PackageGraph") == "PackageGraph")
     #expect(importedModule("// import PackageModel") == nil)
     #expect(importedModule("let s = \"import PackageModel\"") == nil)
   }
 
   // MARK: helpers
 
-  enum RepoError: Error { case rootNotFound }
+  enum RepoError: Error {
+    case directoryUnreadable(String)
+    case rootNotFound
+  }
 
   /// Walk up from this test file to the directory holding `swift.mk`, the engine repo
   /// root in any checkout or worktree.
@@ -69,13 +76,15 @@ enum NoLibSwiftPMImportTests {
   /// The `path: import-line` pairs under `directory` that import a banned module.
   static func bannedImports(inDirectory directory: String) throws -> [String] {
     let manager = FileManager.default
+    // Throw rather than return empty on an unreadable directory: a silent empty scan
+    // would pass the invariant by failing to look, which is exactly what it must catch.
     guard let enumerator = manager.enumerator(atPath: directory) else {
-      return []
+      throw RepoError.directoryUnreadable(directory)
     }
     var offenders: [String] = []
     for case let relative as String in enumerator where relative.hasSuffix(".swift") {
       let path = (directory as NSString).appendingPathComponent(relative)
-      let contents = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+      let contents = try String(contentsOfFile: path, encoding: .utf8)
       for line in contents.components(separatedBy: .newlines) {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard let module = importedModule(trimmed), bannedModules.contains(module) else {
@@ -92,23 +101,25 @@ enum NoLibSwiftPMImportTests {
   /// (`import struct X.Y`), and ignores comments and string literals by requiring the
   /// line to begin with `import` once attributes are removed.
   static func importedModule(_ line: String) -> String? {
-    if line.hasPrefix("//") {
+    var tokens = line.split { $0 == " " || $0 == "\t" }.map(String.init)
+    // Drop leading attributes such as @_implementationOnly or @testable.
+    while let first = tokens.first, first.hasPrefix("@") {
+      tokens.removeFirst()
+    }
+    guard tokens.first == "import" else {
       return nil
     }
-    var rest = line
-    while rest.hasPrefix("@") {
-      guard let space = rest.firstIndex(of: " ") else {
-        return nil
-      }
-      rest = String(rest[rest.index(after: space)...]).trimmingCharacters(in: .whitespaces)
+    tokens.removeFirst()
+    // Drop an item-kind keyword so `import struct X.Y` still yields the module name.
+    let itemKinds: Set<String> = [
+      "struct", "class", "enum", "protocol", "typealias", "func", "var", "let",
+    ]
+    if let first = tokens.first, itemKinds.contains(first) {
+      tokens.removeFirst()
     }
-    guard rest.hasPrefix("import ") else {
+    guard let moduleToken = tokens.first else {
       return nil
     }
-    let after = rest.dropFirst("import ".count).trimmingCharacters(in: .whitespaces)
-    guard let last = after.split(separator: " ").last else {
-      return nil
-    }
-    return last.split(separator: ".").first.map(String.init)
+    return moduleToken.split(separator: ".").first.map(String.init)
   }
 }

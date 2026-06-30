@@ -24,10 +24,12 @@ enum ManifestCompletenessTests {
     let loaded = try loadManifest()
     let missing = try filesMissingFromManifest(
       directory: "Sources/SwiftMkCore", root: loaded.root, manifest: loaded.manifest)
-    let message =
-      "these Sources/SwiftMkCore files are absent from SWIFT_MK_SCRIPT_FILES in "
-      + "swift.mk, so they would not be fetched into consumers: \(missing)"
-    #expect(missing.isEmpty, Comment(rawValue: message))
+    #expect(
+      missing.isEmpty,
+      """
+      these Sources/SwiftMkCore files are absent from SWIFT_MK_SCRIPT_FILES in \
+      swift.mk, so they would not be fetched into consumers: \(missing)
+      """)
   }
 
   @Test
@@ -35,10 +37,12 @@ enum ManifestCompletenessTests {
     let loaded = try loadManifest()
     let missing = try filesMissingFromManifest(
       directory: "Tests/SwiftMkCoreTests", root: loaded.root, manifest: loaded.manifest)
-    let message =
-      "these Tests/SwiftMkCoreTests files are absent from SWIFT_MK_SCRIPT_FILES in "
-      + "swift.mk: \(missing)"
-    #expect(missing.isEmpty, Comment(rawValue: message))
+    #expect(
+      missing.isEmpty,
+      """
+      these Tests/SwiftMkCoreTests files are absent from SWIFT_MK_SCRIPT_FILES in \
+      swift.mk: \(missing)
+      """)
   }
 
   // MARK: helpers
