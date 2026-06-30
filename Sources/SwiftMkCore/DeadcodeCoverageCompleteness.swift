@@ -45,7 +45,16 @@ enum DeadcodeCoverageCompleteness {
       return .complete("deadcode: coverage complete, no owned Swift sources")
     }
     let packageCovered = packageCoveredFiles(context: context, owned: owned)
-    let xcodeCovered = indexedFiles(xcodeIndexStorePath)
+    let xcodeCovered: Set<String>
+    do {
+      xcodeCovered = try indexedFiles(xcodeIndexStorePath)
+    } catch {
+      // A non-nil store path that cannot be read is a real error, not a missing
+      // coverage build, so report it as itself rather than as unscanned own code.
+      return .incomplete(
+        "lint-deadcode: could not read the Xcode index store at "
+          + "\(xcodeIndexStorePath ?? "(none)"): \(error)")
+    }
     let missing = uncovered(
       owned: owned, packageCovered: packageCovered, xcodeCovered: xcodeCovered)
     if missing.isEmpty {
@@ -94,11 +103,15 @@ enum DeadcodeCoverageCompleteness {
   }
 
   /// True when the file begins with a `#!` shebang, marking a directly-run script.
+  /// Memory-maps the file so only the first page is touched, not the whole source,
+  /// since this runs over every owned file.
   static func isShebangScript(_ path: String) -> Bool {
-    guard let data = FileManager.default.contents(atPath: path) else {
+    do {
+      let data = try Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe)
+      return data.starts(with: shebangPrefix)
+    } catch {
       return false
     }
-    return data.starts(with: shebangPrefix)
   }
 
   // MARK: Package-covered set
@@ -169,17 +182,14 @@ enum DeadcodeCoverageCompleteness {
 
   // MARK: Xcode-covered set
 
-  /// The Swift sources the Xcode index recorded, empty when no Xcode scan ran.
-  static func indexedFiles(_ indexStorePath: String?) -> Set<String> {
+  /// The Swift sources the Xcode index recorded. Empty when no Xcode scan ran (a nil
+  /// path); a non-nil path that cannot be read throws, so the caller reports the real
+  /// error instead of treating it as unscanned own code.
+  static func indexedFiles(_ indexStorePath: String?) throws -> Set<String> {
     guard let indexStorePath else {
       return []
     }
-    do {
-      return try IndexCompleteness.indexedSwiftFiles(indexStorePath: indexStorePath)
-    } catch {
-      Output.error("deadcode: could not read index store for coverage check: \(error)")
-      return []
-    }
+    return try IndexCompleteness.indexedSwiftFiles(indexStorePath: indexStorePath)
   }
 
   // MARK: Helpers
