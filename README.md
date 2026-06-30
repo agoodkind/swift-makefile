@@ -4,6 +4,12 @@
 
 Provided AS IS under the MIT License with no warranty. See [LICENSE](LICENSE).
 
+## Architecture
+
+Each subsystem has a present-tense overview under `docs/<area>/overview.md` that links to the source and test holding each detail, so the docs track the code.
+
+- [Dead-code gate](docs/deadcode/overview.md) covers the two scans, the signing-disabled coverage build, the index-completeness check, the coverage-completeness check, and the per-worktree build lock.
+
 ## Files
 
 - `swift-mk` is a Swift command-line program that carries the shared lint, baseline, gate, and notice logic. It builds from the root SwiftPM package: the `SwiftMkCore` library holds the logic, the `SwiftMkCLI` executable wraps it, and the package produces the `swift-mk` product using `apple/swift-argument-parser`. `scripts/swift-mk-build.sh` builds and caches the binary at `.make/swift-mk`, and `swift.mk` invokes it.
