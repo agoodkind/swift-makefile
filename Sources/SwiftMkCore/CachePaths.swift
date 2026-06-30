@@ -30,6 +30,10 @@ public enum CachePaths {
     /// The resolved shared LLVM compilation-cache (CAS) store, or nil when off. Kept
     /// outside DerivedData so the dead-code coverage build's `rm -rf` cannot destroy it.
     public var xcodeCachePath: String?
+    /// The resolved shared LLVM CAS store for `swift build` compilation caching, or nil
+    /// when off. The SwiftPM peer of `xcodeCachePath`, kept outside DerivedData and shared
+    /// across worktrees; content-addressed, so one shared copy maximizes cross-run reuse.
+    public var swiftpmCachePath: String?
     /// Extra cacheable paths a consumer appends (EXTRA_CACHE_PATHS).
     public var extraPaths: [String]
 
@@ -39,6 +43,7 @@ public enum CachePaths {
       spmCachePath: String?,
       moduleCachePath: String?,
       xcodeCachePath: String?,
+      swiftpmCachePath: String?,
       extraPaths: [String]
     ) {
       self.home = home
@@ -46,6 +51,7 @@ public enum CachePaths {
       self.spmCachePath = spmCachePath
       self.moduleCachePath = moduleCachePath
       self.xcodeCachePath = xcodeCachePath
+      self.swiftpmCachePath = swiftpmCachePath
       self.extraPaths = extraPaths
     }
   }
@@ -95,6 +101,11 @@ public enum CachePaths {
     // restored and the build replays unchanged compiles instead of recompiling.
     if let xcodeCache = inputs.xcodeCachePath {
       dependency.append(xcodeCache)
+    }
+    // The SwiftPM CAS store is also content-addressed and belongs in the dependency
+    // bucket for the same reason: cross-run replay survives a DerivedData wipe.
+    if let swiftpmCache = inputs.swiftpmCachePath {
+      dependency.append(swiftpmCache)
     }
 
     var build = [
