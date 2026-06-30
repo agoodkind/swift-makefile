@@ -207,14 +207,15 @@ public enum Lint {
     Output.debug("periphery: capturing dead-code findings")
     // Label the first of the two scans, then echo its result, so the package scan's
     // "No unused code detected" is plainly the package half and is never confused
-    // with the Xcode scan's verdict below.
-    Output.log("deadcode: package scan (Swift package targets)")
+    // with the Xcode scan's verdict below. The label goes into the raw capture too,
+    // so a later `Output:` dump of the capture stays self-describing.
+    Output.log(DeadcodeScan.packageScanLabel)
     let args = Env.words(
       Env.get("PERIPHERY_ARGS", "scan --config .make/periphery.yml --strict"))
     let result = Shell.run(
       Env.get("PERIPHERY", "periphery"), args, environment: lintEnvironment())
     GateStatus.last = result.status
-    Capture.write(result.combined, to: rawPath)
+    Capture.write(DeadcodeScan.packageScanLabel + "\n" + result.combined, to: rawPath)
     Output.log(result.combined.trimmingCharacters(in: .newlines))
     DeadcodeScan.appendXcodeFindings(rawPath: rawPath)
     Capture.extractFindings(

@@ -22,6 +22,12 @@ enum DeadcodeScan {
   private static let manifestFiles = ["Project.swift", "Workspace.swift", "project.yml"]
   private static let hardFailStatus: Int32 = 2
 
+  /// Labels for the two dead-code scans. Written to both stdout and the raw capture
+  /// file so a later `Output:` dump of the capture is self-describing, and the package
+  /// scan's "No unused code detected" is never read as contradicting the Xcode scan.
+  static let packageScanLabel = "deadcode: package scan (Swift package targets)"
+  static let xcodeScanLabel = "deadcode: xcode scan (Xcode project targets)"
+
   // MARK: Project shape
 
   /// An Xcode project on disk and whether it is a workspace.
@@ -64,8 +70,10 @@ enum DeadcodeScan {
       return
     }
     // Label the second of the two scans so its output, and any failure, is never
-    // read as contradicting the package scan's "No unused code detected" above.
-    Output.log("deadcode: xcode scan (Xcode project targets)")
+    // read as contradicting the package scan's "No unused code detected" above. The
+    // label goes into the raw capture too, so a later `Output:` dump stays labeled.
+    Output.log(xcodeScanLabel)
+    appendCombined(xcodeScanLabel + "\n", to: rawPath)
     Output.debug("deadcode: resolving Xcode project shape")
     ensureProjectGenerated()
     switch projectShape() {

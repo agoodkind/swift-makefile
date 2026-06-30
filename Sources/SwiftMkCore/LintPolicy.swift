@@ -311,11 +311,11 @@ enum LintPolicy {
     let config = Env.get("SWIFT_MK_PERIPHERY_CONFIG", ".make/periphery.yml")
     let args = Env.words(
       Env.get("PERIPHERY_ARGS", "scan --config \(config) --strict"))
-    Output.log("deadcode: package scan (Swift package targets)")
+    Output.log(DeadcodeScan.packageScanLabel)
     let result = Shell.run(
       Env.get("PERIPHERY", "periphery"), args, environment: Lint.lintEnvironment())
     GateStatus.last = result.status
-    Capture.write(result.combined, to: raw)
+    Capture.write(DeadcodeScan.packageScanLabel + "\n" + result.combined, to: raw)
     Output.log(result.combined.trimmingCharacters(in: .newlines))
     DeadcodeScan.appendXcodeFindings(rawPath: raw, coverage: coverage)
     Capture.extractFindings(
