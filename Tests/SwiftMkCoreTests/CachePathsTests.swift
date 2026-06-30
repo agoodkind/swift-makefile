@@ -18,6 +18,7 @@ private func sampleInputs(
   spmCachePath: String? = "/h/Library/Caches/swift-mk/SourcePackages",
   moduleCachePath: String? = "/h/Library/Caches/swift-mk/ModuleCache",
   xcodeCachePath: String? = "/h/Library/Caches/swift-mk/CompilationCache",
+  swiftpmCachePath: String? = nil,
   extraPaths: [String] = []
 ) -> CachePaths.Inputs {
   CachePaths.Inputs(
@@ -26,6 +27,7 @@ private func sampleInputs(
     spmCachePath: spmCachePath,
     moduleCachePath: moduleCachePath,
     xcodeCachePath: xcodeCachePath,
+    swiftpmCachePath: swiftpmCachePath,
     extraPaths: extraPaths)
 }
 
@@ -118,4 +120,21 @@ func extraPathsAppendToBuildBucket() {
   let resolved = CachePaths.resolve(sampleInputs(extraPaths: ["custom/dir", "another/dir"]))
   #expect(resolved.build.contains("custom/dir"))
   #expect(resolved.build.contains("another/dir"))
+}
+
+@Test
+func swiftpmCompileCacheIsADependencyOutsideDerivedData() {
+  // The SwiftPM CAS store is content-addressed, so it belongs in the dependency
+  // bucket just like the Xcode CAS store; a code-only change does not change the
+  // dependency key, so the store is restored and replay survives a DerivedData wipe.
+  let resolved = CachePaths.resolve(
+    sampleInputs(swiftpmCachePath: "/h/Library/Caches/swift-mk/SwiftPMCompilationCache"))
+  #expect(resolved.dependency.contains("/h/Library/Caches/swift-mk/SwiftPMCompilationCache"))
+  #expect(!resolved.build.contains("/h/Library/Caches/swift-mk/SwiftPMCompilationCache"))
+}
+
+@Test
+func swiftpmCacheOmittedFromDependencyWhenNil() {
+  let resolved = CachePaths.resolve(sampleInputs(swiftpmCachePath: nil))
+  #expect(!resolved.dependency.contains { $0.contains("SwiftPMCompilationCache") })
 }

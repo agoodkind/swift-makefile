@@ -308,9 +308,50 @@ public enum SwiftPM {
   // MARK: Argument assembly
 
   /// The shared SwiftPM cache flags the make layer computes, injected by the engine so
-  /// no consumer hand-rolls them.
+  /// no consumer hand-rolls them. Includes compilation-cache flags when the opt-in
+  /// `SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED` flag is YES.
   static func cacheArguments() -> [String] {
-    Env.words(Env.get("SWIFT_MK_SWIFTPM_CACHE_ARGS"))
+    var args = Env.words(Env.get("SWIFT_MK_SWIFTPM_CACHE_ARGS"))
+    args.append(contentsOf: compileCacheArguments())
+    return args
+  }
+
+  /// The LLVM compilation-cache flags for `swift build`/`swift test` when the opt-in
+  /// enable flag is YES and the CAS store path is usable. Requires Swift 6.3.2 or later;
+  /// the make layer probes the toolchain and forces `SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED`
+  /// to NO on older toolchains, so these flags never reach an unsupporting compiler.
+  private static func compileCacheArguments() -> [String] {
+    guard Env.get("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED") == "YES" else {
+      return []
+    }
+    // Resolve the store path the same way the cache-path list does, so every disable
+    // token (off/none/0/disabled) and the empty-value default are handled in one place.
+    guard
+      let path = Toolchain.resolvedSharedCachePath(
+        "SWIFT_MK_SWIFTPM_CACHE_PATH", defaultSubdirectory: "SwiftPMCompilationCache")
+    else {
+      return []
+    }
+    var flags: [String] = [
+      "-Xswiftc",
+      "-explicit-module-build",
+      "-Xswiftc",
+      "-cache-compile-job",
+      "-Xswiftc",
+      "-cas-path",
+      "-Xswiftc",
+      path,
+    ]
+    if isTruthy(Env.get("SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS")) {
+      flags.append(contentsOf: ["-Xswiftc", "-Rcache-compile-job"])
+    }
+    return flags
+  }
+
+  /// Whether a raw env-variable value is truthy. Matches the same token set as the
+  /// swift.mk `filter` lists for `_DIAGNOSTICS` flags.
+  private static func isTruthy(_ value: String) -> Bool {
+    ["1", "true", "yes", "on"].contains(value.lowercased())
   }
 
   static func packageArguments(_ request: Request) -> [String] {

@@ -236,6 +236,8 @@ public enum CacheService {
         "SWIFT_MK_MODULE_CACHE", defaultSubdirectory: "ModuleCache"),
       xcodeCachePath: Toolchain.resolvedSharedCachePath(
         "SWIFT_MK_XCODE_CACHE_PATH", defaultSubdirectory: "CompilationCache"),
+      swiftpmCachePath: Toolchain.resolvedSharedCachePath(
+        "SWIFT_MK_SWIFTPM_CACHE_PATH", defaultSubdirectory: "SwiftPMCompilationCache"),
       extraPaths: extraCachePaths())
     return CachePaths.resolve(inputs)
   }

@@ -272,119 +272,47 @@ jobs:
   build-pool:
     name: Build (pool attempt)
     needs: plan-runners
-    runs-on: ${{ needs.plan-runners.outputs.build_label }}
-    timeout-minutes: ${{ inputs.timeout-minutes }}
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: ${{ inputs.fetch-depth }}
-
-      - name: Run build (swift-makefile)
-        if: github.repository == 'agoodkind/swift-makefile'
-        uses: ./.github/actions/run-build
-        with:
-          xcode-version: ${{ inputs.xcode-version }}
-          github-token: ${{ github.token }}
-          brew-packages: ${{ inputs.brew-packages }}
-          cache-profile: ${{ inputs.cache-profile }}
-          cache-version: ${{ inputs.cache-version }}
-          extra-cache-paths: ${{ inputs.extra-cache-paths }}
-          import-signing-cert: ${{ inputs.import-signing-cert }}
-          install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
-          signing-identity-name: ${{ inputs.signing-identity-name }}
-          apple-team-id: ${{ inputs.apple-team-id }}
-          setup-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          provisioning-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
-          notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
-          notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-
-      - name: Run build
-        if: github.repository != 'agoodkind/swift-makefile'
-        uses: agoodkind/swift-makefile/.github/actions/run-build@main
-        with:
-          xcode-version: ${{ inputs.xcode-version }}
-          github-token: ${{ github.token }}
-          brew-packages: ${{ inputs.brew-packages }}
-          cache-profile: ${{ inputs.cache-profile }}
-          cache-version: ${{ inputs.cache-version }}
-          extra-cache-paths: ${{ inputs.extra-cache-paths }}
-          import-signing-cert: ${{ inputs.import-signing-cert }}
-          install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
-          signing-identity-name: ${{ inputs.signing-identity-name }}
-          apple-team-id: ${{ inputs.apple-team-id }}
-          setup-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          provisioning-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
-          notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
-          notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+    uses: ./.github/workflows/_ci-gate.yml
+    with:
+      gate: build
+      runner: ${{ needs.plan-runners.outputs.build_label }}
+      xcode-version: ${{ inputs.xcode-version }}
+      cache-profile: ${{ inputs.cache-profile }}
+      cache-version: ${{ inputs.cache-version }}
+      extra-cache-paths: ${{ inputs.extra-cache-paths }}
+      brew-packages: ${{ inputs.brew-packages }}
+      import-signing-cert: ${{ inputs.import-signing-cert }}
+      install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
+      signing-identity-name: ${{ inputs.signing-identity-name }}
+      apple-team-id: ${{ inputs.apple-team-id }}
+      setup-target: ${{ inputs.setup-target }}
+      make-args: ${{ inputs.make-args }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      fetch-depth: ${{ inputs.fetch-depth }}
+    secrets: inherit
 
   build-hosted:
     name: Build (hosted fallback)
     needs: [plan-runners, build-pool]
     if: ${{ needs.plan-runners.outputs.build_label != inputs.runner && (needs.build-pool.result == 'failure' || needs.build-pool.result == 'cancelled') }}
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: ${{ inputs.timeout-minutes }}
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: ${{ inputs.fetch-depth }}
-
-      - name: Run build (swift-makefile)
-        if: github.repository == 'agoodkind/swift-makefile'
-        uses: ./.github/actions/run-build
-        with:
-          xcode-version: ${{ inputs.xcode-version }}
-          github-token: ${{ github.token }}
-          brew-packages: ${{ inputs.brew-packages }}
-          cache-profile: ${{ inputs.cache-profile }}
-          cache-version: ${{ inputs.cache-version }}
-          extra-cache-paths: ${{ inputs.extra-cache-paths }}
-          import-signing-cert: ${{ inputs.import-signing-cert }}
-          install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
-          signing-identity-name: ${{ inputs.signing-identity-name }}
-          apple-team-id: ${{ inputs.apple-team-id }}
-          setup-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          provisioning-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
-          notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
-          notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-
-      - name: Run build
-        if: github.repository != 'agoodkind/swift-makefile'
-        uses: agoodkind/swift-makefile/.github/actions/run-build@main
-        with:
-          xcode-version: ${{ inputs.xcode-version }}
-          github-token: ${{ github.token }}
-          brew-packages: ${{ inputs.brew-packages }}
-          cache-profile: ${{ inputs.cache-profile }}
-          cache-version: ${{ inputs.cache-version }}
-          extra-cache-paths: ${{ inputs.extra-cache-paths }}
-          import-signing-cert: ${{ inputs.import-signing-cert }}
-          install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
-          signing-identity-name: ${{ inputs.signing-identity-name }}
-          apple-team-id: ${{ inputs.apple-team-id }}
-          setup-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          provisioning-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
-          notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
-          notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+    uses: ./.github/workflows/_ci-gate.yml
+    with:
+      gate: build
+      runner: ${{ inputs.runner }}
+      xcode-version: ${{ inputs.xcode-version }}
+      cache-profile: ${{ inputs.cache-profile }}
+      cache-version: ${{ inputs.cache-version }}
+      extra-cache-paths: ${{ inputs.extra-cache-paths }}
+      brew-packages: ${{ inputs.brew-packages }}
+      import-signing-cert: ${{ inputs.import-signing-cert }}
+      install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
+      signing-identity-name: ${{ inputs.signing-identity-name }}
+      apple-team-id: ${{ inputs.apple-team-id }}
+      setup-target: ${{ inputs.setup-target }}
+      make-args: ${{ inputs.make-args }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      fetch-depth: ${{ inputs.fetch-depth }}
+    secrets: inherit
 
   build:
     name: Build
@@ -418,119 +346,47 @@ jobs:
   test-pool:
     name: Test (pool attempt)
     needs: plan-runners
-    runs-on: ${{ needs.plan-runners.outputs.test_label }}
-    timeout-minutes: ${{ inputs.timeout-minutes }}
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: ${{ inputs.fetch-depth }}
-
-      - name: Run test (swift-makefile)
-        if: github.repository == 'agoodkind/swift-makefile'
-        uses: ./.github/actions/run-test
-        with:
-          xcode-version: ${{ inputs.xcode-version }}
-          github-token: ${{ github.token }}
-          brew-packages: ${{ inputs.brew-packages }}
-          cache-profile: ${{ inputs.cache-profile }}
-          cache-version: ${{ inputs.cache-version }}
-          extra-cache-paths: ${{ inputs.extra-cache-paths }}
-          import-signing-cert: ${{ inputs.import-signing-cert }}
-          install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
-          signing-identity-name: ${{ inputs.signing-identity-name }}
-          apple-team-id: ${{ inputs.apple-team-id }}
-          setup-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          provisioning-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
-          notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
-          notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-
-      - name: Run test
-        if: github.repository != 'agoodkind/swift-makefile'
-        uses: agoodkind/swift-makefile/.github/actions/run-test@main
-        with:
-          xcode-version: ${{ inputs.xcode-version }}
-          github-token: ${{ github.token }}
-          brew-packages: ${{ inputs.brew-packages }}
-          cache-profile: ${{ inputs.cache-profile }}
-          cache-version: ${{ inputs.cache-version }}
-          extra-cache-paths: ${{ inputs.extra-cache-paths }}
-          import-signing-cert: ${{ inputs.import-signing-cert }}
-          install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
-          signing-identity-name: ${{ inputs.signing-identity-name }}
-          apple-team-id: ${{ inputs.apple-team-id }}
-          setup-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          provisioning-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
-          notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
-          notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+    uses: ./.github/workflows/_ci-gate.yml
+    with:
+      gate: test
+      runner: ${{ needs.plan-runners.outputs.test_label }}
+      xcode-version: ${{ inputs.xcode-version }}
+      cache-profile: ${{ inputs.cache-profile }}
+      cache-version: ${{ inputs.cache-version }}
+      extra-cache-paths: ${{ inputs.extra-cache-paths }}
+      brew-packages: ${{ inputs.brew-packages }}
+      import-signing-cert: ${{ inputs.import-signing-cert }}
+      install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
+      signing-identity-name: ${{ inputs.signing-identity-name }}
+      apple-team-id: ${{ inputs.apple-team-id }}
+      setup-target: ${{ inputs.setup-target }}
+      make-args: ${{ inputs.make-args }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      fetch-depth: ${{ inputs.fetch-depth }}
+    secrets: inherit
 
   test-hosted:
     name: Test (hosted fallback)
     needs: [plan-runners, test-pool]
     if: ${{ needs.plan-runners.outputs.test_label != inputs.runner && (needs.test-pool.result == 'failure' || needs.test-pool.result == 'cancelled') }}
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: ${{ inputs.timeout-minutes }}
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: ${{ inputs.fetch-depth }}
-
-      - name: Run test (swift-makefile)
-        if: github.repository == 'agoodkind/swift-makefile'
-        uses: ./.github/actions/run-test
-        with:
-          xcode-version: ${{ inputs.xcode-version }}
-          github-token: ${{ github.token }}
-          brew-packages: ${{ inputs.brew-packages }}
-          cache-profile: ${{ inputs.cache-profile }}
-          cache-version: ${{ inputs.cache-version }}
-          extra-cache-paths: ${{ inputs.extra-cache-paths }}
-          import-signing-cert: ${{ inputs.import-signing-cert }}
-          install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
-          signing-identity-name: ${{ inputs.signing-identity-name }}
-          apple-team-id: ${{ inputs.apple-team-id }}
-          setup-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          provisioning-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
-          notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
-          notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-
-      - name: Run test
-        if: github.repository != 'agoodkind/swift-makefile'
-        uses: agoodkind/swift-makefile/.github/actions/run-test@main
-        with:
-          xcode-version: ${{ inputs.xcode-version }}
-          github-token: ${{ github.token }}
-          brew-packages: ${{ inputs.brew-packages }}
-          cache-profile: ${{ inputs.cache-profile }}
-          cache-version: ${{ inputs.cache-version }}
-          extra-cache-paths: ${{ inputs.extra-cache-paths }}
-          import-signing-cert: ${{ inputs.import-signing-cert }}
-          install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
-          signing-identity-name: ${{ inputs.signing-identity-name }}
-          apple-team-id: ${{ inputs.apple-team-id }}
-          setup-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          provisioning-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
-          notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
-          notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+    uses: ./.github/workflows/_ci-gate.yml
+    with:
+      gate: test
+      runner: ${{ inputs.runner }}
+      xcode-version: ${{ inputs.xcode-version }}
+      cache-profile: ${{ inputs.cache-profile }}
+      cache-version: ${{ inputs.cache-version }}
+      extra-cache-paths: ${{ inputs.extra-cache-paths }}
+      brew-packages: ${{ inputs.brew-packages }}
+      import-signing-cert: ${{ inputs.import-signing-cert }}
+      install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
+      signing-identity-name: ${{ inputs.signing-identity-name }}
+      apple-team-id: ${{ inputs.apple-team-id }}
+      setup-target: ${{ inputs.setup-target }}
+      make-args: ${{ inputs.make-args }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      fetch-depth: ${{ inputs.fetch-depth }}
+    secrets: inherit
 
   test:
     name: Test
@@ -569,127 +425,51 @@ jobs:
     # keep this gated on every upstream gate actually succeeding.
     if: ${{ always() && needs.plan-runners.result == 'success' && needs.quality.result == 'success' && needs.build.result == 'success' && needs.test.result == 'success' && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') }}
     needs: [plan-runners, quality, build, test]
-    runs-on: ${{ needs.plan-runners.outputs.extra_targets_label }}
-    timeout-minutes: ${{ inputs.timeout-minutes }}
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: ${{ inputs.fetch-depth }}
-
-      - name: Run extra targets (swift-makefile)
-        if: github.repository == 'agoodkind/swift-makefile'
-        uses: ./.github/actions/run-extra-targets
-        with:
-          xcode-version: ${{ inputs.xcode-version }}
-          github-token: ${{ github.token }}
-          extra-targets: ${{ inputs.extra-targets }}
-          targets: ${{ inputs.targets }}
-          brew-packages: ${{ inputs.brew-packages }}
-          cache-profile: ${{ inputs.cache-profile }}
-          cache-version: ${{ inputs.cache-version }}
-          extra-cache-paths: ${{ inputs.extra-cache-paths }}
-          import-signing-cert: ${{ inputs.import-signing-cert }}
-          install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
-          signing-identity-name: ${{ inputs.signing-identity-name }}
-          apple-team-id: ${{ inputs.apple-team-id }}
-          setup-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          provisioning-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
-          notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
-          notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-
-      - name: Run extra targets
-        if: github.repository != 'agoodkind/swift-makefile'
-        uses: agoodkind/swift-makefile/.github/actions/run-extra-targets@main
-        with:
-          xcode-version: ${{ inputs.xcode-version }}
-          github-token: ${{ github.token }}
-          extra-targets: ${{ inputs.extra-targets }}
-          targets: ${{ inputs.targets }}
-          brew-packages: ${{ inputs.brew-packages }}
-          cache-profile: ${{ inputs.cache-profile }}
-          cache-version: ${{ inputs.cache-version }}
-          extra-cache-paths: ${{ inputs.extra-cache-paths }}
-          import-signing-cert: ${{ inputs.import-signing-cert }}
-          install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
-          signing-identity-name: ${{ inputs.signing-identity-name }}
-          apple-team-id: ${{ inputs.apple-team-id }}
-          setup-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          provisioning-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
-          notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
-          notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+    uses: ./.github/workflows/_ci-gate.yml
+    with:
+      gate: extra-targets
+      runner: ${{ needs.plan-runners.outputs.extra_targets_label }}
+      extra-targets: ${{ inputs.extra-targets }}
+      targets: ${{ inputs.targets }}
+      xcode-version: ${{ inputs.xcode-version }}
+      cache-profile: ${{ inputs.cache-profile }}
+      cache-version: ${{ inputs.cache-version }}
+      extra-cache-paths: ${{ inputs.extra-cache-paths }}
+      brew-packages: ${{ inputs.brew-packages }}
+      import-signing-cert: ${{ inputs.import-signing-cert }}
+      install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
+      signing-identity-name: ${{ inputs.signing-identity-name }}
+      apple-team-id: ${{ inputs.apple-team-id }}
+      setup-target: ${{ inputs.setup-target }}
+      make-args: ${{ inputs.make-args }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      fetch-depth: ${{ inputs.fetch-depth }}
+    secrets: inherit
 
   extra-targets-hosted:
     name: Extra Targets (hosted fallback)
     needs: [plan-runners, extra-targets-pool]
     if: ${{ (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') && needs.plan-runners.outputs.extra_targets_label != inputs.runner && (needs.extra-targets-pool.result == 'failure' || needs.extra-targets-pool.result == 'cancelled') }}
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: ${{ inputs.timeout-minutes }}
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: ${{ inputs.fetch-depth }}
-
-      - name: Run extra targets (swift-makefile)
-        if: github.repository == 'agoodkind/swift-makefile'
-        uses: ./.github/actions/run-extra-targets
-        with:
-          xcode-version: ${{ inputs.xcode-version }}
-          github-token: ${{ github.token }}
-          extra-targets: ${{ inputs.extra-targets }}
-          targets: ${{ inputs.targets }}
-          brew-packages: ${{ inputs.brew-packages }}
-          cache-profile: ${{ inputs.cache-profile }}
-          cache-version: ${{ inputs.cache-version }}
-          extra-cache-paths: ${{ inputs.extra-cache-paths }}
-          import-signing-cert: ${{ inputs.import-signing-cert }}
-          install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
-          signing-identity-name: ${{ inputs.signing-identity-name }}
-          apple-team-id: ${{ inputs.apple-team-id }}
-          setup-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          provisioning-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
-          notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
-          notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-
-      - name: Run extra targets
-        if: github.repository != 'agoodkind/swift-makefile'
-        uses: agoodkind/swift-makefile/.github/actions/run-extra-targets@main
-        with:
-          xcode-version: ${{ inputs.xcode-version }}
-          github-token: ${{ github.token }}
-          extra-targets: ${{ inputs.extra-targets }}
-          targets: ${{ inputs.targets }}
-          brew-packages: ${{ inputs.brew-packages }}
-          cache-profile: ${{ inputs.cache-profile }}
-          cache-version: ${{ inputs.cache-version }}
-          extra-cache-paths: ${{ inputs.extra-cache-paths }}
-          import-signing-cert: ${{ inputs.import-signing-cert }}
-          install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
-          signing-identity-name: ${{ inputs.signing-identity-name }}
-          apple-team-id: ${{ inputs.apple-team-id }}
-          setup-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          provisioning-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
-          notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
-          notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+    uses: ./.github/workflows/_ci-gate.yml
+    with:
+      gate: extra-targets
+      runner: ${{ inputs.runner }}
+      extra-targets: ${{ inputs.extra-targets }}
+      targets: ${{ inputs.targets }}
+      xcode-version: ${{ inputs.xcode-version }}
+      cache-profile: ${{ inputs.cache-profile }}
+      cache-version: ${{ inputs.cache-version }}
+      extra-cache-paths: ${{ inputs.extra-cache-paths }}
+      brew-packages: ${{ inputs.brew-packages }}
+      import-signing-cert: ${{ inputs.import-signing-cert }}
+      install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
+      signing-identity-name: ${{ inputs.signing-identity-name }}
+      apple-team-id: ${{ inputs.apple-team-id }}
+      setup-target: ${{ inputs.setup-target }}
+      make-args: ${{ inputs.make-args }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      fetch-depth: ${{ inputs.fetch-depth }}
+    secrets: inherit
 
   extra-targets:
     name: Extra Targets
