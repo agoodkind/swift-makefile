@@ -251,6 +251,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/BuildLockTests.swift \
 	Tests/SwiftMkCoreTests/SwiftPMTests.swift \
 	Tests/SwiftMkCoreTests/ManifestCompletenessTests.swift \
+	Tests/SwiftMkCoreTests/NoLibSwiftPMImportTests.swift \
 	notices.txt \
 	templates/xcode/IDETemplateMacros.plist.template
 

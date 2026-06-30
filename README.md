@@ -8,7 +8,11 @@ Provided AS IS under the MIT License with no warranty. See [LICENSE](LICENSE).
 
 Each subsystem has a present-tense overview under `docs/<area>/overview.md` that links to the source and test holding each detail, so the docs track the code.
 
-- [Dead-code gate](docs/deadcode/overview.md) covers the two scans, the signing-disabled coverage build, the index-completeness check, the coverage-completeness check, and the per-worktree build lock.
+- [Build gate](docs/gate/overview.md) covers the gate proof, the in-process receipt, the build chokepoints, and the per-worktree build lock.
+- [Dead-code gate](docs/deadcode/overview.md) covers the two scans, the signing-disabled coverage build, the index-completeness check, and the coverage-completeness check.
+- [Signing](docs/signing/overview.md) covers the single-source-of-truth xcconfig override, inferred style, and post-build signing and notarization.
+- [Caching](docs/caching/overview.md) covers the engine-owned cache plan and the compile-cache stores.
+- [CI](docs/ci/overview.md) covers the reusable workflows, the required gate set, runner fallback, and the non-overridable OSV policy.
 
 ## Files
 
