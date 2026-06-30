@@ -1,0 +1,265 @@
+# Reusable heavy-gate body for the Swift CI. One job runs the Build, Test, or
+# Extra Targets gate selected by `gate`. _ci.yml calls this once per pool attempt
+# and once per hosted fallback, so the guarded setup/sign/make sequence lives
+# here instead of being duplicated across six jobs.
+#
+# Composability: owned actions (setup-build-env and the signing actions) are
+# referenced at this workflow's job level with the github.repository guard
+# (`./` for swift-makefile, `@main` for consumers), the same pattern the Quality
+# job and _release.yml use. No owned action is nested inside another. A consumer
+# calling _ci.yml@main loads this file from swift-makefile@main (a relative-path
+# reusable workflow comes from the caller workflow's commit), so it resolves in
+# both roles and a swift-makefile PR self-tests its own copy.
+name: CI gate
+
+on:
+  workflow_call:
+    inputs:
+      # build | test | extra-targets
+      gate:
+        type: string
+        required: true
+      runner:
+        type: string
+        required: true
+      xcode-version:
+        type: string
+        default: latest-stable
+      targets:
+        type: string
+        default: '["lint","build","test","audit"]'
+      extra-targets:
+        type: string
+        default: '[]'
+      setup-target:
+        type: string
+        default: ""
+      make-args:
+        type: string
+        default: ""
+      brew-packages:
+        type: string
+        default: ""
+      cache-profile:
+        type: string
+        default: safe
+      cache-version:
+        type: string
+        default: v1
+      import-signing-cert:
+        type: boolean
+        default: false
+      install-provisioning-profile:
+        type: boolean
+        default: false
+      signing-identity-name:
+        type: string
+        default: ""
+      apple-team-id:
+        type: string
+        default: ""
+      extra-cache-paths:
+        type: string
+        default: ""
+      fetch-depth:
+        type: string
+        default: "1"
+      timeout-minutes:
+        type: number
+        default: 30
+    secrets:
+      APPLE_DEVELOPER_ID_P12_BASE64:
+        required: false
+      APPLE_DEVELOPER_ID_P12_PASSWORD:
+        required: false
+      APPLE_DEVELOPER_ID_PROFILE_BASE64:
+        required: false
+      APPLE_NOTARY_KEY_BASE64:
+        required: false
+      APPLE_NOTARY_KEY_ID:
+        required: false
+      APPLE_NOTARY_ISSUER_ID:
+        required: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  HOMEBREW_NO_REQUIRE_TAP_TRUST: "1"
+
+jobs:
+  gate:
+    name: ${{ inputs.gate }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    env:
+      # Path to the swift-makefile checkout for path-shell helper calls: the repo
+      # itself when self-hosted here, or the .swift-makefile helper checkout for
+      # consumers. A reusable workflow can set this at job level, so no env step.
+      SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+    steps:
+      # Hard-fail on an unknown gate so a typo cannot run setup and then skip
+      # every make step, which would otherwise be a false-green CI run.
+      - name: Validate gate input
+        shell: bash
+        env:
+          GATE: ${{ inputs.gate }}
+        run: |
+          case "${GATE}" in
+            build | test | extra-targets) ;;
+            *)
+              printf 'unknown gate %s; expected build, test, or extra-targets\n' "${GATE}" >&2
+              exit 1
+              ;;
+          esac
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: ${{ inputs.fetch-depth }}
+
+      - name: Checkout swift-makefile helpers
+        if: github.repository != 'agoodkind/swift-makefile'
+        uses: actions/checkout@v7
+        with:
+          repository: agoodkind/swift-makefile
+          ref: main
+          path: .swift-makefile
+          fetch-depth: 1
+
+      # extra-targets only: resolve the bespoke targets and drop builtins. The
+      # count gates every later step so an all-builtin list does no setup.
+      - name: Resolve extra targets
+        if: inputs.gate == 'extra-targets'
+        id: resolve
+        shell: bash
+        env:
+          EXTRA_TARGETS: ${{ inputs.extra-targets }}
+          LEGACY_TARGETS: ${{ inputs.targets }}
+          BUILTIN_TARGETS_JSON: '["build","test","lint","audit","build-check","quality-guard","lint-swiftlint","lint-format","lint-complexity","lint-deadcode","swiftcheck-extra"]'
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" resolve-extra-targets
+
+      - name: Install brew packages
+        if: ${{ (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.brew-packages != '' }}
+        shell: bash
+        env:
+          BREW_PACKAGES: ${{ inputs.brew-packages }}
+        run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/install-brew-packages/install-brew-packages.sh"
+
+      - name: Setup Swift build env (swift-makefile)
+        if: ${{ (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && github.repository == 'agoodkind/swift-makefile' }}
+        uses: ./.github/actions/setup-build-env
+        with:
+          xcode-version: ${{ inputs.xcode-version }}
+          github-token: ${{ github.token }}
+          cache-profile: ${{ inputs.cache-profile }}
+          cache-version: ${{ inputs.cache-version }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+
+      - name: Setup Swift build env
+        if: ${{ (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && github.repository != 'agoodkind/swift-makefile' }}
+        uses: agoodkind/swift-makefile/.github/actions/setup-build-env@main
+        with:
+          xcode-version: ${{ inputs.xcode-version }}
+          github-token: ${{ github.token }}
+          cache-profile: ${{ inputs.cache-profile }}
+          cache-version: ${{ inputs.cache-version }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+
+      - name: Validate signing inputs
+        if: ${{ (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && (inputs.import-signing-cert || inputs.install-provisioning-profile) }}
+        shell: bash
+        env:
+          IMPORT_SIGNING_CERT: ${{ inputs.import-signing-cert }}
+          INSTALL_PROVISIONING_PROFILE: ${{ inputs.install-provisioning-profile }}
+          HAS_SIGNING_CERT: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
+          HAS_SIGNING_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD != '' }}
+          HAS_PROVISIONING_PROFILE: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 != '' }}
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" validate-signing-inputs
+
+      - name: Install signing certificate (swift-makefile)
+        id: cert-local
+        if: ${{ (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.import-signing-cert && github.repository == 'agoodkind/swift-makefile' }}
+        uses: ./.github/actions/import-signing-cert
+        with:
+          p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          identity-name: ${{ inputs.signing-identity-name }}
+
+      - name: Install signing certificate
+        id: cert-remote
+        if: ${{ (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.import-signing-cert && github.repository != 'agoodkind/swift-makefile' }}
+        uses: agoodkind/swift-makefile/.github/actions/import-signing-cert@main
+        with:
+          p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          identity-name: ${{ inputs.signing-identity-name }}
+
+      - name: Install provisioning profile (swift-makefile)
+        id: profile-local
+        if: ${{ (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.install-provisioning-profile && github.repository == 'agoodkind/swift-makefile' }}
+        uses: ./.github/actions/install-provisioning-profile
+        with:
+          profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
+
+      - name: Install provisioning profile
+        id: profile-remote
+        if: ${{ (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.install-provisioning-profile && github.repository != 'agoodkind/swift-makefile' }}
+        uses: agoodkind/swift-makefile/.github/actions/install-provisioning-profile@main
+        with:
+          profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
+
+      - name: Run setup target
+        if: ${{ (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.setup-target != '' }}
+        shell: bash
+        env:
+          MAKE_TARGET: ${{ inputs.setup-target }}
+          MAKE_ARGS: ${{ inputs.make-args }}
+          CERT_SHA1: ${{ steps.cert-local.outputs.identity-sha1 || steps.cert-remote.outputs.identity-sha1 }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+          PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile-local.outputs.profile-specifier || steps.profile-remote.outputs.profile-specifier }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
+
+      - name: Run build
+        if: ${{ inputs.gate == 'build' }}
+        shell: bash
+        env:
+          MAKE_TARGET: build
+          MAKE_ARGS: ${{ inputs.make-args }}
+          CERT_SHA1: ${{ steps.cert-local.outputs.identity-sha1 || steps.cert-remote.outputs.identity-sha1 }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+          PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile-local.outputs.profile-specifier || steps.profile-remote.outputs.profile-specifier }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
+
+      - name: Run test
+        if: ${{ inputs.gate == 'test' }}
+        shell: bash
+        env:
+          MAKE_TARGET: test
+          MAKE_ARGS: ${{ inputs.make-args }}
+          CERT_SHA1: ${{ steps.cert-local.outputs.identity-sha1 || steps.cert-remote.outputs.identity-sha1 }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+          PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile-local.outputs.profile-specifier || steps.profile-remote.outputs.profile-specifier }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
+
+      - name: Run extra targets
+        if: ${{ inputs.gate == 'extra-targets' && steps.resolve.outputs.count != '0' }}
+        shell: bash
+        env:
+          MAKE_ARGS: ${{ inputs.make-args }}
+          CERT_SHA1: ${{ steps.cert-local.outputs.identity-sha1 || steps.cert-remote.outputs.identity-sha1 }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+          PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile-local.outputs.profile-specifier || steps.profile-remote.outputs.profile-specifier }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          EXTRA_TARGETS_SHELL: ${{ steps.resolve.outputs.targets_shell }}
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-extra-targets
