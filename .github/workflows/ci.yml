@@ -20,8 +20,4 @@ jobs:
     uses: ./.github/workflows/_ci.yml
     with:
       extra-targets: '["smoke-fetch"]'
-      # Dogfood the SwiftPM compile cache on the engine's own build, which also
-      # exercises the rolling compile bucket end to end: the build gate fills it, a
-      # re-run replays, and the lint gates never save it.
-      make-args: "SWIFT_MK_SWIFTPM_COMPILE_CACHE=auto SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS=1"
     secrets: inherit
