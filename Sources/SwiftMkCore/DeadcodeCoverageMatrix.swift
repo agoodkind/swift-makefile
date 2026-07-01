@@ -218,10 +218,43 @@ public enum DeadcodeCoverageMatrix {
     let configurations = target.buildConfigurationList?.buildConfigurations ?? []
     for configuration in configurations {
       let settings = configuration.buildSettings
-      result.formUnion(
-        platforms(
-          supportedPlatforms: settings["SUPPORTED_PLATFORMS"]?.stringValue,
-          supportsMacCatalyst: settings["SUPPORTS_MACCATALYST"]?.boolValue ?? false))
+      let supportsMacCatalyst = settings["SUPPORTS_MACCATALYST"]?.boolValue ?? false
+      let fromSupported = platforms(
+        supportedPlatforms: settings["SUPPORTED_PLATFORMS"]?.stringValue,
+        supportsMacCatalyst: supportsMacCatalyst)
+      if fromSupported.isEmpty {
+        // xcodegen encodes a single-platform target with `SDKROOT` (`macosx`,
+        // `iphoneos`) and writes no `SUPPORTED_PLATFORMS`, so fall back to the SDK
+        // when the platform list is absent. Tuist writes `SUPPORTED_PLATFORMS`, so
+        // this fallback never fires for a tuist target.
+        result.formUnion(
+          platformsFromSDKRoot(
+            settings["SDKROOT"]?.stringValue, supportsMacCatalyst: supportsMacCatalyst))
+      } else {
+        result.formUnion(fromSupported)
+      }
+    }
+    return result
+  }
+
+  /// The coverage platform a target's `SDKROOT` names, the single-SDK fallback for a
+  /// target with no `SUPPORTED_PLATFORMS`. `SDKROOT` is `macosx`, `iphoneos`,
+  /// `iphonesimulator`, or a versioned or absolute form of one; this matches the SDK
+  /// token and adds `.maccatalyst` when the target opts in, mirroring `platforms`.
+  static func platformsFromSDKRoot(
+    _ sdkRoot: String?, supportsMacCatalyst: Bool
+  ) -> Set<CoveragePlatform> {
+    var result: Set<CoveragePlatform> = []
+    let raw = (sdkRoot ?? "").lowercased()
+    if raw.contains("macosx") {
+      result.insert(.macosx)
+    } else if raw.contains("iphonesimulator") {
+      result.insert(.iphonesimulator)
+    } else if raw.contains("iphoneos") {
+      result.insert(.iphoneos)
+    }
+    if supportsMacCatalyst, !result.isEmpty {
+      result.insert(.maccatalyst)
     }
     return result
   }

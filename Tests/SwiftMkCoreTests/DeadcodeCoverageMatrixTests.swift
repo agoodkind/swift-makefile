@@ -25,55 +25,6 @@ import XcodeProj
 /// exercised elsewhere, and gets its real coverage from a live consumer in a later task.
 @Suite(.serialized)
 enum DeadcodeCoverageMatrixTests {
-  // MARK: platforms
-
-  @Test
-  static func platformsParsesASingleToken() {
-    #expect(
-      DeadcodeCoverageMatrix.platforms(supportedPlatforms: "macosx", supportsMacCatalyst: false)
-        == [.macosx])
-  }
-
-  @Test
-  static func platformsParsesSpaceSeparatedTokens() {
-    #expect(
-      DeadcodeCoverageMatrix.platforms(
-        supportedPlatforms: "iphoneos iphonesimulator", supportsMacCatalyst: false)
-        == [.iphoneos, .iphonesimulator])
-  }
-
-  @Test
-  static func platformsParsesCommaSeparatedTokens() {
-    #expect(
-      DeadcodeCoverageMatrix.platforms(
-        supportedPlatforms: "iphoneos,macosx", supportsMacCatalyst: false)
-        == [.iphoneos, .macosx])
-  }
-
-  @Test
-  static func platformsAddsMacCatalystWhenSupported() {
-    #expect(
-      DeadcodeCoverageMatrix.platforms(supportedPlatforms: "iphoneos", supportsMacCatalyst: true)
-        == [.iphoneos, .maccatalyst])
-  }
-
-  @Test
-  static func platformsDropsAnUnknownToken() {
-    #expect(
-      DeadcodeCoverageMatrix.platforms(
-        supportedPlatforms: "macosx watchos", supportsMacCatalyst: false) == [.macosx])
-  }
-
-  @Test
-  static func platformsIsEmptyForNilOrBlankInputWithNoMacCatalyst() {
-    #expect(
-      DeadcodeCoverageMatrix.platforms(supportedPlatforms: nil, supportsMacCatalyst: false)
-        .isEmpty)
-    #expect(
-      DeadcodeCoverageMatrix.platforms(supportedPlatforms: "", supportsMacCatalyst: false)
-        .isEmpty)
-  }
-
   // MARK: isCoverageTarget
 
   @Test
@@ -140,6 +91,30 @@ enum DeadcodeCoverageMatrixTests {
   static func resolvedPlatformsIsEmptyWithNoBuildConfigurationList() {
     let target = PBXNativeTarget(name: "App", productType: .application)
     #expect(DeadcodeCoverageMatrix.resolvedPlatforms(for: target).isEmpty)
+  }
+
+  @Test
+  static func resolvedPlatformsFallsBackToSDKRootWhenNoSupportedPlatforms() {
+    // The xcodegen shape: a macOS target carries SDKROOT and no SUPPORTED_PLATFORMS.
+    let configuration = XCBuildConfiguration(
+      name: "Debug", buildSettings: ["SDKROOT": "macosx"])
+    let configurationList = XCConfigurationList(buildConfigurations: [configuration])
+    let target = PBXNativeTarget(
+      name: "Helper", buildConfigurationList: configurationList, productType: .application)
+    #expect(DeadcodeCoverageMatrix.resolvedPlatforms(for: target) == [.macosx])
+  }
+
+  @Test
+  static func resolvedPlatformsPrefersSupportedPlatformsOverSDKRoot() {
+    // SUPPORTED_PLATFORMS present means the SDKROOT fallback must not fire, so a
+    // tuist target that names iOS is not also read as macOS from a stray SDKROOT.
+    let configuration = XCBuildConfiguration(
+      name: "Debug",
+      buildSettings: ["SUPPORTED_PLATFORMS": "iphoneos", "SDKROOT": "macosx"])
+    let configurationList = XCConfigurationList(buildConfigurations: [configuration])
+    let target = PBXNativeTarget(
+      name: "App", buildConfigurationList: configurationList, productType: .application)
+    #expect(DeadcodeCoverageMatrix.resolvedPlatforms(for: target) == [.iphoneos])
   }
 
   // MARK: sharedSchemes(for:projectFile:)
@@ -343,5 +318,103 @@ enum DeadcodeCoverageMatrixTests {
       pbxproj: PBXProj(objects: objects),
       sharedData: XCSharedData(schemes: [scheme]))
     return (project, scheme)
+  }
+}
+
+// MARK: - DeadcodeCoverageMatrixPlatformTests
+
+/// The pure platform-derivation helpers (`platforms`, `platformsFromSDKRoot`), split
+/// into their own suite so neither enum body crosses the complexity gate's line limit.
+@Suite(.serialized)
+enum DeadcodeCoverageMatrixPlatformTests {
+  // MARK: platforms
+
+  @Test
+  static func platformsParsesASingleToken() {
+    #expect(
+      DeadcodeCoverageMatrix.platforms(supportedPlatforms: "macosx", supportsMacCatalyst: false)
+        == [.macosx])
+  }
+
+  @Test
+  static func platformsParsesSpaceSeparatedTokens() {
+    #expect(
+      DeadcodeCoverageMatrix.platforms(
+        supportedPlatforms: "iphoneos iphonesimulator", supportsMacCatalyst: false)
+        == [.iphoneos, .iphonesimulator])
+  }
+
+  @Test
+  static func platformsParsesCommaSeparatedTokens() {
+    #expect(
+      DeadcodeCoverageMatrix.platforms(
+        supportedPlatforms: "iphoneos,macosx", supportsMacCatalyst: false)
+        == [.iphoneos, .macosx])
+  }
+
+  @Test
+  static func platformsAddsMacCatalystWhenSupported() {
+    #expect(
+      DeadcodeCoverageMatrix.platforms(supportedPlatforms: "iphoneos", supportsMacCatalyst: true)
+        == [.iphoneos, .maccatalyst])
+  }
+
+  @Test
+  static func platformsDropsAnUnknownToken() {
+    #expect(
+      DeadcodeCoverageMatrix.platforms(
+        supportedPlatforms: "macosx watchos", supportsMacCatalyst: false) == [.macosx])
+  }
+
+  @Test
+  static func platformsIsEmptyForNilOrBlankInputWithNoMacCatalyst() {
+    #expect(
+      DeadcodeCoverageMatrix.platforms(supportedPlatforms: nil, supportsMacCatalyst: false)
+        .isEmpty)
+    #expect(
+      DeadcodeCoverageMatrix.platforms(supportedPlatforms: "", supportsMacCatalyst: false)
+        .isEmpty)
+  }
+
+  // MARK: platformsFromSDKRoot
+
+  @Test
+  static func platformsFromSDKRootMatchesMacOS() {
+    #expect(
+      DeadcodeCoverageMatrix.platformsFromSDKRoot("macosx", supportsMacCatalyst: false)
+        == [.macosx])
+  }
+
+  @Test
+  static func platformsFromSDKRootMatchesAVersionedSDK() {
+    #expect(
+      DeadcodeCoverageMatrix.platformsFromSDKRoot("macosx14.0", supportsMacCatalyst: false)
+        == [.macosx])
+  }
+
+  @Test
+  static func platformsFromSDKRootDistinguishesSimulatorFromDevice() {
+    #expect(
+      DeadcodeCoverageMatrix.platformsFromSDKRoot("iphonesimulator", supportsMacCatalyst: false)
+        == [.iphonesimulator])
+    #expect(
+      DeadcodeCoverageMatrix.platformsFromSDKRoot("iphoneos", supportsMacCatalyst: false)
+        == [.iphoneos])
+  }
+
+  @Test
+  static func platformsFromSDKRootAddsMacCatalystOnlyWithABasePlatform() {
+    #expect(
+      DeadcodeCoverageMatrix.platformsFromSDKRoot("iphoneos", supportsMacCatalyst: true)
+        == [.iphoneos, .maccatalyst])
+    #expect(
+      DeadcodeCoverageMatrix.platformsFromSDKRoot(nil, supportsMacCatalyst: true).isEmpty)
+  }
+
+  @Test
+  static func platformsFromSDKRootIsEmptyForAnUnknownSDK() {
+    #expect(
+      DeadcodeCoverageMatrix.platformsFromSDKRoot("watchos", supportsMacCatalyst: false)
+        .isEmpty)
   }
 }
