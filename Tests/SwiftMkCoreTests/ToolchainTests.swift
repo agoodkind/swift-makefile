@@ -27,7 +27,7 @@ enum ToolchainTests {
         workspace: "App.xcworkspace"
       )
       let args = Toolchain.xcodebuildArguments(
-        request, action: "build", resultBundleDirectory: resultBundleDirectory)
+        request, actions: ["build"], resultBundleDirectory: resultBundleDirectory)
       let path = try #require(resultBundlePath(in: args))
       #expect(args.contains("-resultBundlePath"))
       #expect(path.hasSuffix("/App-Debug.xcresult"))
@@ -45,7 +45,7 @@ enum ToolchainTests {
         workspace: "FanCurveApp.xcworkspace"
       )
       let args = Toolchain.xcodebuildArguments(
-        request, action: "build", resultBundleDirectory: resultBundleDirectory)
+        request, actions: ["build"], resultBundleDirectory: resultBundleDirectory)
       let path = try #require(resultBundlePath(in: args))
       #expect(path.hasSuffix("/Fan-Curve-Release.xcresult"))
       #expect(!path.contains(" "))
@@ -62,7 +62,7 @@ enum ToolchainTests {
       workspace: "App.xcworkspace"
     )
     let args = Toolchain.xcodebuildArguments(
-      request, action: "build", resultBundleDirectory: nil)
+      request, actions: ["build"], resultBundleDirectory: nil)
     #expect(!args.contains("-resultBundlePath"))
   }
 
@@ -80,7 +80,7 @@ enum ToolchainTests {
         workspace: "App.xcworkspace"
       )
       let args = Toolchain.xcodebuildArguments(
-        request, action: "build", resultBundleDirectory: resultBundleDirectory)
+        request, actions: ["build"], resultBundleDirectory: resultBundleDirectory)
       let path = try #require(resultBundlePath(in: args))
       #expect(path == expectedPath)
       #expect(!FileManager.default.fileExists(atPath: expectedPath))
@@ -123,7 +123,7 @@ func toolchainTuistBuildNamesWorkspaceNeverAutoDiscovers() {
     configuration: "Debug",
     workspace: "App.xcworkspace"
   )
-  let args = Toolchain.xcodebuildArguments(request, action: "build")
+  let args = Toolchain.xcodebuildArguments(request, actions: ["build"])
   // The explicit -workspace is the Automerge-break fix: xcodebuild must not
   // auto-discover the bare app project.
   #expect(args.contains("-workspace"))
@@ -144,7 +144,7 @@ func toolchainTuistBuildPassesDerivedDataAndSettingsForPackaging() {
     derivedDataPath: "build",
     extraSettings: ["SMC_FAN_HELPER_APP": "/tmp/Helper.app"]
   )
-  let args = Toolchain.xcodebuildArguments(request, action: "build")
+  let args = Toolchain.xcodebuildArguments(request, actions: ["build"])
   // A consumer that packages its product needs a known -derivedDataPath, which
   // `tuist build` cannot provide; the xcodebuild -workspace form can.
   #expect(args.contains("-derivedDataPath"))
@@ -220,7 +220,7 @@ func toolchainPassesExtraArgumentsForAnalyze() {
     workspace: "App.xcworkspace",
     extraArguments: ["-allowProvisioningUpdates"]
   )
-  let args = Toolchain.xcodebuildArguments(request, action: "analyze")
+  let args = Toolchain.xcodebuildArguments(request, actions: ["analyze"])
   #expect(args.contains("-allowProvisioningUpdates"))
   #expect(args.last == "analyze")
 }
@@ -242,7 +242,7 @@ func toolchainBuildForTestingNamesWorkspaceAndAction() {
     derivedDataPath: "build",
     extraSettings: ["COMPILER_INDEX_STORE_ENABLE": "YES"]
   )
-  let args = Toolchain.xcodebuildArguments(request, action: "build-for-testing")
+  let args = Toolchain.xcodebuildArguments(request, actions: ["build-for-testing"])
   #expect(args.contains("-workspace"))
   #expect(args.contains("App.xcworkspace"))
   #expect(args.contains("COMPILER_INDEX_STORE_ENABLE=YES"))
@@ -257,7 +257,7 @@ func toolchainXcodegenBuildNamesProjectNeverAutoDiscovers() {
     configuration: "Release",
     project: "App.xcodeproj"
   )
-  let args = Toolchain.xcodebuildArguments(request, action: "build")
+  let args = Toolchain.xcodebuildArguments(request, actions: ["build"])
   #expect(args.contains("-project"))
   #expect(args.contains("App.xcodeproj"))
   #expect(!args.contains("-workspace"))
@@ -274,7 +274,7 @@ func toolchainXcodegenTestNamesProjectAndAction() {
     configuration: "Debug",
     project: "App.xcodeproj"
   )
-  let args = Toolchain.xcodebuildArguments(request, action: "test")
+  let args = Toolchain.xcodebuildArguments(request, actions: ["test"])
   #expect(args.contains("-project"))
   #expect(args.contains("App.xcodeproj"))
   #expect(args.last == "test")
@@ -303,7 +303,7 @@ func toolchainTuistBuildWithoutWorkspaceDegradesNotAutoDiscovers() {
   // A tuist build with no workspace is a programmer error; the assembler must
   // never emit a bare `build` that lets xcodebuild auto-discover a container.
   let request = Toolchain.Request(generator: .tuist, scheme: "App")
-  let args = Toolchain.xcodebuildArguments(request, action: "build")
+  let args = Toolchain.xcodebuildArguments(request, actions: ["build"])
   #expect(!args.contains("-scheme"))
   #expect(args == ["-version"])
 }
@@ -392,7 +392,7 @@ enum ToolchainSharedCacheTests {
         workspace: "App.xcworkspace",
         derivedDataPath: ".derived-data"
       )
-      let args = Toolchain.xcodebuildArguments(request, action: "build")
+      let args = Toolchain.xcodebuildArguments(request, actions: ["build"])
       // DerivedData stays per worktree; only the content-addressed caches are shared.
       #expect(args.contains("-derivedDataPath"))
       #expect(args.contains(".derived-data"))

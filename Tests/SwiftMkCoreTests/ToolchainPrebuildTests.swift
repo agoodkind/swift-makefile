@@ -77,6 +77,26 @@ enum ToolchainPrebuildTests {
     }
   }
 
+  @Test
+  static func xcodegenTestRunsPrebuildCommandFirst() throws {
+    try withMarker { prebuildMarker in
+      setenv(commandEnvName, "/usr/bin/touch \(quoted(prebuildMarker))", 1)
+
+      try GatedBuildHarness.run { setup in
+        let request = Toolchain.Request(
+          generator: .xcodegen,
+          scheme: "App",
+          configuration: "Debug",
+          project: "App.xcodeproj")
+        let status = Toolchain.test(request)
+
+        #expect(status == 0)
+        #expect(FileManager.default.fileExists(atPath: prebuildMarker))
+        #expect(FileManager.default.fileExists(atPath: setup.xcodebuildMarker))
+      }
+    }
+  }
+
   private static func withMarker(_ body: (String) throws -> Void) throws {
     try TestGlobalLock.withLock {
       let manager = FileManager.default

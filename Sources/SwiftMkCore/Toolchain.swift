@@ -97,7 +97,7 @@ public enum Toolchain {
   /// The exit status a product build returns when the lint gates fail at the
   /// chokepoint, so a build that ran around the gates stops nonzero like `make
   /// check` would.
-  static let gateFailureStatus: Int32 = 1, prebuildFailureStatus: Int32 = 1
+  static let gateFailureStatus: Int32 = 1
 
   /// xcodebuild build settings that decide code signing. swift-mk owns signing
   /// through an `XCODE_XCCONFIG_FILE` override, and a command-line `KEY=value`
@@ -229,8 +229,7 @@ public enum Toolchain {
     case .tuist:
       return Shell.runForwardingOutput("tuist", tuistTestArguments(request))
     case .xcodegen:
-      return Shell.runForwardingOutput(
-        "xcodebuild", xcodebuildArguments(request, action: "test"))
+      return runXcodebuildForwarding(request, actions: ["test"], environment: [:])
     }
   }
 
@@ -347,13 +346,6 @@ public enum Toolchain {
       args.append(contentsOf: settingArguments(request.extraSettings))
     }
     return args
-  }
-
-  /// xcodebuild argument vector naming an explicit container, for a single action.
-  static func xcodebuildArguments(
-    _ request: Request, action: String, resultBundleDirectory: String? = nil
-  ) -> [String] {
-    xcodebuildArguments(request, actions: [action], resultBundleDirectory: resultBundleDirectory)
   }
 
   /// xcodebuild argument vector naming an explicit container, for one or more
@@ -666,6 +658,9 @@ extension Toolchain {
 // MARK: - Raw xcodebuild invocation
 
 extension Toolchain {
+  /// The exit status returned when a prebuild command fails before xcodebuild.
+  static let prebuildFailureStatus: Int32 = 1
+
   /// The single module-internal site that streams an xcodebuild action vector.
   /// Every build, build-for-testing, and analyze path funnels through here, so the
   /// raw `xcodebuild` spawn lives in this one chokepoint file and the build-tooling

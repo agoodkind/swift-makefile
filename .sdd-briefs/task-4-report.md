@@ -124,3 +124,40 @@ exit 0
 The first `make build` after adding the guards found a `Toolchain.swift` file-length finding because the new failure status added a counted line. I changed it to share the existing status declaration line, reran `make build`, and the gate passed.
 
 A direct typographic dash scan command was blocked by the repo hook because this indexed codebase requires semantic search for grep-like commands. The inspected added code and comments use ASCII hyphens only, and `git diff --check` is clean.
+
+## Fix pass
+
+The xcodegen branch of `Toolchain.test(_:)` now routes `xcodebuild test` through `runXcodebuildForwarding(request, actions: ["test"], environment: [:])`, so `ToolchainPrebuild.run()` fires before that xcodebuild spawn while the tuist branch remains unchanged.
+
+`gateFailureStatus` is restored as its own documented constant, and `prebuildFailureStatus` is now a separate documented constant in the raw xcodebuild invocation extension near the runners that use it.
+
+The regression test `xcodegenTestRunsPrebuildCommandFirst` first failed because the prebuild marker was missing, then passed after the xcodegen test path used the xcodebuild chokepoint.
+
+The single-action `xcodebuildArguments(_:action:resultBundleDirectory:)` overload was removed after `make build` reported it as newly unused, and the tests now call the existing multi-action assembler directly.
+
+`make test` tail:
+
+```text
+Test run with 353 tests in 22 suites passed after 18.284 seconds.
+/Applications/Xcode-26.5.0.app/Contents/Developer/usr/bin/make -C swiftcheck -f ../swift.mk ...
+Test run with 8 tests in 0 suites passed after 0.006 seconds.
+[0/1] Planning build
+Building for debugging...
+[0/4] Write swift-version-69A768CDF2A0BEE1.txt
+Build complete! (0.63s)
+```
+
+`make lint` tail:
+
+```text
+deadcode: package scan (Swift package targets)
+* Building...
+* Indexing...
+* Analyzing...
+
+* No unused code detected.
+lint-deadcode: OK
+  New findings: 0
+swiftcheck-extra: OK
+  New findings: 0
+```
