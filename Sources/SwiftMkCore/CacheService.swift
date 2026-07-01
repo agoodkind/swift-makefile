@@ -22,17 +22,25 @@ public enum CacheOutput {
   public static func githubOutput(
     plan: CachePlan.Result, paths: CachePaths.Resolved
   ) -> String {
+    // The compile-cache step passes these paths to `actions/cache`, which fails on an
+    // empty path list. Both CAS stores can resolve to nil (both set to an off-token), so
+    // report the compile cache enabled only when the policy allows it AND a path exists.
+    let compileEnabled = plan.compileCacheEnabled && !paths.compile.isEmpty
     var lines: [String] = [
       "dependency-cache-enabled=\(plan.dependencyCacheEnabled)",
       "build-cache-enabled=\(plan.buildCacheEnabled)",
+      "compile-cache-enabled=\(compileEnabled)",
       "dependency-key=\(plan.dependencyKey)",
     ]
     lines.append(
       contentsOf: heredoc("dependency-restore-keys", "CACHE_KEYS", plan.dependencyRestoreKeys))
     lines.append("build-key=\(plan.buildKey)")
     lines.append(contentsOf: heredoc("build-restore-keys", "CACHE_KEYS", plan.buildRestoreKeys))
+    lines.append("compile-key=\(plan.compileKey)")
+    lines.append(contentsOf: heredoc("compile-restore-keys", "CACHE_KEYS", plan.compileRestoreKeys))
     lines.append(contentsOf: heredoc("dependency-paths", "CACHE_PATHS", paths.dependency))
     lines.append(contentsOf: heredoc("build-paths", "CACHE_PATHS", paths.build))
+    lines.append(contentsOf: heredoc("compile-paths", "CACHE_PATHS", paths.compile))
     return lines.joined(separator: "\n") + "\n"
   }
 
@@ -97,6 +105,10 @@ public enum CacheService {
     for path in paths.build {
       Output.log("  \(path)")
     }
+    Output.log("compile:")
+    for path in paths.compile {
+      Output.log("  \(path)")
+    }
     return 0
   }
 
@@ -104,7 +116,7 @@ public enum CacheService {
   public static func runInfo() -> Int32 {
     Output.info("cache info: inspecting cache directories")
     let paths = resolvedPaths()
-    for path in paths.dependency + paths.build {
+    for path in paths.dependency + paths.build + paths.compile {
       let absolute = absolutePath(path)
       if FileManager.default.fileExists(atPath: absolute) {
         Output.log("present  \(directorySize(absolute))\t\(path)")
@@ -123,7 +135,7 @@ public enum CacheService {
     Output.info("cache clean: removing local cache directories")
     let paths = resolvedPaths()
     var removed = 0
-    for path in paths.dependency + paths.build {
+    for path in paths.dependency + paths.build + paths.compile {
       let absolute = absolutePath(path)
       guard isWithinSafeRoots(absolute) else {
         Output.error("cache clean: refusing to remove path outside HOME or the workspace: \(path)")
@@ -211,7 +223,8 @@ public enum CacheService {
   // MARK: - Resolution
 
   static func planInputs() -> CachePlan.Inputs {
-    CachePlan.Inputs(
+    let writer = Env.get("SWIFT_MK_CI_GATE")
+    return CachePlan.Inputs(
       profile: Env.get("CACHE_PROFILE", "safe"),
       version: Env.get("CACHE_VERSION", "v1"),
       dependencyHash: Env.get("DEPENDENCY_HASH"),
@@ -220,7 +233,38 @@ public enum CacheService {
       runnerArch: Env.get("RUNNER_ARCH", probe("uname", ["-m"], fallback: "unknown-arch")),
       xcodeVersion: Toolchain.xcodeVersionString(),
       swiftVersion: Toolchain.swiftVersionString(),
-      weeklyEpoch: probe("date", ["-u", "+%Yw%U"], fallback: "0000w00"))
+      weeklyEpoch: probe("date", ["-u", "+%Yw%U"], fallback: "0000w00"),
+      compileWriter: writer,
+      compileRunUnique: compileRunUnique(),
+      isCompileWriter: isCompileWriterGate(writer))
+  }
+
+  /// The gates that actually compile the package and therefore own the compile cache:
+  /// the build, test, and dead-code gates. A consumer with a bespoke compiling
+  /// extra-target sets `SWIFT_MK_COMPILE_CACHE_WRITE=1` to opt that gate in; `0`/`off`
+  /// opts a gate out.
+  static func isCompileWriterGate(_ gate: String) -> Bool {
+    let override = Env.get("SWIFT_MK_COMPILE_CACHE_WRITE").lowercased()
+    if ["1", "true", "yes", "on"].contains(override) {
+      return true
+    }
+    if ["0", "false", "no", "off"].contains(override) {
+      return false
+    }
+    return ["build", "test", "lint-deadcode", "deadcode"].contains(gate)
+  }
+
+  /// A value unique to this run attempt, so each compile-cache save lands under a fresh
+  /// name. In CI it is the run id and attempt; locally it falls back to the wall clock,
+  /// which never matters because local builds use the live cache directory, not the
+  /// rolling CI cache.
+  static func compileRunUnique() -> String {
+    let runId = Env.get("GITHUB_RUN_ID")
+    if !runId.isEmpty {
+      let attempt = Env.get("GITHUB_RUN_ATTEMPT", "1")
+      return "\(runId)-\(attempt)"
+    }
+    return probe("date", ["+%s"], fallback: "0")
   }
 
   static func resolvedPaths() -> CachePaths.Resolved {

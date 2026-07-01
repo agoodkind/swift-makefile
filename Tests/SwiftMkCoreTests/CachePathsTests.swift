@@ -52,11 +52,13 @@ func dependencyBucketKeepsLegacyHomeCaches() {
 
 @Test
 func dependencyBucketAddsSharedSwiftMkCaches() {
-  // The gap: the engine's shared module, SPM, and CAS caches were never persisted.
+  // The shared module and SPM caches are true downloaded inputs, so they stay in the
+  // job-invariant dependency bucket. The CAS store is a build product, so it lives in
+  // the compile bucket (see the compile-bucket tests below).
   let resolved = CachePaths.resolve(sampleInputs())
   #expect(resolved.dependency.contains("/h/Library/Caches/swift-mk/SourcePackages"))
   #expect(resolved.dependency.contains("/h/Library/Caches/swift-mk/ModuleCache"))
-  #expect(resolved.dependency.contains("/h/Library/Caches/swift-mk/CompilationCache"))
+  #expect(!resolved.dependency.contains("/h/Library/Caches/swift-mk/CompilationCache"))
 }
 
 @Test
@@ -65,7 +67,7 @@ func sharedCachesOmittedWhenDisabled() {
     sampleInputs(spmCachePath: nil, moduleCachePath: nil, xcodeCachePath: nil))
   #expect(!resolved.dependency.contains("/h/Library/Caches/swift-mk/SourcePackages"))
   #expect(!resolved.dependency.contains("/h/Library/Caches/swift-mk/ModuleCache"))
-  #expect(!resolved.dependency.contains("/h/Library/Caches/swift-mk/CompilationCache"))
+  #expect(!resolved.compile.contains("/h/Library/Caches/swift-mk/CompilationCache"))
 }
 
 @Test
@@ -94,13 +96,15 @@ func buildBucketUsesResolvedDerivedDataRoot() {
 }
 
 @Test
-func compilationCacheIsADependencyOutsideDerivedData() {
+func compilationCacheIsACompileBucketEntryOutsideDerivedData() {
   // The CAS store is the shared content-addressed path, NOT a DerivedData subdir, so
   // the dead-code build's `rm -rf` of DerivedData cannot destroy it and cross-run
-  // replay survives. It must be in the dependency bucket and absent from the build
-  // bucket (no DerivedData CompilationCache.noindex entry).
+  // replay survives. It is a build product, so it lives in the compile bucket (which
+  // the CI plan keys as a rolling per-writer cache) and never in the build bucket
+  // (no DerivedData CompilationCache.noindex entry).
   let resolved = CachePaths.resolve(sampleInputs())
-  #expect(resolved.dependency.contains("/h/Library/Caches/swift-mk/CompilationCache"))
+  #expect(resolved.compile.contains("/h/Library/Caches/swift-mk/CompilationCache"))
+  #expect(!resolved.dependency.contains("/h/Library/Caches/swift-mk/CompilationCache"))
   #expect(!resolved.build.contains("/ws/.derived-data/CompilationCache.noindex"))
   #expect(!resolved.build.contains { $0.hasSuffix("/CompilationCache.noindex") })
 }
@@ -112,7 +116,7 @@ func compilationCacheFallsBackToDerivedDataWhenSharedPathDisabled() {
   // opt-out path does not silently lose cross-run CAS persistence.
   let resolved = CachePaths.resolve(sampleInputs(xcodeCachePath: nil))
   #expect(resolved.build.contains("/ws/.derived-data/CompilationCache.noindex"))
-  #expect(!resolved.dependency.contains("/h/Library/Caches/swift-mk/CompilationCache"))
+  #expect(!resolved.compile.contains("/h/Library/Caches/swift-mk/CompilationCache"))
 }
 
 @Test
@@ -123,18 +127,19 @@ func extraPathsAppendToBuildBucket() {
 }
 
 @Test
-func swiftpmCompileCacheIsADependencyOutsideDerivedData() {
-  // The SwiftPM CAS store is content-addressed, so it belongs in the dependency
-  // bucket just like the Xcode CAS store; a code-only change does not change the
-  // dependency key, so the store is restored and replay survives a DerivedData wipe.
+func swiftpmCompileCacheIsACompileBucketEntry() {
+  // The SwiftPM CAS store is a build product, the SwiftPM peer of the Xcode CAS, so it
+  // lives in the compile bucket, never the dependency or build bucket.
   let resolved = CachePaths.resolve(
     sampleInputs(swiftpmCachePath: "/h/Library/Caches/swift-mk/SwiftPMCompilationCache"))
-  #expect(resolved.dependency.contains("/h/Library/Caches/swift-mk/SwiftPMCompilationCache"))
+  #expect(resolved.compile.contains("/h/Library/Caches/swift-mk/SwiftPMCompilationCache"))
+  #expect(!resolved.dependency.contains("/h/Library/Caches/swift-mk/SwiftPMCompilationCache"))
   #expect(!resolved.build.contains("/h/Library/Caches/swift-mk/SwiftPMCompilationCache"))
 }
 
 @Test
-func swiftpmCacheOmittedFromDependencyWhenNil() {
+func swiftpmCacheOmittedFromCompileWhenNil() {
   let resolved = CachePaths.resolve(sampleInputs(swiftpmCachePath: nil))
+  #expect(!resolved.compile.contains { $0.contains("SwiftPMCompilationCache") })
   #expect(!resolved.dependency.contains { $0.contains("SwiftPMCompilationCache") })
 }
