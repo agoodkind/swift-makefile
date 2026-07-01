@@ -173,6 +173,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/SigningBuildConfig.swift \
 	Sources/SwiftMkCore/SigningVerification.swift \
 	Sources/SwiftMkCore/Toolchain.swift \
+	Sources/SwiftMkCore/Toolchain+Coverage.swift \
 	Sources/SwiftMkCore/Toolchain+GatedCompile.swift \
 	Sources/SwiftMkCore/GatedBuild.swift \
 	Sources/SwiftMkCore/LintPolicy.swift \
@@ -215,6 +216,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/SigningBuildConfigTests.swift \
 	Tests/SwiftMkCoreTests/SigningVerificationTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainTests.swift \
+	Tests/SwiftMkCoreTests/ToolchainCoverageTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainReceiptTests.swift \
 	Tests/SwiftMkCoreTests/GatedBuildHarness.swift \
 	Tests/SwiftMkCoreTests/GatedBuildTests.swift \
