@@ -204,6 +204,74 @@ enum DeadcodeCoverageMatrixTests {
     }
   }
 
+  // MARK: autoSchemeEntries (no shared schemes)
+
+  @Test
+  static func autoSchemeEntriesDerivesOneSchemePerBuildableNativeTarget() throws {
+    let project = makeNoSharedSchemeProject()
+    let entries = try DeadcodeCoverageMatrix.autoSchemeEntries(
+      project: project, packageTargetNames: ["PackageLib"])
+    let pairs = Set(entries.map { "\($0.scheme)|\($0.platform.rawValue)" })
+    // The two macOS app/helper targets each become a same-named auto-scheme; the test
+    // bundle, the command-line tool, and the package target drop out.
+    #expect(pairs == ["Helper|macosx", "MainApp|macosx"])
+  }
+
+  @Test
+  static func autoSchemeEntriesThrowsWhenAKeptTargetHasNoKnownPlatform() {
+    let noPlatformTarget = PBXNativeTarget(name: "NoPlatform", productType: .application)
+    let project = XcodeProj(
+      workspace: XCWorkspace(data: XCWorkspaceData(children: [])),
+      pbxproj: PBXProj(objects: [noPlatformTarget]),
+      sharedData: nil)
+    #expect(throws: DeadcodeCoverageMatrix.EnumerationError.self) {
+      try DeadcodeCoverageMatrix.autoSchemeEntries(
+        project: project, packageTargetNames: [])
+    }
+  }
+
+  /// A project with no shared schemes and four native targets: two macOS
+  /// app/helper targets that must each become an auto-scheme, plus a test bundle, a
+  /// command-line tool, and a package-owned framework that must all drop out. This is
+  /// the xcodegen shape, where `xcodebuild -list` reports auto-created schemes but no
+  /// `xcshareddata` scheme file exists.
+  static func makeNoSharedSchemeProject() -> XcodeProj {
+    let mainConfiguration = XCBuildConfiguration(
+      name: "Debug", buildSettings: ["SUPPORTED_PLATFORMS": "macosx"])
+    let mainConfigurationList = XCConfigurationList(buildConfigurations: [mainConfiguration])
+    let mainTarget = PBXNativeTarget(
+      name: "MainApp",
+      buildConfigurationList: mainConfigurationList,
+      productType: .application)
+    let helperConfiguration = XCBuildConfiguration(
+      name: "Debug", buildSettings: ["SUPPORTED_PLATFORMS": "macosx"])
+    let helperConfigurationList = XCConfigurationList(
+      buildConfigurations: [helperConfiguration])
+    let helperTarget = PBXNativeTarget(
+      name: "Helper",
+      buildConfigurationList: helperConfigurationList,
+      productType: .application)
+    let testsTarget = PBXNativeTarget(name: "AppTests", productType: .unitTestBundle)
+    let toolTarget = PBXNativeTarget(name: "Tool", productType: .commandLineTool)
+    let packageConfiguration = XCBuildConfiguration(
+      name: "Debug", buildSettings: ["SUPPORTED_PLATFORMS": "macosx"])
+    let packageConfigurationList = XCConfigurationList(
+      buildConfigurations: [packageConfiguration])
+    let packageTarget = PBXNativeTarget(
+      name: "PackageLib",
+      buildConfigurationList: packageConfigurationList,
+      productType: .framework)
+    let objects: [PBXObject] = [
+      mainTarget, helperTarget, testsTarget, toolTarget, packageTarget,
+      mainConfigurationList, helperConfigurationList, packageConfigurationList,
+      mainConfiguration, helperConfiguration, packageConfiguration,
+    ]
+    return XcodeProj(
+      workspace: XCWorkspace(data: XCWorkspaceData(children: [])),
+      pbxproj: PBXProj(objects: objects),
+      sharedData: nil)
+  }
+
   // MARK: fixture builders
 
   /// A `BuildableReference` matched by name only, the same resolution

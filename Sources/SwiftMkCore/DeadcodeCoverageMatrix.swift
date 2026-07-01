@@ -71,6 +71,8 @@ public enum DeadcodeCoverageMatrix {
   public static func entries(
     containerPath: String, isWorkspace: Bool, packageTargetNames: Set<String>
   ) throws -> [DeadcodeCoverageEntry] {
+    Output.debug(
+      "deadcode: deriving coverage matrix from \(containerPath) isWorkspace=\(isWorkspace)")
     let projectPaths =
       isWorkspace
       ? try IndexCompleteness.xcodeProjectPaths(inWorkspace: containerPath)
@@ -79,14 +81,22 @@ public enum DeadcodeCoverageMatrix {
     var result: [DeadcodeCoverageEntry] = []
     for projectFile in projectPaths {
       let project = try XcodeProj(path: Path(projectFile))
-      for scheme in sharedSchemes(for: project, projectFile: projectFile) {
-        let schemeEntries = try coverageEntries(
-          scheme: scheme, project: project, packageTargetNames: packageTargetNames)
-        for entry in schemeEntries {
-          let key = "\(entry.scheme)|\(entry.platform.rawValue)"
-          if seenKeys.insert(key).inserted {
-            result.append(entry)
-          }
+      let schemes = sharedSchemes(for: project, projectFile: projectFile)
+      // A project with no shared schemes (xcodegen writes none by default) still
+      // builds through Xcode's auto-created per-target schemes, which `xcodebuild
+      // -list` reports and `xcodebuild -scheme <target>` resolves on demand. Derive
+      // one auto-scheme entry per buildable native target so an xcodegen consumer
+      // gets a coverage matrix, matching the schemes the periphery scan reads from
+      // `xcodebuild -list`. A project with shared schemes uses those verbatim.
+      let projectEntries =
+        schemes.isEmpty
+        ? try autoSchemeEntries(project: project, packageTargetNames: packageTargetNames)
+        : try sharedSchemeEntries(
+          schemes: schemes, project: project, packageTargetNames: packageTargetNames)
+      for entry in projectEntries {
+        let key = "\(entry.scheme)|\(entry.platform.rawValue)"
+        if seenKeys.insert(key).inserted {
+          result.append(entry)
         }
       }
     }
@@ -117,6 +127,47 @@ public enum DeadcodeCoverageMatrix {
   }
 
   // MARK: Scheme derivation
+
+  /// The coverage entries every shared scheme contributes, flattened across the schemes.
+  static func sharedSchemeEntries(
+    schemes: [XCScheme], project: XcodeProj, packageTargetNames: Set<String>
+  ) throws -> [DeadcodeCoverageEntry] {
+    var entries: [DeadcodeCoverageEntry] = []
+    for scheme in schemes {
+      entries += try coverageEntries(
+        scheme: scheme, project: project, packageTargetNames: packageTargetNames)
+    }
+    return entries
+  }
+
+  /// The coverage entries for a project with no shared schemes: one auto-scheme per
+  /// buildable native target, named after the target the way Xcode names an
+  /// auto-created scheme. Each qualifying target expands to one entry per platform it
+  /// supports, the same expansion `coverageEntries` applies to a shared scheme's
+  /// targets.
+  static func autoSchemeEntries(
+    project: XcodeProj, packageTargetNames: Set<String>
+  ) throws -> [DeadcodeCoverageEntry] {
+    var entries: [DeadcodeCoverageEntry] = []
+    for target in project.pbxproj.nativeTargets {
+      guard
+        isCoverageTarget(
+          productType: target.productType,
+          name: target.name,
+          packageTargetNames: packageTargetNames)
+      else {
+        continue
+      }
+      let targetPlatforms = resolvedPlatforms(for: target)
+      guard !targetPlatforms.isEmpty else {
+        throw EnumerationError.noKnownPlatform(scheme: target.name, target: target.name)
+      }
+      for platform in targetPlatforms {
+        entries.append(DeadcodeCoverageEntry(scheme: target.name, platform: platform))
+      }
+    }
+    return entries
+  }
 
   /// The coverage entries one scheme contributes: every build-for-testing entry whose
   /// target resolves and qualifies (`isCoverageTarget`), expanded to one entry per
