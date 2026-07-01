@@ -34,9 +34,16 @@ extension Toolchain {
   /// the build with the swift-mk signing override. The single module-internal site
   /// that runs the product compile, so the `GateProof` make path and the
   /// `GateReceipt` API path stay byte-identical except for how each is authorized.
-  static func buildWithoutGateCheck(_ request: Request) -> Int32 {
+  ///
+  /// The make-path `build(_:)` rejects a forbidden signing setting before its gate
+  /// check, so it passes `signingAlreadyRejected: true` to skip the re-scan here. The
+  /// receipt path calls this directly with the default, so it still rejects the
+  /// forbidden setting. Either way the settings are scanned exactly once per build.
+  static func buildWithoutGateCheck(
+    _ request: Request, signingAlreadyRejected: Bool = false
+  ) -> Int32 {
     Output.debug("toolchain: product build scheme=\(request.scheme)")
-    if let rejection = rejectionForSigningOverride(request) {
+    if !signingAlreadyRejected, let rejection = rejectionForSigningOverride(request) {
       return rejection
     }
     return runXcodebuildForwarding(
@@ -87,5 +94,28 @@ extension Toolchain {
     }
     return runXcodebuildCapturing(
       request, actions: ["build-for-testing"], environment: environment)
+  }
+
+  // MARK: Static analysis
+
+  /// Static-analyze the scheme with xcodebuild against the explicit container,
+  /// applying the signing override like `build` so the analyze build signs the same
+  /// way a real build would. It is a make-path compile surface authorized by
+  /// `GateProof`, so it refuses unless this process is inside a swift-mk gated make
+  /// flow. It lives here, next to the shared xcodebuild forwarding, to keep the
+  /// `Toolchain` file within the module's file-size limit.
+  @discardableResult
+  public static func analyze(_ request: Request) -> Int32 {
+    // Reject a forbidden signing setting before the gate check, like `build`, so a
+    // caller error in the request returns the same status whether or not this process
+    // is gated.
+    if let rejection = rejectionForSigningOverride(request) {
+      return rejection
+    }
+    if let refusal = GateProof.refusal(entry: "toolchain analyze") {
+      return refusal
+    }
+    return runXcodebuildForwarding(
+      request, actions: ["analyze"], environment: signingEnvironment())
   }
 }
