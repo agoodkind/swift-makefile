@@ -34,6 +34,7 @@ extension Toolchain {
     public var configuration = "Debug"
     public var derivedDataPath = ""
     public var packageTargetNames: Set<String> = []
+    public var buildableSchemeNames: Set<String> = []
     public var extraSettings: [String: String] = [:]
     public var environment: [String: String] = [:]
 
@@ -72,7 +73,8 @@ extension Toolchain {
       entries = try DeadcodeCoverageMatrix.entries(
         containerPath: options.containerPath,
         isWorkspace: options.isWorkspace,
-        packageTargetNames: options.packageTargetNames)
+        packageTargetNames: options.packageTargetNames,
+        buildableSchemeNames: options.buildableSchemeNames)
     } catch {
       let message =
         "deadcode: could not enumerate coverage schemes from \(options.containerPath): \(error)"

@@ -158,6 +158,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/Scope.swift \
 	Sources/SwiftMkCore/Swiftcheck.swift \
 	Sources/SwiftMkCore/DeadcodeScan.swift \
+	Sources/SwiftMkCore/DeadcodeScan+Coverage.swift \
 	Sources/SwiftMkCore/DeadcodeScan+Witness.swift \
 	Sources/SwiftMkCore/Lint+DeadcodeVerdict.swift \
 	Sources/SwiftMkCore/DeadcodeCoverageCompleteness.swift \

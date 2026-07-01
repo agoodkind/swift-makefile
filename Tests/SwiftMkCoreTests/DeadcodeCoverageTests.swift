@@ -51,7 +51,8 @@ enum DeadcodeCoverageTests {
       let options = DeadcodeScan.coverageBuildOptions(
         path: "App.xcodeproj",
         isWorkspace: false,
-        packageTargets: ["AppPackage"])
+        packageTargets: ["AppPackage"],
+        buildableSchemes: ["App"])
 
       #expect(options.containerPath == "App.xcodeproj")
       #expect(!options.isWorkspace)
@@ -59,6 +60,7 @@ enum DeadcodeCoverageTests {
       #expect(options.configuration == "Profile")
       #expect(options.derivedDataPath == derivedData)
       #expect(options.packageTargetNames == Set(["AppPackage"]))
+      #expect(options.buildableSchemeNames == Set(["App"]))
       #expect(options.extraSettings["SMC_FAN_HELPER_APP"] == "/tmp/Helper.app")
       #expect(options.extraSettings["OTHER_LDFLAGS"] == "-ObjC")
       #expect(options.environment["SWIFT_MK_RESULT_BUNDLE_DIR"] == derivedData + "/ResultBundles")
@@ -81,6 +83,7 @@ enum DeadcodeCoverageTests {
         path: "Missing.xcodeproj",
         isWorkspace: false,
         packageTargets: [],
+        buildableSchemes: [],
         rawPath: root + "/.make/periphery.raw.out")
       // A failed coverage build returns nil, so scanProject never reaches the
       // periphery scan, and the raw file carries the hard-fail status escalation.
@@ -102,6 +105,7 @@ enum DeadcodeCoverageTests {
         path: "Missing.xcodeproj",
         isWorkspace: false,
         packageTargets: [],
+        buildableSchemes: [],
         rawPath: root + "/.make/periphery.raw.out")
       #expect(result == nil)
     }

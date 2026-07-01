@@ -67,9 +67,17 @@ public enum DeadcodeCoverageMatrix {
   /// The full `(scheme, platform)` matrix for `containerPath`, an `.xcodeproj` path or
   /// (when `isWorkspace`) an `.xcworkspace` path. `packageTargetNames` excludes targets
   /// the SwiftPM package scan already covers, so they are not double-built here.
-  /// Deduplicated and sorted by scheme then platform, so the output is deterministic.
+  /// `buildableSchemeNames`, when non-empty, is the set of schemes `xcodebuild -list`
+  /// reports for the container, and the matrix keeps only entries whose scheme is in it,
+  /// so a target read from a workspace's dependency project (WireGuardKit, Nimble, a
+  /// vendored package) never becomes a `-scheme` the workspace cannot build. An empty
+  /// set applies no filter. Deduplicated and sorted by scheme then platform, so the
+  /// output is deterministic.
   public static func entries(
-    containerPath: String, isWorkspace: Bool, packageTargetNames: Set<String>
+    containerPath: String,
+    isWorkspace: Bool,
+    packageTargetNames: Set<String>,
+    buildableSchemeNames: Set<String> = []
   ) throws -> [DeadcodeCoverageEntry] {
     Output.debug(
       "deadcode: deriving coverage matrix from \(containerPath) isWorkspace=\(isWorkspace)")
@@ -94,6 +102,9 @@ public enum DeadcodeCoverageMatrix {
         : try sharedSchemeEntries(
           schemes: schemes, project: project, packageTargetNames: packageTargetNames)
       for entry in projectEntries {
+        if !buildableSchemeNames.isEmpty, !buildableSchemeNames.contains(entry.scheme) {
+          continue
+        }
         let key = "\(entry.scheme)|\(entry.platform.rawValue)"
         if seenKeys.insert(key).inserted {
           result.append(entry)
