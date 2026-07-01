@@ -177,8 +177,9 @@ public enum Toolchain {
     // Reject a forbidden signing setting first: it is a caller error in the request
     // itself (EX_USAGE), independent of whether this process is gated, so the result
     // does not depend on a live `make` ancestor. `test()` and `buildWithoutGateCheck`
-    // already validate it first. The downstream `buildWithoutGateCheck` keeps its own
-    // check for the `build(_:receipt:)` path that calls it directly.
+    // already validate it first. Rejecting here, then passing
+    // `signingAlreadyRejected: true` below, scans the settings exactly once; the
+    // receipt path keeps `buildWithoutGateCheck`'s own check.
     if let rejection = rejectionForSigningOverride(request) {
       return rejection
     }
@@ -194,7 +195,7 @@ public enum Toolchain {
     if let refusal = GateProof.refusal(entry: "toolchain build") {
       return refusal
     }
-    return buildWithoutGateCheck(request)
+    return buildWithoutGateCheck(request, signingAlreadyRejected: true)
   }
 
   /// The signing override the chokepoint applies to a build, so swift-mk owns
@@ -248,25 +249,6 @@ public enum Toolchain {
     }
     return runXcodebuildForwarding(
       request, actions: ["build-for-testing"], environment: [:])
-  }
-
-  /// Static-analyze the scheme with xcodebuild against the explicit container,
-  /// applying the signing override like `build` so the analyze build signs the same
-  /// way a real build would. It is a compile surface, so it refuses unless this
-  /// process is inside a swift-mk gated make flow.
-  @discardableResult
-  public static func analyze(_ request: Request) -> Int32 {
-    // Reject a forbidden signing setting before the gate check, like `build`, so a
-    // caller error in the request returns the same status whether or not this process
-    // is gated.
-    if let rejection = rejectionForSigningOverride(request) {
-      return rejection
-    }
-    if let refusal = GateProof.refusal(entry: "toolchain analyze") {
-      return refusal
-    }
-    return runXcodebuildForwarding(
-      request, actions: ["analyze"], environment: signingEnvironment())
   }
 
   /// Build the scheme writing the full xcodebuild output to `logPath`, optionally
