@@ -86,18 +86,19 @@ Distribution and fleet:
 
 ### Dead-code coverage of Xcode targets
 
-The dead-code gate scans the Swift package and, when the repository has an Xcode project, every Xcode target. It reuses the index store from the project's own build, so it passes no scan configuration and no build settings to Periphery. A consumer with an Xcode project wires three things:
+The dead-code gate scans the Swift package and, when the repository declares an Xcode build, every Xcode target. It builds a fresh coverage index through `Toolchain.buildCoverage`, then passes no scan configuration and no build settings to Periphery. A consumer with an Xcode project wires these values:
 
 - Include `bootstrap.mk` and the `swift-build.mk` module.
-- Set `SWIFT_BUILD_CMD` to the command that builds the Xcode targets, and route that build through `-derivedDataPath $(SWIFT_MK_DERIVED_DATA)`. The gate runs this build before every scan so the index reflects the current sources; an incremental build keeps it fast. When `SWIFT_BUILD_CMD` needs a target argument or builds a single platform, set `SWIFT_DEADCODE_BUILD_CMD` to a target-free build that compiles every platform to cover, and the gate uses it instead. Coverage follows what compiled, so build each platform whose `#if` branches you want analyzed.
-- Set `SWIFT_GENERATE_CMD` to the command that generates the project when the project is a generated artifact. When `SWIFT_GENERATE_CMD` is unset, the gate runs `xcodegen generate` for a `project.yml` or `tuist generate` for a `Project.swift` or `Workspace.swift`.
+- Set `SWIFT_XCODE_GENERATOR` to `tuist` or `xcodegen`, set `SWIFT_XCODE_SCHEME`, and set either `SWIFT_XCODE_WORKSPACE` or `SWIFT_XCODE_PROJECT`.
+- Set `SWIFT_XCODE_COVERAGE_CONFIGURATION` when coverage should build a configuration other than Debug, and set `SWIFT_XCODE_BUILD_SETTINGS` for extra `KEY=value` build settings.
+- Set `SWIFT_GENERATE_CMD` when the project needs a custom generation command. When `SWIFT_GENERATE_CMD` is unset, the gate runs `xcodegen generate` for a `project.yml` or `tuist generate` for a `Project.swift` or `Workspace.swift`.
 
-The coverage build must produce a compiler index store, so build a configuration with indexing enabled. Debug enables it by default; a Release build usually disables it, so build Debug or pass `COMPILER_INDEX_STORE_ENABLE=YES`. `SWIFT_MK_DERIVED_DATA` is the canonical DerivedData path the build writes to and the gate reads the index store from. It defaults to `$(CURDIR)/.derived-data`; add it to `.gitignore`. Schemes come from `xcodebuild -list -json`, and schemes whose name is a Swift package target are excluded from the Xcode scan because the package scan already covers them. Coverage follows what the build compiled, so building each platform a target supports covers each `#if` branch.
+The coverage build writes a compiler index store under `SWIFT_MK_DERIVED_DATA`, and swift-mk disables signing and the local Xcode compilation cache for that coverage build. `SWIFT_MK_DERIVED_DATA` defaults to `$(CURDIR)/.derived-data`; add it to `.gitignore`. Schemes and supported platforms come from the generated Xcode container, and schemes whose name is a Swift package target are excluded from the Xcode scan because the package scan already covers them.
 
 The gate fails with a message naming the cause when a repository declares an Xcode project it cannot scan:
 
 - A `Project.swift`, `Workspace.swift`, or `project.yml` is present but no project was generated.
-- An Xcode project is present but `SWIFT_BUILD_CMD` is unset.
+- An Xcode project is present but the coverage build fails.
 - No index store exists under `SWIFT_MK_DERIVED_DATA` after the build.
 - No Xcode schemes resolve to scan.
 

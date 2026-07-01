@@ -269,7 +269,7 @@ public enum Lint {
     }
     // Unbypassable coverage check: every owned Swift source must be covered by the
     // package scan or the Xcode index. A consumer with own code only in Xcode targets
-    // and no coverage build configured would otherwise leave it silently unscanned.
+    // and no Xcode scan would otherwise leave it silently unscanned.
     if case .incomplete(let message) = DeadcodeCoverageCompleteness.assert(
       xcodeIndexStorePath: indexStore, context: context)
     {

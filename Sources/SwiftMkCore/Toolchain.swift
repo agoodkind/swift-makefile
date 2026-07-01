@@ -233,14 +233,10 @@ public enum Toolchain {
     }
   }
 
-  /// Build-for-testing the scheme through the make path, the coverage build a
-  /// consumer's `SWIFT_DEADCODE_BUILD_CMD` runs as `swift-mk toolchain
-  /// build-for-testing`. It is a compile surface, so it refuses unless this process
-  /// is inside a swift-mk gated make flow: the make dead-code gate marks the gate
-  /// proof first, so the coverage subprocess has a live make/swift-mk ancestor and
-  /// passes, while a direct `swift-mk toolchain build-for-testing` from a shell with
-  /// no gate ancestor is refused. The in-process API path uses the
-  /// `buildForTesting(_:authorization:environment:)` overload instead.
+  /// Build-for-testing the scheme through the public CLI. It is a compile surface,
+  /// so it refuses unless this process is inside a swift-mk gated make flow. The
+  /// dead-code gate no longer shells this command; it calls `buildCoverage(_:)`
+  /// directly so the engine owns the full coverage matrix.
   @discardableResult
   public static func buildForTesting(_ request: Request) -> Int32 {
     if let refusal = GateProof.refusal(entry: "toolchain build-for-testing") {

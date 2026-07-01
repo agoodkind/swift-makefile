@@ -13,10 +13,9 @@ import Testing
 
 // MARK: - DeadcodeCoverageTests
 
-/// The dead-code coverage guardrails: the compile surfaces refuse without a gate,
-/// the in-gate capability authorizes the coverage build past the gate-proof check,
-/// the coverage callback receives the signing-disabled environment, and a failed
-/// coverage build fails closed before any scan.
+/// The dead-code coverage guardrails: the make-path compile surfaces refuse
+/// without a gate, and the Xcode scan builds coverage options from the same
+/// environment variables the make coverage command used.
 @Suite(.serialized)
 enum DeadcodeCoverageTests {
   @Test
@@ -33,47 +32,37 @@ enum DeadcodeCoverageTests {
   }
 
   @Test
-  static func authorizedCoverageBuildSkipsTheGateProof() throws {
-    try withUngatedDirectory { _ in
-      // The authorization, not a gate ancestor, admits this compile: with a forbidden
-      // signing setting it reaches the signing rejection (64) rather than the
-      // gate-proof refusal (70), proving it skipped the GateProof check.
-      let request = Toolchain.Request(
-        generator: .tuist,
-        scheme: "App",
-        workspace: "App.xcworkspace",
-        extraSettings: ["CODE_SIGN_IDENTITY": "Apple Development"])
-      let status = Toolchain.buildForTesting(
-        request, authorization: DeadcodeCoverageAuthorization(), environment: [:])
-      #expect(status == Toolchain.signingOverrideRejectionStatus)
-    }
-  }
-
-  @Test
-  static func coverageCallbackReceivesSigningDisabledEnvironment() throws {
+  static func coverageBuildOptionsReadXcodeCoverageEnvironment() throws {
     try withUngatedDirectory { root in
-      let saved = Environment.snapshot(["SWIFT_MK_DERIVED_DATA"])
+      let saved = Environment.snapshot([
+        "SWIFT_MK_DERIVED_DATA", "SWIFT_XCODE_GENERATOR",
+        "SWIFT_XCODE_COVERAGE_CONFIGURATION", "SWIFT_XCODE_BUILD_SETTINGS",
+      ])
       defer { saved.restore() }
       let derivedData = root + "/.derived-data"
       setenv("SWIFT_MK_DERIVED_DATA", derivedData, 1)
-      Capture.ensureMakeDir()
+      setenv("SWIFT_XCODE_GENERATOR", Toolchain.Generator.xcodegen.rawValue, 1)
+      setenv("SWIFT_XCODE_COVERAGE_CONFIGURATION", "Profile", 1)
+      setenv(
+        "SWIFT_XCODE_BUILD_SETTINGS",
+        "SMC_FAN_HELPER_APP=/tmp/Helper.app OTHER_LDFLAGS=-ObjC",
+        1)
 
-      let capturedEnvironment = Box<[String: String]>([:])
-      let callbackRan = Box(false)
-      let result = DeadcodeScan.ensureIndexStore(
-        rawPath: root + "/.make/periphery.raw.out"
-      ) { _, environment in
-        callbackRan.value = true
-        capturedEnvironment.value = environment
-        return DeadcodeCoverageResult(status: 0, output: "")
-      }
-      // No real index store is produced, so the locate step fails closed and returns
-      // nil; the captured environment is what this test inspects.
-      #expect(result == nil)
-      #expect(callbackRan.value)
-      let captured = capturedEnvironment.value
-      let xcconfigPath = try #require(captured["XCODE_XCCONFIG_FILE"])
-      #expect(captured["SWIFT_MK_RESULT_BUNDLE_DIR"] == derivedData + "/ResultBundles")
+      let options = DeadcodeScan.coverageBuildOptions(
+        path: "App.xcodeproj",
+        isWorkspace: false,
+        packageTargets: ["AppPackage"])
+
+      #expect(options.containerPath == "App.xcodeproj")
+      #expect(!options.isWorkspace)
+      #expect(options.generator == .xcodegen)
+      #expect(options.configuration == "Profile")
+      #expect(options.derivedDataPath == derivedData)
+      #expect(options.packageTargetNames == Set(["AppPackage"]))
+      #expect(options.extraSettings["SMC_FAN_HELPER_APP"] == "/tmp/Helper.app")
+      #expect(options.extraSettings["OTHER_LDFLAGS"] == "-ObjC")
+      #expect(options.environment["SWIFT_MK_RESULT_BUNDLE_DIR"] == derivedData + "/ResultBundles")
+      let xcconfigPath = try #require(options.environment["XCODE_XCCONFIG_FILE"])
       let contents = try String(contentsOfFile: xcconfigPath, encoding: .utf8)
       #expect(contents.contains("CODE_SIGNING_ALLOWED = NO"))
       #expect(contents.contains("OBJROOT = \(derivedData)/DeadcodeBuild/Intermediates.noindex"))
@@ -89,10 +78,10 @@ enum DeadcodeCoverageTests {
       setenv("SWIFT_MK_DERIVED_DATA", root + "/.derived-data", 1)
       Capture.ensureMakeDir()
       let result = DeadcodeScan.ensureIndexStore(
-        rawPath: root + "/.make/periphery.raw.out"
-      ) { _, _ in
-        DeadcodeCoverageResult(status: 65, output: "the coverage build failed")
-      }
+        path: "Missing.xcodeproj",
+        isWorkspace: false,
+        packageTargets: [],
+        rawPath: root + "/.make/periphery.raw.out")
       // A failed coverage build returns nil, so scanProject never reaches the
       // periphery scan, and the raw file carries the hard-fail status escalation.
       #expect(result == nil)
@@ -100,18 +89,20 @@ enum DeadcodeCoverageTests {
   }
 
   @Test
-  static func ensureIndexStoreFailsClosedWithoutCoverageOrBuildCommand() throws {
+  static func ensureIndexStoreFailsClosedWithoutCoverageEntries() throws {
     try withUngatedDirectory { root in
       let saved = Environment.snapshot([
-        "SWIFT_MK_DERIVED_DATA", "SWIFT_DEADCODE_BUILD_CMD", "SWIFT_BUILD_CMD",
+        "SWIFT_MK_DERIVED_DATA", "SWIFT_XCODE_GENERATOR",
       ])
       defer { saved.restore() }
       setenv("SWIFT_MK_DERIVED_DATA", root + "/.derived-data", 1)
-      unsetenv("SWIFT_DEADCODE_BUILD_CMD")
-      unsetenv("SWIFT_BUILD_CMD")
+      setenv("SWIFT_XCODE_GENERATOR", Toolchain.Generator.xcodegen.rawValue, 1)
       Capture.ensureMakeDir()
       let result = DeadcodeScan.ensureIndexStore(
-        rawPath: root + "/.make/periphery.raw.out", coverage: nil)
+        path: "Missing.xcodeproj",
+        isWorkspace: false,
+        packageTargets: [],
+        rawPath: root + "/.make/periphery.raw.out")
       #expect(result == nil)
     }
   }

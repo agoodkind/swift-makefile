@@ -13,8 +13,8 @@ import Testing
 
 // MARK: - ToolchainReceiptTests
 
-/// The capability-authorized compile overloads skip the make-anchored `GateProof`
-/// and still reject forbidden signing settings.
+/// The receipt-authorized compile overload skips the make-anchored `GateProof`
+/// and still rejects forbidden signing settings.
 enum ToolchainReceiptTests {}
 
 @Test
@@ -32,19 +32,4 @@ func toolchainBuildWithReceiptSkipsGateProofAndStillRejectsSigning() {
   #expect(
     Toolchain.build(request, receipt: GateReceipt())
       == Toolchain.signingOverrideRejectionStatus)
-}
-
-@Test
-func toolchainAuthorizedBuildForTestingSkipsGateProofAndStillRejectsSigning() {
-  // The coverage overload is authorized by the in-gate capability, not the gate
-  // proof, so it too reaches the signing rejection rather than the refusal.
-  let request = Toolchain.Request(
-    generator: .tuist,
-    scheme: "App",
-    workspace: "App.xcworkspace",
-    extraSettings: ["DEVELOPMENT_TEAM": "H3BMXM4W7H"]
-  )
-  let status = Toolchain.buildForTesting(
-    request, authorization: DeadcodeCoverageAuthorization(), environment: [:])
-  #expect(status == Toolchain.signingOverrideRejectionStatus)
 }

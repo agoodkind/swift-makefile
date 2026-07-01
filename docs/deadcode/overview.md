@@ -7,7 +7,7 @@ The dead-code gate finds unused Swift in a consumer's own code and fails the bui
 The gate runs two scans, and the coverage check below requires every owned source to fall under one of them.
 
 - The package scan runs Periphery over the SwiftPM package targets. It is always on. The runner is [`Lint.captureDeadcode`](../../Sources/SwiftMkCore/Lint.swift).
-- The Xcode scan runs Periphery over an index store built by a separate coverage build, and it runs only when the consumer sets `SWIFT_MK_XCODE_BUILD=1` or the in-process API supplies a coverage callback. The runner is [`DeadcodeScan.appendXcodeFindings`](../../Sources/SwiftMkCore/DeadcodeScan.swift).
+- The Xcode scan runs Periphery over an index store built by `Toolchain.buildCoverage`, and it runs only when the consumer sets `SWIFT_MK_XCODE_BUILD=1`. The runner is [`DeadcodeScan.appendXcodeFindings`](../../Sources/SwiftMkCore/DeadcodeScan.swift).
 
 A failing run labels each scan in both the terminal and the raw capture, so the package scan's "No unused code detected" never reads as contradicting an Xcode-scan failure. The labels and the classifying verdict line live in [`Lint+DeadcodeVerdict.swift`](../../Sources/SwiftMkCore/Lint+DeadcodeVerdict.swift).
 

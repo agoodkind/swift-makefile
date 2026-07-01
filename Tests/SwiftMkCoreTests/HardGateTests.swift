@@ -14,8 +14,8 @@ import Testing
 // MARK: - HardGateTests
 
 /// `Lint.runHardBuildCheck`: caller narrowers and the bypass token do not change the
-/// gate, and the dead-code gate fails closed for an Xcode consumer that supplies no
-/// coverage build.
+/// gate, and the dead-code gate fails closed for an Xcode consumer whose coverage
+/// build produces no index.
 @Suite(.serialized)
 enum HardGateTests {
   @Test
@@ -53,15 +53,13 @@ enum HardGateTests {
     try GatedBuildHarness.run { setup in
       let saved = Environment.snapshot(["SWIFT_MK_XCODE_BUILD"])
       defer { saved.restore() }
-      // Mark this an Xcode consumer and drop a stray project on disk, but give no
-      // coverage build (callback nil, no SWIFT_DEADCODE_BUILD_CMD). The gate must
+      // Mark this an Xcode consumer and drop a project shell on disk. The gate must
       // fail rather than scan a missing or partial index.
       setenv("SWIFT_MK_XCODE_BUILD", "1", 1)
       try FileManager.default.createDirectory(
         atPath: setup.root + "/App.xcodeproj", withIntermediateDirectories: true)
       let ok = LintPolicy.deadcode(
-        context: PathContext(pwd: setup.root + "/", cwd: setup.root + "/"),
-        coverage: nil)
+        context: PathContext(pwd: setup.root + "/", cwd: setup.root + "/"))
       #expect(!ok)
     }
   }

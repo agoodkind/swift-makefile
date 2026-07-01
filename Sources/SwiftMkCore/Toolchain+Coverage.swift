@@ -8,6 +8,22 @@
 
 import Foundation
 
+// MARK: - DeadcodeCoverageResult
+
+/// The outcome of an engine-owned coverage build: the exit status of the build, and
+/// its captured combined output. The captured output feeds the gate's fail-hard
+/// transcript when the coverage build fails, so the structured xcresult diagnosis
+/// and the saved build log still work.
+public struct DeadcodeCoverageResult: Sendable {
+  public let status: Int32
+  public let output: String
+
+  public init(status: Int32, output: String) {
+    self.status = status
+    self.output = output
+  }
+}
+
 // MARK: - Toolchain coverage
 
 extension Toolchain {

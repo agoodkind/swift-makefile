@@ -109,7 +109,7 @@ enum GatedBuildHarness {
       "FAKE_XCODEBUILD_MARKER", "FAKE_XCODEBUILD_ARGS_LOG", "FAKE_XCODEBUILD_ENV_LOG",
       "FAKE_XCODEBUILD_FAIL_SCHEME", "FAKE_XCODEBUILD_FAIL_STATUS",
       "FAKE_SWIFTLINT_FAIL", "SWIFT_MK_ROOT",
-      "SWIFT_MK_XCODE_BUILD", "SWIFT_DEADCODE_BUILD_CMD", "SWIFT_BUILD_CMD",
+      "SWIFT_MK_XCODE_BUILD", "SWIFT_BUILD_CMD",
       "SWIFT_MK_SIGN_TEAM", "DEVELOPMENT_TEAM", "XCODE_XCCONFIG_FILE",
       "LINT_GATES", "LINT_FILES", "SWIFTLINT_TARGETS", "BYPASS_LINT",
     ])
@@ -173,7 +173,6 @@ enum GatedBuildHarness {
     setenv("FAKE_XCODEBUILD_ENV_LOG", paths.xcodebuildEnvironmentLog, 1)
     setenv("SWIFT_MK_ROOT", paths.root, 1)
     unsetenv("SWIFT_MK_XCODE_BUILD")
-    unsetenv("SWIFT_DEADCODE_BUILD_CMD")
     unsetenv("SWIFT_BUILD_CMD")
     unsetenv("XCODE_XCCONFIG_FILE")
     configureOptionalEnvironment(failSwiftlint: failSwiftlint, signingTeam: signingTeam)
