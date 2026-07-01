@@ -246,6 +246,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/DeadcodeVerdictTests.swift \
 	Tests/SwiftMkCoreTests/DeadcodeCoverageCompletenessTests.swift \
 	Tests/SwiftMkCoreTests/DeadcodeCoverageMatrixTests.swift \
+	Tests/SwiftMkCoreTests/EnvTests.swift \
 	Tests/SwiftMkCoreTests/FindingsSourceTests.swift \
 	Tests/SwiftMkCoreTests/FindingTests.swift \
 	Tests/SwiftMkCoreTests/LoggingTests.swift \

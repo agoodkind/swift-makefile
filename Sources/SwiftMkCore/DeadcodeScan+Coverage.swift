@@ -48,7 +48,11 @@ extension DeadcodeScan {
 
   private static func coverageBuildSettings() -> [String: String] {
     var settings: [String: String] = [:]
-    for pair in Env.words(Env.get("SWIFT_XCODE_BUILD_SETTINGS")) {
+    // Shell-tokenize, not whitespace-split: a consumer forwards its project build
+    // settings as `KEY="value with spaces"`, and only shell tokenization keeps the
+    // value intact with the quotes stripped, so xcodebuild and its run-script phases
+    // read the real value rather than a quote-wrapped fragment.
+    for pair in Env.shellWords(Env.get("SWIFT_XCODE_BUILD_SETTINGS")) {
       guard let equals = pair.firstIndex(of: "=") else {
         Output.error("deadcode: ignoring malformed SWIFT_XCODE_BUILD_SETTINGS value \(pair)")
         continue
