@@ -59,14 +59,18 @@ public enum CachePaths {
   public struct Resolved: Equatable {
     public var dependency: [String]
     public var build: [String]
+    /// The compile-cache (CAS) stores. A build product, not a downloaded input, so it
+    /// is kept in its own bucket: the CI plan keys it as a rolling per-writer cache so
+    /// a non-compiling gate cannot freeze it, unlike the shared dependency bucket.
+    public var compile: [String]
   }
 
   /// The DerivedData subdirectories always worth caching: the incremental build
   /// database, the Swift index store, and the resolved SPM checkouts. The LLVM CAS store
   /// is normally NOT here: it is pinned outside DerivedData (see `Inputs.xcodeCachePath`)
   /// so the dead-code coverage build's `rm -rf` of DerivedData cannot destroy it, and it
-  /// is cached as a content-addressed dependency. The one exception is when the shared
-  /// path is disabled (`SWIFT_MK_XCODE_CACHE_PATH=off`), where the CAS reverts to Xcode's
+  /// is cached in the compile bucket. The one exception is when the shared path is
+  /// disabled (`SWIFT_MK_XCODE_CACHE_PATH=off`), where the CAS reverts to Xcode's
   /// in-DerivedData default and `resolve` adds it to the build bucket so it still persists.
   static let derivedDataSubdirectories = [
     "Build/Intermediates.noindex",
@@ -96,16 +100,18 @@ public enum CachePaths {
     if let module = inputs.moduleCachePath {
       dependency.append(module)
     }
-    // The CAS store is content-addressed, so it belongs in the cross-commit dependency
-    // bucket: a code-only change leaves the dependency key stable, so the store is
-    // restored and the build replays unchanged compiles instead of recompiling.
+
+    // The compile-cache (CAS) stores are build products that only the compiling gates
+    // fill, and each gate fills a different amount, so they do NOT belong in the
+    // shared dependency bucket: there, every gate saves one fixed name and the first
+    // gate to finish (a lint gate that compiles nothing) freezes the cache empty. They
+    // get their own bucket, which the CI plan keys as a rolling per-writer cache.
+    var compile: [String] = []
     if let xcodeCache = inputs.xcodeCachePath {
-      dependency.append(xcodeCache)
+      compile.append(xcodeCache)
     }
-    // The SwiftPM CAS store is also content-addressed and belongs in the dependency
-    // bucket for the same reason: cross-run replay survives a DerivedData wipe.
     if let swiftpmCache = inputs.swiftpmCachePath {
-      dependency.append(swiftpmCache)
+      compile.append(swiftpmCache)
     }
 
     var build = [
@@ -130,6 +136,6 @@ public enum CachePaths {
     }
     build.append(contentsOf: inputs.extraPaths)
 
-    return Resolved(dependency: dependency, build: build)
+    return Resolved(dependency: dependency, build: build, compile: compile)
   }
 }

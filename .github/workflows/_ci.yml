@@ -170,6 +170,7 @@ jobs:
           cache-profile: ${{ inputs.cache-profile }}
           cache-version: ${{ inputs.cache-version }}
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
+          gate: ${{ matrix.target }}
 
       - name: Setup Swift build env
         if: github.repository != 'agoodkind/swift-makefile'
@@ -180,6 +181,7 @@ jobs:
           cache-profile: ${{ inputs.cache-profile }}
           cache-version: ${{ inputs.cache-version }}
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
+          gate: ${{ matrix.target }}
 
       - name: Run setup target
         if: inputs.setup-target != ''

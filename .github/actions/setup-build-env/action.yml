@@ -40,6 +40,13 @@ inputs:
       safe build-intermediate cache.
     required: false
     default: ""
+  gate:
+    description: >-
+      The gate this job runs (build, test, lint-deadcode, a lint name, ...). It
+      scopes the rolling compile cache so each compiling gate keeps its own pile;
+      only the compiling gates (build, test, lint-deadcode) restore and save it.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -112,6 +119,7 @@ runs:
         TOOLCHAIN_CACHE_HIT: ${{ steps.swift-mk-toolchain.outputs.cache-hit }}
         CACHE_PROFILE: ${{ inputs.cache-profile }}
         CACHE_VERSION: ${{ inputs.cache-version }}
+        SWIFT_MK_CI_GATE: ${{ inputs.gate }}
         DEPENDENCY_HASH: ${{ hashFiles('Package.swift', 'Package.resolved', 'Tuist/Package.swift', 'Tuist/Package.resolved', 'Tools/Package.swift', 'Tools/Package.resolved', 'swiftcheck/Package.swift', 'swiftcheck/Package.resolved', '.tool-versions', 'mise.toml', '.config/mise/conf.d/*.toml', 'project.yml') }}
         BUILD_HASH: ${{ hashFiles('Package.swift', 'Package.resolved', 'Project.swift', 'Workspace.swift', 'Tuist.swift', 'Tuist/Package.swift', 'Tuist/Package.resolved', 'Tools/Package.swift', 'Tools/Package.resolved', 'swiftcheck/Package.swift', 'swiftcheck/Package.resolved', 'project.yml', 'Makefile') }}
         EXTRA_CACHE_PATHS: ${{ inputs.extra-cache-paths }}
@@ -148,6 +156,20 @@ runs:
         path: ${{ steps.cache-plan.outputs.build-paths }}
         key: ${{ steps.cache-plan.outputs.build-key }}
         restore-keys: ${{ steps.cache-plan.outputs.build-restore-keys }}
+
+    # The compile cache (the CAS store) is a rolling pile: the key carries a unique
+    # run value so it never collides, so the post-job save always lands, and the build
+    # adds its compiled results to the latest pile the restore-keys prefix found. Only a
+    # compiling gate enables this (compile-cache-enabled), so a lint gate can never save
+    # an empty pile over a full one. Restore-keys prefer this gate's own latest pile,
+    # then any sibling gate's pile for the same dependencies.
+    - name: Restore and roll compile cache
+      if: steps.cache-plan.outputs.compile-cache-enabled == 'true'
+      uses: actions/cache@v5
+      with:
+        path: ${{ steps.cache-plan.outputs.compile-paths }}
+        key: ${{ steps.cache-plan.outputs.compile-key }}
+        restore-keys: ${{ steps.cache-plan.outputs.compile-restore-keys }}
 
     # Tuist arrives through mise, so it only applies to repos that declare a
     # toolchain; an xcodegen-only consumer has no .tool-versions and must not
