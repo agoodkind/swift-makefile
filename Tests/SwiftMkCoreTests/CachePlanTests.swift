@@ -116,13 +116,15 @@ func compileCacheRollsForACompilingGate() throws {
   let result = try CachePlan.compute(
     goldenInputs(compileWriter: "build", compileRunUnique: "1001-1", isCompileWriter: true))
   #expect(result.compileCacheEnabled)
-  // The key carries the writer and the unique run value, so each save lands fresh.
-  #expect(result.compileKey == "\(goldenPrefix)-compile-deps-deadbeef-build-1001-1")
-  // Restore prefers the gate's own latest pile, then any sibling pile for the same deps.
+  // The key carries the weekly epoch (to cap history), the writer, and the unique run
+  // value, so each save lands fresh while old weeks age out.
+  #expect(result.compileKey == "\(goldenPrefix)-compile-2026w25-deps-deadbeef-build-1001-1")
+  // Restore prefers the gate's own latest pile, then any sibling pile for the same week
+  // and deps.
   #expect(
     result.compileRestoreKeys == [
-      "\(goldenPrefix)-compile-deps-deadbeef-build-",
-      "\(goldenPrefix)-compile-deps-deadbeef-",
+      "\(goldenPrefix)-compile-2026w25-deps-deadbeef-build-",
+      "\(goldenPrefix)-compile-2026w25-deps-deadbeef-",
     ])
 }
 

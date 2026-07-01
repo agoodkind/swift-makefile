@@ -158,7 +158,11 @@ public enum CachePlan {
     let compileEnabled = dependencyEnabled && inputs.isCompileWriter
     let writer = sanitizeKeyPart(inputs.compileWriter.isEmpty ? "gate" : inputs.compileWriter)
     let runUnique = sanitizeKeyPart(inputs.compileRunUnique.isEmpty ? "0" : inputs.compileRunUnique)
-    let compileFamily = "\(prefix)-compile-deps-\(dependencyHash)"
+    // The weekly epoch caps the rolling history: within a week the family is stable so
+    // the pile rolls forward, and each new week starts a fresh family so last week's
+    // piles fall out of the restore prefix and age out under GitHub's expiry, rather
+    // than one fresh entry per run accumulating forever against the cache quota.
+    let compileFamily = "\(prefix)-compile-\(inputs.weeklyEpoch)-deps-\(dependencyHash)"
 
     return Result(
       dependencyCacheEnabled: dependencyEnabled,
