@@ -97,7 +97,7 @@ public enum Toolchain {
   /// The exit status a product build returns when the lint gates fail at the
   /// chokepoint, so a build that ran around the gates stops nonzero like `make
   /// check` would.
-  static let gateFailureStatus: Int32 = 1
+  static let gateFailureStatus: Int32 = 1, prebuildFailureStatus: Int32 = 1
 
   /// xcodebuild build settings that decide code signing. swift-mk owns signing
   /// through an `XCODE_XCCONFIG_FILE` override, and a command-line `KEY=value`
@@ -265,6 +265,9 @@ public enum Toolchain {
       return refusal
     }
     let actions = clean ? ["clean", "build"] : ["build"]
+    guard ToolchainPrebuild.run() else {
+      return prebuildFailureStatus
+    }
     return Shell.runWritingOutput(
       "xcodebuild",
       xcodebuildArguments(request, actions: actions),
@@ -671,6 +674,9 @@ extension Toolchain {
     _ request: Request, actions: [String], environment: [String: String]
   ) -> Int32 {
     Output.debug("toolchain: xcodebuild \(actions.joined(separator: " "))")
+    guard ToolchainPrebuild.run() else {
+      return prebuildFailureStatus
+    }
     return Shell.runForwardingOutput(
       "xcodebuild", xcodebuildArguments(request, actions: actions), environment: environment)
   }
@@ -682,6 +688,9 @@ extension Toolchain {
     _ request: Request, actions: [String], environment: [String: String]
   ) -> Shell.StreamingResult {
     Output.debug("toolchain: xcodebuild (captured) \(actions.joined(separator: " "))")
+    guard ToolchainPrebuild.run() else {
+      return Shell.StreamingResult(status: prebuildFailureStatus, stdout: "", timedOut: false)
+    }
     return Shell.runStreamingStderr(
       "xcodebuild", xcodebuildArguments(request, actions: actions), environment: environment)
   }

@@ -172,6 +172,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/Notarize.swift \
 	Sources/SwiftMkCore/SigningBuildConfig.swift \
 	Sources/SwiftMkCore/SigningVerification.swift \
+	Sources/SwiftMkCore/ToolchainPrebuild.swift \
 	Sources/SwiftMkCore/Toolchain.swift \
 	Sources/SwiftMkCore/Toolchain+Coverage.swift \
 	Sources/SwiftMkCore/Toolchain+GatedCompile.swift \
@@ -215,6 +216,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/WitnessFilterTests.swift \
 	Tests/SwiftMkCoreTests/SigningBuildConfigTests.swift \
 	Tests/SwiftMkCoreTests/SigningVerificationTests.swift \
+	Tests/SwiftMkCoreTests/ToolchainPrebuildTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainCoverageTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainReceiptTests.swift \
@@ -505,6 +507,7 @@ SWIFT_XCODE_COVERAGE_CONFIGURATION ?= Debug
 SWIFT_XCODE_WORKSPACE ?=
 SWIFT_XCODE_PROJECT ?=
 SWIFT_XCODE_BUILD_SETTINGS ?=
+SWIFT_XCODE_PREBUILD_CMD ?=
 ifneq ($(strip $(SWIFT_XCODE_SCHEME)),)
 SWIFT_XCODE_CONTAINER_ARG := $(if $(filter xcodegen,$(SWIFT_XCODE_GENERATOR)),--project $(SWIFT_XCODE_PROJECT),--workspace $(SWIFT_XCODE_WORKSPACE))
 # Generate installs external dependencies first; Tuist cannot generate a project
@@ -611,6 +614,7 @@ export SWIFT_MK_XCODE_CACHE_PREFIX_MAP
 export SWIFT_MK_XCODE_CACHE_DIAGNOSTICS
 export SWIFT_MK_XCODEBUILD_ARGS
 export SWIFT_MK_XCODEBUILD_NO_CACHE_ARGS
+export SWIFT_XCODE_PREBUILD_CMD
 export SWIFT_MK_DERIVED_DATA
 export SWIFT_MK_SWIFTPM_CACHE_ARGS
 export LINT_GATES
