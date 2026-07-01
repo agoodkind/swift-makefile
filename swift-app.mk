@@ -17,7 +17,6 @@
 #   release-assets          Copy the dmg to the versioned release name.
 #   prepare-sparkle-updates Run Sparkle generate_appcast over the staged dmg.
 #   sparkle-appcast         release-assets then prepare-sparkle-updates.
-#   app-coverage-build      Clean Debug build for the dead-code gate's coverage build.
 #
 # Required:
 #   SWIFT_APP_NAME          App identity. Defaults derive bundle, scheme, dmg from it.
@@ -42,8 +41,6 @@
 #   SWIFT_APP_SPARKLE_UPDATES_DIR    ?= $(SWIFT_APP_BUILD_DIR)/sparkle-updates
 #   SWIFT_APP_GITHUB_RELEASE_BASE_URL ?=
 #   SWIFT_APP_SPARKLE_APPCAST_TOOL_CMD ?= command -v generate_appcast   Shell command that prints the generate_appcast path
-#   SWIFT_APP_COVERAGE_CONFIGURATION ?= Debug
-#   SWIFT_APP_COVERAGE_BUILD_CMD     ?= a clean tuist xcodebuild of SWIFT_APP_SCHEME into SWIFT_MK_DERIVED_DATA
 
 TUIST ?= tuist
 
@@ -70,10 +67,7 @@ SWIFT_APP_SPARKLE_UPDATES_DIR ?= $(SWIFT_APP_BUILD_DIR)/sparkle-updates
 SWIFT_APP_GITHUB_RELEASE_BASE_URL ?=
 SWIFT_APP_SPARKLE_APPCAST_TOOL_CMD ?= command -v generate_appcast
 
-SWIFT_APP_COVERAGE_CONFIGURATION ?= Debug
-SWIFT_APP_COVERAGE_BUILD_CMD ?= $(TUIST) xcodebuild build -scheme $(SWIFT_APP_SCHEME) -configuration $(SWIFT_APP_COVERAGE_CONFIGURATION) -derivedDataPath $(SWIFT_MK_DERIVED_DATA) $(SWIFT_MK_XCODEBUILD_ARGS) COMPILER_INDEX_STORE_ENABLE=YES
-
-.PHONY: app app-bundle dmg release-assets prepare-sparkle-updates sparkle-appcast app-coverage-build
+.PHONY: app app-bundle dmg release-assets prepare-sparkle-updates sparkle-appcast
 
 # Assemble the freshly built bundle into Products and codesign it. The Sparkle
 # helper executables sign first (inside-out) so the outer app signature stays
@@ -143,13 +137,3 @@ prepare-sparkle-updates:
 	fi
 
 sparkle-appcast: release-assets prepare-sparkle-updates
-
-# Clean coverage build for the dead-code gate. Point SWIFT_DEADCODE_BUILD_CMD at
-# `$(MAKE) app-coverage-build`. It rebuilds into SWIFT_MK_DERIVED_DATA from clean
-# so the index store the gate reads holds no stale units.
-app-coverage-build:
-	@rm -rf "$(SWIFT_MK_DERIVED_DATA)"
-ifneq ($(strip $(SWIFT_GENERATE_CMD)),)
-	@$(SWIFT_GENERATE_CMD)
-endif
-	$(SWIFT_APP_COVERAGE_BUILD_CMD)

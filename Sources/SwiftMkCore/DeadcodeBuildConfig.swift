@@ -62,6 +62,9 @@ enum DeadcodeBuildConfig {
     CODE_SIGN_IDENTITY = -
     COMPILER_INDEX_STORE_ENABLE = YES
     COMPILATION_CACHE_ENABLE_CACHING = NO
+    COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS = NO
+    // Keep the coverage build to one arch to avoid the cross-arch module race.
+    ONLY_ACTIVE_ARCH = YES
     """
 
   static func resolvedDerivedDataRoot(

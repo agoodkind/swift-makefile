@@ -152,3 +152,72 @@ still treated the deleted tracked file as owned Swift source.
 
 The existing untracked task brief files were left uncommitted. This report file
 is the only new `.sdd-briefs` artifact intended for this task.
+
+## Fix pass
+
+This pass removed the remaining dead app coverage command wiring from
+`swift-app.mk`: the `app-coverage-build` target, its `.PHONY` entry, the
+`SWIFT_APP_COVERAGE_CONFIGURATION` and `SWIFT_APP_COVERAGE_BUILD_CMD` variables,
+and the header docs for that target and variables. An exact search found no
+remaining uses in `swift-app.mk`, `swift.mk`, or `swift-build.mk` before the
+delete.
+
+This pass made `DeadcodeBuildConfig.baseContents` own the coverage build
+settings that the old Make command supplied. The xcconfig now sets
+`COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS = NO` and `ONLY_ACTIVE_ARCH = YES`,
+and `DeadcodeBuildConfigTests` asserts both `baseContents` and `contents(...)`
+contain those settings.
+
+This pass updated the stale `swift.mk` comment and the README target list so
+current docs no longer say coverage relies on Debug's active-arch default or
+that `swift-app.mk` exports `app-coverage-build`.
+
+`ONLY_ACTIVE_ARCH = YES` appears compatible with the coverage matrix's
+per-entry `generic/platform=...` destinations. Those destinations choose the
+platform entry, not a universal binary architecture, so Xcode should honor the
+single-arch setting where it has an active arch and otherwise ignore it for a
+generic destination. The `make test` harness exercised `Toolchain.buildCoverage`
+after this change and passed.
+
+Red step:
+
+```text
+make test
+Test run with 354 tests in 23 suites failed after 18.567 seconds with 4 issues.
+```
+
+`make build` passed:
+
+```text
+lint-deadcode: OK
+  New findings: 0
+swiftcheck-extra: OK
+  New findings: 0
+Build of product 'swiftcheck-extra' complete! (0.64s)
+```
+
+`make test` passed:
+
+```text
+Test run with 354 tests in 23 suites passed after 19.652 seconds.
+Test run with 8 tests in 0 suites passed after 0.005 seconds.
+Build complete! (0.70s)
+```
+
+`make lint` passed:
+
+```text
+lint-deadcode: OK
+  New findings: 0
+swiftcheck-extra: OK
+  New findings: 0
+```
+
+`make check` passed:
+
+```text
+lint-deadcode: OK
+  New findings: 0
+swiftcheck-extra: OK
+  New findings: 0
+```

@@ -26,6 +26,12 @@ func deadcodeBuildConfigDisablesSigning() {
   #expect(text.contains("COMPILER_INDEX_STORE_ENABLE = YES"))
   #expect(DeadcodeBuildConfig.baseContents.contains("COMPILATION_CACHE_ENABLE_CACHING = NO"))
   #expect(text.contains("COMPILATION_CACHE_ENABLE_CACHING = NO"))
+  #expect(
+    DeadcodeBuildConfig.baseContents.contains(
+      "COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS = NO"))
+  #expect(text.contains("COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS = NO"))
+  #expect(DeadcodeBuildConfig.baseContents.contains("ONLY_ACTIVE_ARCH = YES"))
+  #expect(text.contains("ONLY_ACTIVE_ARCH = YES"))
 }
 
 @Test

@@ -500,9 +500,9 @@ BASELINE_UPDATE_MODE ?= sync
 SWIFT_XCODE_SCHEME ?=
 SWIFT_XCODE_GENERATOR ?= tuist
 SWIFT_XCODE_CONFIGURATION ?= Debug
-# The dead-code coverage build runs in Debug so ONLY_ACTIVE_ARCH defaults to YES.
-# A single-arch build avoids the cross-arch module race that a universal
-# (Release) build-for-testing hits on a multi-module test target.
+# The engine coverage xcconfig sets ONLY_ACTIVE_ARCH=YES so the dead-code
+# coverage build avoids the cross-arch module race that a universal
+# build-for-testing hits on a multi-module test target.
 SWIFT_XCODE_COVERAGE_CONFIGURATION ?= Debug
 SWIFT_XCODE_WORKSPACE ?=
 SWIFT_XCODE_PROJECT ?=
