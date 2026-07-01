@@ -107,6 +107,25 @@ enum DeadcodeCoverageTests {
     }
   }
 
+  @Test
+  static func resultBundlesIncludePlatformSubdirectories() throws {
+    try withUngatedDirectory { root in
+      let resultBundleDirectory = root + "/.derived-data/ResultBundles"
+      let flatBundle = resultBundleDirectory + "/App-Debug.xcresult"
+      let platformBundle = resultBundleDirectory + "/iphonesimulator/App-Debug.xcresult"
+      let manager = FileManager.default
+      try manager.createDirectory(atPath: flatBundle, withIntermediateDirectories: true)
+      try manager.createDirectory(atPath: platformBundle, withIntermediateDirectories: true)
+      try manager.createDirectory(
+        atPath: resultBundleDirectory + "/iphonesimulator/intermediate",
+        withIntermediateDirectories: true)
+
+      let bundles = DeadcodeScan.resultBundles(inBundleDirectory: resultBundleDirectory)
+
+      #expect(bundles == [flatBundle, platformBundle].sorted())
+    }
+  }
+
   // MARK: helpers
 
   /// Run `body` in a temp directory marked as the swift-mk root, so a compile

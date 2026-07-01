@@ -144,6 +144,78 @@ swiftcheck-extra: OK
   New findings: 0
 ```
 
+## Whole-branch fix pass
+
+This pass exported the coverage inputs that the in-process dead-code gate reads
+from the environment. `swift.mk` now adds these lines next to the existing Xcode
+build exports:
+
+```make
+export SWIFT_XCODE_GENERATOR
+export SWIFT_XCODE_COVERAGE_CONFIGURATION
+export SWIFT_XCODE_BUILD_SETTINGS
+```
+
+The variables already keep their existing defaults in `swift.mk`:
+`SWIFT_XCODE_GENERATOR ?= tuist`,
+`SWIFT_XCODE_COVERAGE_CONFIGURATION ?= Debug`, and
+`SWIFT_XCODE_BUILD_SETTINGS ?=`.
+
+This pass changed `diagnoseFailedCoverage` result-bundle discovery through
+`DeadcodeScan.resultBundles(inBundleDirectory:)`. The helper now finds flat
+bundles at `ResultBundles/*.xcresult` and one-level platform bundles at
+`ResultBundles/*/*.xcresult`, then `issues(inBundleDirectory:)` sends each
+bundle path through the existing `xcresulttool get build-results` parser.
+
+`DeadcodeCoverageTests.resultBundlesIncludePlatformSubdirectories` builds a fake
+result-bundle tree with both `ResultBundles/App-Debug.xcresult` and
+`ResultBundles/iphonesimulator/App-Debug.xcresult`, then asserts both paths are
+returned and an intermediate non-bundle directory is ignored.
+
+Red step:
+
+```text
+make test
+DeadcodeCoverageTests.swift:123:34: error: type 'DeadcodeScan' has no member 'resultBundles'
+```
+
+`make build` passed:
+
+```text
+lint-deadcode: OK
+  New findings: 0
+swiftcheck-extra: OK
+  New findings: 0
+Build of product 'swiftcheck-extra' complete! (0.65s)
+```
+
+`make test` passed:
+
+```text
+Test resultBundlesIncludePlatformSubdirectories() passed after 0.404 seconds.
+Test run with 355 tests in 23 suites passed after 20.604 seconds.
+Test run with 8 tests in 0 suites passed after 0.006 seconds.
+Build complete! (0.65s)
+```
+
+`make lint` passed:
+
+```text
+lint-deadcode: OK
+  New findings: 0
+swiftcheck-extra: OK
+  New findings: 0
+```
+
+`make check` passed:
+
+```text
+lint-deadcode: OK
+  New findings: 0
+swiftcheck-extra: OK
+  New findings: 0
+```
+
 ## Notes
 
 The deleted `DeadcodeCoverageAuthorization.swift` file had to be staged before

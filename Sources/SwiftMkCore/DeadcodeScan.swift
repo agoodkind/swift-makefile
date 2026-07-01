@@ -500,30 +500,9 @@ extension DeadcodeScan {
   }
 
   private static func issues(inBundleDirectory directory: String) -> [XCResult.Issue] {
-    var isDirectory = ObjCBool(false)
-    guard FileManager.default.fileExists(atPath: directory, isDirectory: &isDirectory),
-      isDirectory.boolValue
-    else {
-      return []
-    }
-
-    let entries: [String]
-    do {
-      entries = try FileManager.default.contentsOfDirectory(atPath: directory)
-    } catch {
-      Output.error("deadcode: could not list \(directory): \(error)")
-      return []
-    }
-
-    let bundles =
-      entries
-      .filter { entry in
-        entry.hasSuffix(".xcresult")
-      }
-      .sorted()
+    let bundles = resultBundles(inBundleDirectory: directory)
     var issues: [XCResult.Issue] = []
-    for bundleName in bundles {
-      let bundle = (directory as NSString).appendingPathComponent(bundleName)
+    for bundle in bundles {
       let result = Shell.run(
         "xcrun",
         [
@@ -547,6 +526,32 @@ extension DeadcodeScan {
       issues.append(contentsOf: bundleIssues)
     }
     return issues
+  }
+
+  static func resultBundles(inBundleDirectory directory: String) -> [String] {
+    var isDirectory = ObjCBool(false)
+    guard FileManager.default.fileExists(atPath: directory, isDirectory: &isDirectory),
+      isDirectory.boolValue
+    else {
+      return []
+    }
+    guard let enumerator = FileManager.default.enumerator(atPath: directory) else {
+      Output.error("deadcode: could not list \(directory)")
+      return []
+    }
+    var bundles: [String] = []
+    for case let relativePath as String in enumerator {
+      let depth = relativePath.filter { character in character == "/" }.count
+      if depth > 1 {
+        enumerator.skipDescendants()
+        continue
+      }
+      if relativePath.hasSuffix(".xcresult") {
+        bundles.append((directory as NSString).appendingPathComponent(relativePath))
+        enumerator.skipDescendants()
+      }
+    }
+    return bundles.sorted()
   }
 
   private static func outputBuildIssue(_ issue: XCResult.Issue) {
