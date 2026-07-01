@@ -174,6 +174,14 @@ public enum Toolchain {
   /// blocked for agents by agent-gate, the same backstop as a raw `swift build`.
   @discardableResult
   public static func build(_ request: Request) -> Int32 {
+    // Reject a forbidden signing setting first: it is a caller error in the request
+    // itself (EX_USAGE), independent of whether this process is gated, so the result
+    // does not depend on a live `make` ancestor. `test()` and `buildWithoutGateCheck`
+    // already validate it first. The downstream `buildWithoutGateCheck` keeps its own
+    // check for the `build(_:receipt:)` path that calls it directly.
+    if let rejection = rejectionForSigningOverride(request) {
+      return rejection
+    }
     // Refuse a product build that is not inside a swift-mk gated make flow, so a
     // direct `make <sub-target>` or a dev tool that reaches this cannot produce an
     // ungated artifact. The gate proof is anchored to the orchestrating `make`
@@ -248,11 +256,14 @@ public enum Toolchain {
   /// process is inside a swift-mk gated make flow.
   @discardableResult
   public static func analyze(_ request: Request) -> Int32 {
-    if let refusal = GateProof.refusal(entry: "toolchain analyze") {
-      return refusal
-    }
+    // Reject a forbidden signing setting before the gate check, like `build`, so a
+    // caller error in the request returns the same status whether or not this process
+    // is gated.
     if let rejection = rejectionForSigningOverride(request) {
       return rejection
+    }
+    if let refusal = GateProof.refusal(entry: "toolchain analyze") {
+      return refusal
     }
     return runXcodebuildForwarding(
       request, actions: ["analyze"], environment: signingEnvironment())
