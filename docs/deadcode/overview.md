@@ -7,13 +7,21 @@ The dead-code gate finds unused Swift in a consumer's own code and fails the bui
 The gate runs two scans, and the coverage check below requires every owned source to fall under one of them.
 
 - The package scan runs Periphery over the SwiftPM package targets. It is always on. The runner is [`Lint.captureDeadcode`](../../Sources/SwiftMkCore/Lint.swift).
-- The Xcode scan runs Periphery over an index store built by `Toolchain.buildCoverage`, and it runs only when the consumer sets `SWIFT_MK_XCODE_BUILD=1`. The runner is [`DeadcodeScan.appendXcodeFindings`](../../Sources/SwiftMkCore/DeadcodeScan.swift).
+- The Xcode scan runs Periphery over an index store the engine builds. It runs when the repository declares an Xcode build, which the make layer detects from a declared workspace, project, or scheme. The runner is [`DeadcodeScan.appendXcodeFindings`](../../Sources/SwiftMkCore/DeadcodeScan.swift).
 
 A failing run labels each scan in both the terminal and the raw capture, so the package scan's "No unused code detected" never reads as contradicting an Xcode-scan failure. The labels and the classifying verdict line live in [`Lint+DeadcodeVerdict.swift`](../../Sources/SwiftMkCore/Lint+DeadcodeVerdict.swift).
 
-## The coverage build is separate and signing-disabled
+## The engine derives and owns the coverage build
 
-The Xcode scan needs an index store, and it builds one with a coverage build that disables code signing. A signed build can fail provisioning, exit non-zero, and leave a partial index, so the coverage build is never the real signed build. [`DeadcodeBuildConfig`](../../Sources/SwiftMkCore/DeadcodeBuildConfig.swift) writes the signing-disabled xcconfig and points `OBJROOT` at an absolute path under the cleared DerivedData, with `SYMROOT` left alone. [`DeadcodeBuildConfigTests`](../../Tests/SwiftMkCoreTests/DeadcodeBuildConfigTests.swift) pins each setting.
+The Xcode scan needs an index store, and the engine builds one from the consumer's normal inputs. The consumer declares no dead-code coverage command and no scheme list. It sets its usual Xcode inputs (a workspace or project, a generator, and an optional coverage configuration and build settings), and the engine derives the rest. The driver is [`Toolchain.buildCoverage`](../../Sources/SwiftMkCore/Toolchain+Coverage.swift).
+
+The coverage matrix comes from the generated project. [`DeadcodeCoverageMatrix`](../../Sources/SwiftMkCore/DeadcodeCoverageMatrix.swift) reads the shared schemes and, for each scheme's buildable target, the platforms it supports, and emits one `(scheme, platform)` entry per supported platform. Test bundles, command-line tools, and SwiftPM package targets drop out, since the package scan already covers the package. [`Toolchain.coverageDestination`](../../Sources/SwiftMkCore/Toolchain+Coverage.swift) maps each platform to its xcodebuild destination. [`DeadcodeCoverageMatrixTests`](../../Tests/SwiftMkCoreTests/DeadcodeCoverageMatrixTests.swift) covers the derivation, and [`ToolchainBuildCoverageTests`](../../Tests/SwiftMkCoreTests/ToolchainBuildCoverageTests.swift) covers the per-entry build, including a distinct result bundle per platform so the same scheme built on two platforms does not collide.
+
+Each scheme builds on every platform it supports because the completeness check below is file-granular. A file compiled on one platform counts as indexed even when its platform-conditional branch on another platform never compiled, so covering that branch needs the scheme built on every platform.
+
+The engine owns every setting that keeps the index complete, through a single xcconfig it points xcodebuild at with `XCODE_XCCONFIG_FILE`. Signing is disabled, since the gate needs the index, not a signed product, and a signed build can fail provisioning and leave a partial index. The compilation cache is disabled, since the index store is written only when the compiler compiles a file, and a cache hit replays a cached object and skips the compiler, so a warm cache would leave the index empty. The build stays on one architecture to avoid a cross-arch module-build race, `OBJROOT` sits under the cleared DerivedData so every coverage build recompiles, and `SYMROOT` is left alone. [`DeadcodeBuildConfig`](../../Sources/SwiftMkCore/DeadcodeBuildConfig.swift) writes the xcconfig and [`DeadcodeBuildConfigTests`](../../Tests/SwiftMkCoreTests/DeadcodeBuildConfigTests.swift) pins each setting.
+
+A consumer whose build needs a native library before xcodebuild links it declares one command in `SWIFT_XCODE_PREBUILD_CMD`. [`ToolchainPrebuild`](../../Sources/SwiftMkCore/ToolchainPrebuild.swift) runs it before every xcodebuild the engine drives, so the prep is a normal-build concern the coverage build reuses rather than a dead-code input.
 
 ## A partial index is never scanned
 

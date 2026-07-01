@@ -9,7 +9,7 @@ Provided AS IS under the MIT License with no warranty. See [LICENSE](LICENSE).
 Each subsystem has a present-tense overview under `docs/<area>/overview.md` that links to the source and test holding each detail, so the docs track the code.
 
 - [Build gate](docs/gate/overview.md) covers the gate proof, the in-process receipt, the build chokepoints, and the per-worktree build lock.
-- [Dead-code gate](docs/deadcode/overview.md) covers the two scans, the signing-disabled coverage build, the index-completeness check, and the coverage-completeness check.
+- [Dead-code gate](docs/deadcode/overview.md) covers the two scans, the engine-derived coverage build and its owned settings, the shared prebuild seam, the index-completeness check, and the coverage-completeness check.
 - [Signing](docs/signing/overview.md) covers the single-source-of-truth xcconfig override, inferred style, and post-build signing and notarization.
 - [Caching](docs/caching/overview.md) covers the engine-owned cache plan and the compile-cache stores.
 - [CI](docs/ci/overview.md) covers the reusable workflows, the required gate set, runner fallback, and the non-overridable OSV policy.
@@ -92,6 +92,7 @@ The dead-code gate scans the Swift package and, when the repository declares an 
 - Set `SWIFT_XCODE_GENERATOR` to `tuist` or `xcodegen`, set `SWIFT_XCODE_SCHEME`, and set either `SWIFT_XCODE_WORKSPACE` or `SWIFT_XCODE_PROJECT`.
 - Set `SWIFT_XCODE_COVERAGE_CONFIGURATION` when coverage should build a configuration other than Debug, and set `SWIFT_XCODE_BUILD_SETTINGS` for extra `KEY=value` build settings.
 - Set `SWIFT_GENERATE_CMD` when the project needs a custom generation command. When `SWIFT_GENERATE_CMD` is unset, the gate runs `xcodegen generate` for a `project.yml` or `tuist generate` for a `Project.swift` or `Workspace.swift`.
+- Set `SWIFT_XCODE_PREBUILD_CMD` when the build needs a step before xcodebuild, such as building a native library the project links. The engine runs it before every xcodebuild it drives, so the coverage build and the normal build share one prep step.
 
 The coverage build writes a compiler index store under `SWIFT_MK_DERIVED_DATA`, and swift-mk disables signing and the local Xcode compilation cache for that coverage build. `SWIFT_MK_DERIVED_DATA` defaults to `$(CURDIR)/.derived-data`; add it to `.gitignore`. Schemes and supported platforms come from the generated Xcode container, and schemes whose name is a Swift package target are excluded from the Xcode scan because the package scan already covers them.
 
