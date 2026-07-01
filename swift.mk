@@ -219,6 +219,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/ToolchainPrebuildTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainCoverageTests.swift \
+	Tests/SwiftMkCoreTests/ToolchainBuildCoverageTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainReceiptTests.swift \
 	Tests/SwiftMkCoreTests/GatedBuildHarness.swift \
 	Tests/SwiftMkCoreTests/GatedBuildTests.swift \

@@ -1,0 +1,129 @@
+//
+//  ToolchainBuildCoverageTests.swift
+//  SwiftMkCoreTests
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-07-01.
+//  Copyright © 2026, all rights reserved.
+//
+
+import Foundation
+import Testing
+
+@testable import SwiftMkCore
+
+// MARK: - ToolchainBuildCoverageTests
+
+@Suite(.serialized)
+enum ToolchainBuildCoverageTests {
+  @Test
+  static func buildCoverageEntriesRunsEveryEntryWithDestinationAndResultBundle() throws {
+    try GatedBuildHarness.run { setup in
+      let entries = [
+        DeadcodeCoverageEntry(scheme: "App", platform: .macosx),
+        DeadcodeCoverageEntry(scheme: "App", platform: .maccatalyst),
+        DeadcodeCoverageEntry(scheme: "Agent", platform: .macosx),
+      ]
+      let resultBundleRoot = setup.root + "/ResultBundles"
+      var options = Toolchain.CoverageBuildOptions()
+      options.containerPath = "App.xcworkspace"
+      options.isWorkspace = true
+      options.generator = .tuist
+      options.configuration = "Debug"
+      options.derivedDataPath = setup.root + "/DerivedData"
+      options.extraSettings = ["COMPILER_INDEX_STORE_ENABLE": "YES"]
+      options.environment = ["SWIFT_MK_RESULT_BUNDLE_DIR": resultBundleRoot]
+
+      let result = Toolchain.buildCoverageEntries(entries, options: options)
+
+      let invocations = try readXcodebuildInvocations(setup.xcodebuildArgumentsLog)
+      let resultBundleDirectories = try readLines(setup.xcodebuildEnvironmentLog)
+
+      #expect(result.status == 0)
+      #expect(result.output.contains("fake xcodebuild scheme=App"))
+      #expect(result.output.contains("fake xcodebuild scheme=Agent"))
+      #expect(invocations.count == entries.count)
+      #expect(
+        resultBundleDirectories == [
+          resultBundleRoot + "/macosx",
+          resultBundleRoot + "/maccatalyst",
+          resultBundleRoot + "/macosx",
+        ])
+      assertInvocation(
+        invocations[0],
+        containsDestination: Toolchain.coverageDestination(for: .macosx),
+        containerFlag: "-workspace")
+      assertInvocation(
+        invocations[1],
+        containsDestination: Toolchain.coverageDestination(for: .maccatalyst),
+        containerFlag: "-workspace")
+      assertInvocation(
+        invocations[2],
+        containsDestination: Toolchain.coverageDestination(for: .macosx),
+        containerFlag: "-workspace")
+    }
+  }
+
+  @Test
+  static func buildCoverageEntriesReturnsFirstNonzeroStatus() throws {
+    try GatedBuildHarness.run { setup in
+      setenv("FAKE_XCODEBUILD_FAIL_SCHEME", "Agent", 1)
+      setenv("FAKE_XCODEBUILD_FAIL_STATUS", "42", 1)
+      let entries = [
+        DeadcodeCoverageEntry(scheme: "App", platform: .macosx),
+        DeadcodeCoverageEntry(scheme: "Agent", platform: .macosx),
+        DeadcodeCoverageEntry(scheme: "Helper", platform: .macosx),
+      ]
+      var options = Toolchain.CoverageBuildOptions()
+      options.containerPath = "App.xcodeproj"
+      options.isWorkspace = false
+      options.generator = .xcodegen
+      options.configuration = "Debug"
+      options.derivedDataPath = setup.root + "/DerivedData"
+
+      let result = Toolchain.buildCoverageEntries(entries, options: options)
+      let invocations = try readXcodebuildInvocations(setup.xcodebuildArgumentsLog)
+
+      #expect(result.status == 42)
+      #expect(invocations.count == entries.count)
+      #expect(result.output.contains("fake xcodebuild scheme=Helper"))
+      assertInvocation(
+        invocations[0],
+        containsDestination: Toolchain.coverageDestination(for: .macosx),
+        containerFlag: "-project")
+    }
+  }
+
+  private static func assertInvocation(
+    _ arguments: [String],
+    containsDestination destination: String,
+    containerFlag: String,
+    sourceLocation: SourceLocation = #_sourceLocation
+  ) {
+    #expect(arguments.contains(containerFlag), sourceLocation: sourceLocation)
+    #expect(arguments.contains("-destination"), sourceLocation: sourceLocation)
+    #expect(arguments.contains(destination), sourceLocation: sourceLocation)
+    #expect(arguments.contains("-derivedDataPath"), sourceLocation: sourceLocation)
+    #expect(arguments.last == "build-for-testing", sourceLocation: sourceLocation)
+  }
+
+  private static func readXcodebuildInvocations(_ path: String) throws -> [[String]] {
+    let lines = try readLines(path)
+    var invocations: [[String]] = []
+    var current: [String] = []
+    for line in lines {
+      if line == "BEGIN" {
+        current = []
+      } else if line == "END" {
+        invocations.append(current)
+      } else {
+        current.append(line)
+      }
+    }
+    return invocations
+  }
+
+  private static func readLines(_ path: String) throws -> [String] {
+    let text = try String(contentsOfFile: path, encoding: .utf8)
+    return text.split(separator: "\n").map(String.init)
+  }
+}

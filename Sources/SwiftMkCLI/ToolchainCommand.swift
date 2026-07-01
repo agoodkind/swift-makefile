@@ -22,7 +22,8 @@ struct ToolchainCommand: ParsableCommand {
     abstract: "Drive the Xcode toolchain (tuist/xcodegen/xcodebuild) and SwiftPM.",
     subcommands: [
       ToolchainGenerate.self, ToolchainInstall.self, ToolchainBuild.self,
-      ToolchainBuildForTesting.self, ToolchainTest.self, ToolchainAnalyze.self,
+      ToolchainBuildForTesting.self, ToolchainCoverage.self, ToolchainTest.self,
+      ToolchainAnalyze.self,
       ToolchainVersion.self, ToolchainDownloadComponent.self,
       ToolchainSwiftPM.self, ToolchainRunTool.self,
     ]
@@ -38,6 +39,17 @@ private func resolveGenerator(_ raw: String) throws -> Toolchain.Generator {
 
 private func toolchainExit(_ status: Int32) throws {
   if status != 0 { throw ExitCode(status) }
+}
+
+private func parseBuildSettings(_ settings: [String]) throws -> [String: String] {
+  var extra: [String: String] = [:]
+  for pair in settings {
+    guard let equals = pair.firstIndex(of: "=") else {
+      throw ValidationError("build setting '\(pair)' must be KEY=value")
+    }
+    extra[String(pair[..<equals])] = String(pair[pair.index(after: equals)...])
+  }
+  return extra
 }
 
 // MARK: - ToolchainRequestOptions
@@ -74,13 +86,7 @@ struct ToolchainRequestOptions: ParsableArguments {
     if resolvedGenerator == .xcodegen, project == nil {
       throw ValidationError("xcodegen requires --project")
     }
-    var extra: [String: String] = [:]
-    for pair in settings {
-      guard let equals = pair.firstIndex(of: "=") else {
-        throw ValidationError("build setting '\(pair)' must be KEY=value")
-      }
-      extra[String(pair[..<equals])] = String(pair[pair.index(after: equals)...])
-    }
+    let extra = try parseBuildSettings(settings)
     let request = Toolchain.Request(
       generator: resolvedGenerator,
       scheme: scheme,
@@ -162,6 +168,88 @@ struct ToolchainBuildForTesting: ParsableCommand {
   @OptionGroup var options: ToolchainRequestOptions
 
   func run() throws { try toolchainExit(Toolchain.buildForTesting(options.request())) }
+}
+
+// MARK: - ToolchainCoverage
+
+struct ToolchainCoverage: ParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "coverage")
+
+  @Option(name: .long, help: "Project generator: tuist or xcodegen.")
+  var generator: String = "tuist"
+
+  @Option(name: .long, help: "Path to the .xcworkspace.")
+  var workspace: String?
+
+  @Option(name: .long, help: "Path to the .xcodeproj.")
+  var project: String?
+
+  @Option(name: .customLong("configuration"), help: "Build configuration.")
+  var configurationName: String = "Debug"
+
+  @Option(name: .customLong("derived-data-path"), help: "xcodebuild -derivedDataPath value.")
+  var derivedDataPath: String?
+
+  @Argument(help: "Extra KEY=value build settings.")
+  var settings: [String] = []
+
+  func run() throws {
+    if let refusal = GateProof.refusal(entry: "toolchain coverage") {
+      try toolchainExit(refusal)
+    }
+    let resolvedGenerator = try resolveGenerator(generator)
+    let container = try coverageContainer()
+    let extraSettings = try parseBuildSettings(settings)
+    try validateSettings(extraSettings, generator: resolvedGenerator, container: container)
+    let resolvedDerivedDataPath = derivedDataPath ?? Env.get("SWIFT_MK_DERIVED_DATA")
+    var coverageOptions = Toolchain.CoverageBuildOptions()
+    coverageOptions.containerPath = container.path
+    coverageOptions.isWorkspace = container.isWorkspace
+    coverageOptions.generator = resolvedGenerator
+    coverageOptions.configuration = configurationName
+    coverageOptions.derivedDataPath = resolvedDerivedDataPath
+    coverageOptions.packageTargetNames = []
+    coverageOptions.extraSettings = extraSettings
+    coverageOptions.environment = Toolchain.deadcodeCoverageEnvironment(
+      derivedDataPath: resolvedDerivedDataPath)
+    let result = Toolchain.buildCoverage(coverageOptions)
+    Output.emitStandardOutput(result.output)
+    try toolchainExit(result.status)
+  }
+
+  private func coverageContainer() throws -> (path: String, isWorkspace: Bool) {
+    if let workspace, let project {
+      throw ValidationError(
+        "toolchain coverage requires exactly one of --workspace or --project; got "
+          + "\(workspace) and \(project)")
+    }
+    if let workspace {
+      return (workspace, true)
+    }
+    if let project {
+      return (project, false)
+    }
+    throw ValidationError("toolchain coverage requires --workspace or --project")
+  }
+
+  private func validateSettings(
+    _ settings: [String: String],
+    generator: Toolchain.Generator,
+    container: (path: String, isWorkspace: Bool)
+  ) throws {
+    let request = Toolchain.Request(
+      generator: generator,
+      scheme: "Coverage",
+      workspace: container.isWorkspace ? container.path : nil,
+      project: container.isWorkspace ? nil : container.path,
+      extraSettings: settings)
+    if let key = Toolchain.forbiddenSigningSetting(in: request) {
+      throw ValidationError(
+        "build setting '\(key)' is forbidden; swift-mk owns code signing via "
+          + "XCODE_XCCONFIG_FILE and a command-line setting would beat it. Remove it "
+          + "and set the identity and team through the swift-mk signing source.")
+    }
+  }
 }
 
 // MARK: - ToolchainTest
