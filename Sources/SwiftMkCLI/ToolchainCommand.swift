@@ -196,22 +196,25 @@ struct ToolchainCoverage: ParsableCommand {
   func run() throws {
     if let refusal = GateProof.refusal(entry: "toolchain coverage") {
       try toolchainExit(refusal)
+      return
     }
     let resolvedGenerator = try resolveGenerator(generator)
     let container = try coverageContainer()
     let extraSettings = try parseBuildSettings(settings)
     try validateSettings(extraSettings, generator: resolvedGenerator, container: container)
-    let resolvedDerivedDataPath = derivedDataPath ?? Env.get("SWIFT_MK_DERIVED_DATA")
+    let resolvedDerivedDataPath = coverageDerivedDataPath()
     var coverageOptions = Toolchain.CoverageBuildOptions()
     coverageOptions.containerPath = container.path
     coverageOptions.isWorkspace = container.isWorkspace
     coverageOptions.generator = resolvedGenerator
     coverageOptions.configuration = configurationName
-    coverageOptions.derivedDataPath = resolvedDerivedDataPath
+    coverageOptions.derivedDataPath = resolvedDerivedDataPath ?? ""
     coverageOptions.packageTargetNames = []
     coverageOptions.extraSettings = extraSettings
-    coverageOptions.environment = Toolchain.deadcodeCoverageEnvironment(
-      derivedDataPath: resolvedDerivedDataPath)
+    if let resolvedDerivedDataPath {
+      coverageOptions.environment = Toolchain.deadcodeCoverageEnvironment(
+        derivedDataPath: resolvedDerivedDataPath)
+    }
     let result = Toolchain.buildCoverage(coverageOptions)
     Output.emitStandardOutput(result.output)
     try toolchainExit(result.status)
@@ -230,6 +233,15 @@ struct ToolchainCoverage: ParsableCommand {
       return (project, false)
     }
     throw ValidationError("toolchain coverage requires --workspace or --project")
+  }
+
+  private func coverageDerivedDataPath() -> String? {
+    let rawPath = derivedDataPath ?? Env.get("SWIFT_MK_DERIVED_DATA")
+    let trimmedPath = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmedPath.isEmpty {
+      return nil
+    }
+    return rawPath
   }
 
   private func validateSettings(

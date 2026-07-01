@@ -36,18 +36,21 @@ enum ToolchainBuildCoverageTests {
       let result = Toolchain.buildCoverageEntries(entries, options: options)
 
       let invocations = try readXcodebuildInvocations(setup.xcodebuildArgumentsLog)
-      let resultBundleDirectories = try readLines(setup.xcodebuildEnvironmentLog)
+      let resultBundlePaths = try invocations.map { arguments in
+        try #require(resultBundlePath(in: arguments))
+      }
 
       #expect(result.status == 0)
       #expect(result.output.contains("fake xcodebuild scheme=App"))
       #expect(result.output.contains("fake xcodebuild scheme=Agent"))
       #expect(invocations.count == entries.count)
       #expect(
-        resultBundleDirectories == [
-          resultBundleRoot + "/macosx",
-          resultBundleRoot + "/maccatalyst",
-          resultBundleRoot + "/macosx",
+        resultBundlePaths == [
+          resultBundleRoot + "/macosx/App-Debug.xcresult",
+          resultBundleRoot + "/maccatalyst/App-Debug.xcresult",
+          resultBundleRoot + "/macosx/Agent-Debug.xcresult",
         ])
+      #expect(Set(resultBundlePaths).count == resultBundlePaths.count)
       assertInvocation(
         invocations[0],
         containsDestination: Toolchain.coverageDestination(for: .macosx),
@@ -93,6 +96,27 @@ enum ToolchainBuildCoverageTests {
     }
   }
 
+  @Test
+  static func buildCoverageEntriesOmitsEmptyDerivedDataPath() throws {
+    try GatedBuildHarness.run { setup in
+      let entries = [
+        DeadcodeCoverageEntry(scheme: "App", platform: .macosx)
+      ]
+      var options = Toolchain.CoverageBuildOptions()
+      options.containerPath = "App.xcworkspace"
+      options.isWorkspace = true
+      options.generator = .tuist
+      options.configuration = "Debug"
+
+      let result = Toolchain.buildCoverageEntries(entries, options: options)
+      let invocations = try readXcodebuildInvocations(setup.xcodebuildArgumentsLog)
+
+      #expect(result.status == 0)
+      #expect(invocations.count == entries.count)
+      #expect(!invocations[0].contains("-derivedDataPath"))
+    }
+  }
+
   private static func assertInvocation(
     _ arguments: [String],
     containsDestination destination: String,
@@ -104,6 +128,17 @@ enum ToolchainBuildCoverageTests {
     #expect(arguments.contains(destination), sourceLocation: sourceLocation)
     #expect(arguments.contains("-derivedDataPath"), sourceLocation: sourceLocation)
     #expect(arguments.last == "build-for-testing", sourceLocation: sourceLocation)
+  }
+
+  private static func resultBundlePath(in arguments: [String]) -> String? {
+    guard let flagIndex = arguments.firstIndex(of: "-resultBundlePath") else {
+      return nil
+    }
+    let pathIndex = arguments.index(after: flagIndex)
+    guard pathIndex < arguments.endIndex else {
+      return nil
+    }
+    return arguments[pathIndex]
   }
 
   private static func readXcodebuildInvocations(_ path: String) throws -> [[String]] {

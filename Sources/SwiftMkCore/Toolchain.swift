@@ -680,13 +680,17 @@ extension Toolchain {
   /// while forwarding stderr live, for the dead-code coverage build whose fail-hard
   /// diagnosis needs the transcript.
   static func runXcodebuildCapturing(
-    _ request: Request, actions: [String], environment: [String: String]
+    _ request: Request,
+    actions: [String],
+    environment: [String: String],
+    resultBundleDirectory: String? = nil
   ) -> Shell.StreamingResult {
     Output.debug("toolchain: xcodebuild (captured) \(actions.joined(separator: " "))")
     guard ToolchainPrebuild.run() else {
       return Shell.StreamingResult(status: prebuildFailureStatus, stdout: "", timedOut: false)
     }
-    return Shell.runStreamingStderr(
-      "xcodebuild", xcodebuildArguments(request, actions: actions), environment: environment)
+    let arguments = xcodebuildArguments(
+      request, actions: actions, resultBundleDirectory: resultBundleDirectory)
+    return Shell.runStreamingStderr("xcodebuild", arguments, environment: environment)
   }
 }

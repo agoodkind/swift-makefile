@@ -87,10 +87,14 @@ extension Toolchain {
     var firstNonzeroStatus: Int32 = 0
     for entry in entries {
       let request = coverageRequest(entry, context: context)
+      let resultBundleDirectory = coverageResultBundleDirectory(
+        options.environment, for: entry.platform)
       let result = runXcodebuildCapturing(
         request,
         actions: ["build-for-testing"],
-        environment: coverageEnvironment(options.environment, for: entry.platform))
+        environment: coverageEnvironment(
+          options.environment, resultBundleDirectory: resultBundleDirectory),
+        resultBundleDirectory: resultBundleDirectory)
       combinedOutput += result.stdout
       if firstNonzeroStatus == 0, result.status != 0 {
         firstNonzeroStatus = result.status
@@ -115,24 +119,41 @@ extension Toolchain {
       configuration: context.configuration,
       workspace: context.isWorkspace ? context.containerPath : nil,
       project: context.isWorkspace ? nil : context.containerPath,
-      derivedDataPath: context.derivedDataPath,
+      derivedDataPath: nonEmptyPath(context.derivedDataPath),
       extraSettings: context.extraSettings,
       extraArguments: ["-destination", destination])
   }
 
-  private static func coverageEnvironment(
+  private static func coverageResultBundleDirectory(
     _ environment: [String: String],
     for platform: CoveragePlatform
-  ) -> [String: String] {
+  ) -> String? {
     guard let directory = environment[resultBundleDirectoryEnvironmentKey],
       !directory.isEmpty
     else {
+      return nil
+    }
+    return (directory as NSString).appendingPathComponent(platform.rawValue)
+  }
+
+  private static func coverageEnvironment(
+    _ environment: [String: String],
+    resultBundleDirectory: String?
+  ) -> [String: String] {
+    guard let resultBundleDirectory else {
       return environment
     }
     var result = environment
-    result[resultBundleDirectoryEnvironmentKey] =
-      (directory as NSString).appendingPathComponent(platform.rawValue)
+    result[resultBundleDirectoryEnvironmentKey] = resultBundleDirectory
     return result
+  }
+
+  private static func nonEmptyPath(_ path: String) -> String? {
+    let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmedPath.isEmpty {
+      return nil
+    }
+    return path
   }
 
   private static func wipeCoverageDerivedData(_ derivedDataPath: String) {
