@@ -79,6 +79,26 @@ func githubOutputEmitsEmptyRestoreKeyBlock() {
 }
 
 @Test
+func compileCacheReportedDisabledWhenNoCompilePaths() {
+  // A builder gate with caching on sets compileCacheEnabled, but if both CAS stores
+  // resolve to nil the compile bucket is empty; actions/cache fails on an empty path,
+  // so the emitted flag must be false to skip the step.
+  let plan = CachePlan.Result(
+    dependencyCacheEnabled: true,
+    buildCacheEnabled: true,
+    compileCacheEnabled: true,
+    dependencyKey: "dk",
+    dependencyRestoreKeys: [],
+    buildKey: "bk",
+    buildRestoreKeys: [],
+    compileKey: "ck",
+    compileRestoreKeys: ["cf-"])
+  let output = CacheOutput.githubOutput(
+    plan: plan, paths: CachePaths.Resolved(dependency: ["/a"], build: ["/b"], compile: []))
+  #expect(output.contains("compile-cache-enabled=false\n"))
+}
+
+@Test
 func githubOutputDelimiterAvoidsCollisionWithValues() {
   // A path value equal to the base delimiter (e.g. from EXTRA_CACHE_PATHS) must not end
   // the heredoc block early; the delimiter is extended until no value line matches.

@@ -22,10 +22,14 @@ public enum CacheOutput {
   public static func githubOutput(
     plan: CachePlan.Result, paths: CachePaths.Resolved
   ) -> String {
+    // The compile-cache step passes these paths to `actions/cache`, which fails on an
+    // empty path list. Both CAS stores can resolve to nil (both set to an off-token), so
+    // report the compile cache enabled only when the policy allows it AND a path exists.
+    let compileEnabled = plan.compileCacheEnabled && !paths.compile.isEmpty
     var lines: [String] = [
       "dependency-cache-enabled=\(plan.dependencyCacheEnabled)",
       "build-cache-enabled=\(plan.buildCacheEnabled)",
-      "compile-cache-enabled=\(plan.compileCacheEnabled)",
+      "compile-cache-enabled=\(compileEnabled)",
       "dependency-key=\(plan.dependencyKey)",
     ]
     lines.append(
