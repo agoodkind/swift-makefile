@@ -448,7 +448,8 @@ export SWIFT_MK_XCODE_CACHE_PATH
 # The shared LLVM CAS store for `swift build` compilation caching. Kept outside
 # DerivedData and shared across worktrees (content-addressed), the SwiftPM peer
 # of SWIFT_MK_XCODE_CACHE_PATH. The engine owns this cache with no consumer opt-out:
-# the value only relocates the store, a disable token does not turn it off.
+# a real path relocates the store, and a disable token (off/none/0/disabled) is treated
+# as unset and resolves to the default store rather than turning caching off.
 SWIFT_MK_SWIFTPM_CACHE_PATH ?= $(SWIFT_MK_CACHE_ROOT)/SwiftPMCompilationCache
 export SWIFT_MK_SWIFTPM_CACHE_PATH
 # SwiftPM compilation caching via -explicit-module-build -cache-compile-job. On by

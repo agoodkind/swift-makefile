@@ -42,9 +42,10 @@ enum SwiftPMTests {
   static func cacheArgumentsWordSplitTheEnvironmentFlags() {
     let priorPointer = getenv("SWIFT_MK_SWIFTPM_CACHE_ARGS")
     let prior = priorPointer.map { String(cString: $0) }
-    // The compile cache is on by default, so `make test` exports
-    // SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED=YES and cacheArguments() would append the
-    // compile flags. Isolate the word-split behavior by forcing the compile cache off.
+    // The compile cache may be on by default on a supporting toolchain, where
+    // `make test` exports SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED=YES and
+    // cacheArguments() would append the compile flags. Isolate the word-split behavior
+    // by forcing the compile cache off regardless of the runner's toolchain.
     let priorEnabled = getenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED").map { String(cString: $0) }
     setenv("SWIFT_MK_SWIFTPM_CACHE_ARGS", "--enable-dependency-cache --manifest-cache shared", 1)
     setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", "NO", 1)
