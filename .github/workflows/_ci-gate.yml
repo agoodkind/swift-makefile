@@ -19,6 +19,9 @@ on:
       gate:
         type: string
         required: true
+      run:
+        type: string
+        default: "true"
       runner:
         type: string
         required: true
@@ -114,11 +117,12 @@ jobs:
           esac
 
       - uses: actions/checkout@v7
+        if: ${{ inputs.run != 'false' }}
         with:
           fetch-depth: ${{ inputs.fetch-depth }}
 
       - name: Checkout swift-makefile helpers
-        if: github.repository != 'agoodkind/swift-makefile'
+        if: ${{ inputs.run != 'false' && github.repository != 'agoodkind/swift-makefile' }}
         uses: actions/checkout@v7
         with:
           repository: agoodkind/swift-makefile
@@ -129,7 +133,7 @@ jobs:
       # extra-targets only: resolve the bespoke targets and drop builtins. The
       # count gates every later step so an all-builtin list does no setup.
       - name: Resolve extra targets
-        if: inputs.gate == 'extra-targets'
+        if: ${{ inputs.run != 'false' && inputs.gate == 'extra-targets' }}
         id: resolve
         shell: bash
         env:
@@ -139,14 +143,14 @@ jobs:
         run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" resolve-extra-targets
 
       - name: Install brew packages
-        if: ${{ (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.brew-packages != '' }}
+        if: ${{ inputs.run != 'false' && (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.brew-packages != '' }}
         shell: bash
         env:
           BREW_PACKAGES: ${{ inputs.brew-packages }}
         run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/install-brew-packages/install-brew-packages.sh"
 
       - name: Setup Swift build env (swift-makefile)
-        if: ${{ (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && github.repository == 'agoodkind/swift-makefile' }}
+        if: ${{ inputs.run != 'false' && (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && github.repository == 'agoodkind/swift-makefile' }}
         uses: ./.github/actions/setup-build-env
         with:
           xcode-version: ${{ inputs.xcode-version }}
@@ -157,7 +161,7 @@ jobs:
           gate: ${{ inputs.gate }}
 
       - name: Setup Swift build env
-        if: ${{ (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && github.repository != 'agoodkind/swift-makefile' }}
+        if: ${{ inputs.run != 'false' && (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && github.repository != 'agoodkind/swift-makefile' }}
         uses: agoodkind/swift-makefile/.github/actions/setup-build-env@main
         with:
           xcode-version: ${{ inputs.xcode-version }}
@@ -168,7 +172,7 @@ jobs:
           gate: ${{ inputs.gate }}
 
       - name: Validate signing inputs
-        if: ${{ (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && (inputs.import-signing-cert || inputs.install-provisioning-profile) }}
+        if: ${{ inputs.run != 'false' && (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && (inputs.import-signing-cert || inputs.install-provisioning-profile) }}
         shell: bash
         env:
           IMPORT_SIGNING_CERT: ${{ inputs.import-signing-cert }}
@@ -180,7 +184,7 @@ jobs:
 
       - name: Install signing certificate (swift-makefile)
         id: cert-local
-        if: ${{ (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.import-signing-cert && github.repository == 'agoodkind/swift-makefile' }}
+        if: ${{ inputs.run != 'false' && (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.import-signing-cert && github.repository == 'agoodkind/swift-makefile' }}
         uses: ./.github/actions/import-signing-cert
         with:
           p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
@@ -189,7 +193,7 @@ jobs:
 
       - name: Install signing certificate
         id: cert-remote
-        if: ${{ (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.import-signing-cert && github.repository != 'agoodkind/swift-makefile' }}
+        if: ${{ inputs.run != 'false' && (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.import-signing-cert && github.repository != 'agoodkind/swift-makefile' }}
         uses: agoodkind/swift-makefile/.github/actions/import-signing-cert@main
         with:
           p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
@@ -198,20 +202,20 @@ jobs:
 
       - name: Install provisioning profile (swift-makefile)
         id: profile-local
-        if: ${{ (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.install-provisioning-profile && github.repository == 'agoodkind/swift-makefile' }}
+        if: ${{ inputs.run != 'false' && (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.install-provisioning-profile && github.repository == 'agoodkind/swift-makefile' }}
         uses: ./.github/actions/install-provisioning-profile
         with:
           profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
 
       - name: Install provisioning profile
         id: profile-remote
-        if: ${{ (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.install-provisioning-profile && github.repository != 'agoodkind/swift-makefile' }}
+        if: ${{ inputs.run != 'false' && (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.install-provisioning-profile && github.repository != 'agoodkind/swift-makefile' }}
         uses: agoodkind/swift-makefile/.github/actions/install-provisioning-profile@main
         with:
           profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
 
       - name: Run setup target
-        if: ${{ (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.setup-target != '' }}
+        if: ${{ inputs.run != 'false' && (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.setup-target != '' }}
         shell: bash
         env:
           MAKE_TARGET: ${{ inputs.setup-target }}
@@ -225,7 +229,7 @@ jobs:
         run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
 
       - name: Run build
-        if: ${{ inputs.gate == 'build' }}
+        if: ${{ inputs.run != 'false' && inputs.gate == 'build' }}
         shell: bash
         env:
           MAKE_TARGET: build
@@ -239,7 +243,7 @@ jobs:
         run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
 
       - name: Run test
-        if: ${{ inputs.gate == 'test' }}
+        if: ${{ inputs.run != 'false' && inputs.gate == 'test' }}
         shell: bash
         env:
           MAKE_TARGET: test
@@ -253,7 +257,7 @@ jobs:
         run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
 
       - name: Run extra targets
-        if: ${{ inputs.gate == 'extra-targets' && steps.resolve.outputs.count != '0' }}
+        if: ${{ inputs.run != 'false' && inputs.gate == 'extra-targets' && steps.resolve.outputs.count != '0' }}
         shell: bash
         env:
           MAKE_ARGS: ${{ inputs.make-args }}

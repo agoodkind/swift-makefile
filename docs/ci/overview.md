@@ -18,6 +18,10 @@ The detector selects the diff base by event: a non-push event runs everything, a
 
 The detector runs everything whenever it cannot be certain: a non-push event, a missing or zero or non-ancestor base, an unresolvable merge-base, any git failure, or a build-graph read that fails.
 
+Skipping is step-level, so the required checks stay green. The `changes` output feeds a `run` input on [`_ci-gate.yml`](../../.github/workflows/_ci-gate.yml), and each expensive step is guarded on `inputs.run != 'false'`. Work skips only when the signal is exactly `false`, so a failed `changes` job with empty output runs the full work. The gate job still finishes with success, so the required Build, Test, and Quality checks report green. The `changes` job and its `run` passthrough live in [`_ci.yml`](../../.github/workflows/_ci.yml).
+
+On a skip, each gate job routes to an `ubuntu-latest` runner instead of the macOS pool, through a conditional `runs-on` in [`_ci.yml`](../../.github/workflows/_ci.yml). The job runs, its guarded steps skip, and its named check reports green from the cheap runner, so the gate jobs occupy no macOS pool slot on a skip. The `changes` job itself reads the graph on the runner `plan-runners` selects, which is the self-hosted pool label when the pool has free capacity and a hosted runner when it does not, so the detector uses at most one macOS runner per push. It restores the swift-mk binary and the dependency cache so `swift package describe` resolves without a cold fetch.
+
 ## Runners with a hosted floor
 
 CI prefers a self-hosted pool and falls back to GitHub-hosted runners, so a pool outage never blocks a run. The pool routing is best-effort with a hosted floor that always exists.

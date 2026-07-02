@@ -22,6 +22,11 @@ on:
       extra-targets:
         type: string
         default: '[]'
+      # Build-relevant directories the detector cannot infer from the build graph, as a
+      # whitespace-separated list of repo-root-relative paths (space or newline separated).
+      extra-dirs:
+        type: string
+        default: ""
       # Optional make target run before each required job and once before the
       # extra-target batch.
       setup-target:
@@ -121,7 +126,13 @@ env:
 jobs:
   quality:
     name: Quality / ${{ matrix.name }}
-    runs-on: ${{ inputs.runner }}
+    needs: changes
+    if: ${{ !cancelled() }}
+    # On an index-confirmed skip (run == 'false') the job runs on ubuntu, so a
+    # docs-only push never occupies a macOS pool slot. Every step is guarded to
+    # skip on that same value, so the job runs no work and the named check still
+    # reports green. Any other value keeps the macOS runner (fail-safe to full CI).
+    runs-on: ${{ needs.changes.outputs.run == 'false' && 'ubuntu-latest' || inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
@@ -145,11 +156,12 @@ jobs:
             target: audit
     steps:
       - uses: actions/checkout@v7
+        if: ${{ needs.changes.outputs.run != 'false' }}
         with:
           fetch-depth: ${{ inputs.fetch-depth }}
 
       - name: Checkout swift-makefile helpers
-        if: github.repository != 'agoodkind/swift-makefile'
+        if: ${{ needs.changes.outputs.run != 'false' && github.repository != 'agoodkind/swift-makefile' }}
         uses: actions/checkout@v7
         with:
           repository: agoodkind/swift-makefile
@@ -161,13 +173,13 @@ jobs:
           fetch-depth: 1
 
       - name: Install brew packages
-        if: inputs.brew-packages != ''
+        if: ${{ needs.changes.outputs.run != 'false' && inputs.brew-packages != '' }}
         env:
           BREW_PACKAGES: ${{ inputs.brew-packages }}
         run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/install-brew-packages/install-brew-packages.sh"
 
       - name: Setup Swift build env
-        if: github.repository == 'agoodkind/swift-makefile'
+        if: ${{ needs.changes.outputs.run != 'false' && github.repository == 'agoodkind/swift-makefile' }}
         uses: ./.github/actions/setup-build-env
         with:
           xcode-version: ${{ inputs.xcode-version }}
@@ -178,7 +190,7 @@ jobs:
           gate: ${{ matrix.target }}
 
       - name: Setup Swift build env
-        if: github.repository != 'agoodkind/swift-makefile'
+        if: ${{ needs.changes.outputs.run != 'false' && github.repository != 'agoodkind/swift-makefile' }}
         uses: agoodkind/swift-makefile/.github/actions/setup-build-env@main
         with:
           xcode-version: ${{ inputs.xcode-version }}
@@ -189,7 +201,7 @@ jobs:
           gate: ${{ matrix.target }}
 
       - name: Run setup target
-        if: inputs.setup-target != ''
+        if: ${{ needs.changes.outputs.run != 'false' && inputs.setup-target != '' }}
         env:
           MAKE_TARGET: ${{ inputs.setup-target }}
           MAKE_ARGS: ${{ inputs.make-args }}
@@ -197,6 +209,7 @@ jobs:
         run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-team
 
       - name: Run shared quality guard
+        if: ${{ needs.changes.outputs.run != 'false' }}
         env:
           MAKE_TARGET: quality-guard
           MAKE_ARGS: ${{ inputs.make-args }}
@@ -204,6 +217,7 @@ jobs:
         run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-team
 
       - name: Run ${{ matrix.name }}
+        if: ${{ needs.changes.outputs.run != 'false' }}
         env:
           MAKE_TARGET: ${{ matrix.target }}
           MAKE_ARGS: ${{ inputs.make-args }}
@@ -286,6 +300,72 @@ jobs:
             printf 'on_pool=%s\n' "${on_pool}"
           } >> "${GITHUB_OUTPUT}"
 
+  changes:
+    name: Changes
+    needs: plan-runners
+    runs-on: ${{ needs.plan-runners.outputs.build_label }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    outputs:
+      run: ${{ steps.detect.outputs.run }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Credentials stay persisted (the default): the detector's feature-branch
+          # merge-base can need `git fetch origin <default>`, which fails without auth on a
+          # private repo and would disable skipping on feature branches.
+          fetch-depth: 0
+
+      - name: Setup Swift build env
+        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
+        uses: ./.github/actions/setup-build-env
+        with:
+          xcode-version: ${{ inputs.xcode-version }}
+          github-token: ${{ github.token }}
+          install-lint-tools: "false"
+          install-tuist: "false"
+          install-xcodegen: "false"
+          # The detector reads the build graph fresh with swift package describe, so it
+          # restores only the dependency bucket (the SPM checkouts describe resolves
+          # against), not the build or index cache.
+          cache-profile: dependencies
+          cache-version: ${{ inputs.cache-version }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+          gate: changes
+
+      - name: Setup Swift build env
+        if: ${{ github.repository != 'agoodkind/swift-makefile' }}
+        uses: agoodkind/swift-makefile/.github/actions/setup-build-env@main
+        with:
+          xcode-version: ${{ inputs.xcode-version }}
+          github-token: ${{ github.token }}
+          install-lint-tools: "false"
+          install-tuist: "false"
+          install-xcodegen: "false"
+          # The detector reads the build graph fresh with swift package describe, so it
+          # restores only the dependency bucket (the SPM checkouts describe resolves
+          # against), not the build or index cache.
+          cache-profile: dependencies
+          cache-version: ${{ inputs.cache-version }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+          gate: changes
+
+      - name: Detect changes
+        id: detect
+        shell: bash
+        env:
+          SWIFT_MK_EVENT_NAME: ${{ github.event_name }}
+          SWIFT_MK_DIFF_HEAD: ${{ github.sha }}
+          SWIFT_MK_DIFF_BASE: ${{ github.event.before }}
+          SWIFT_MK_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          SWIFT_MK_REF_NAME: ${{ github.ref_name }}
+          SWIFT_MK_CI_EXTRA_DIRS: ${{ inputs.extra-dirs }}
+        run: |
+          set -euo pipefail
+
+          "${SWIFT_MK_BIN:-${HOME}/.swift-mk-ci-toolchain/swift-mk}" ci-changed
+
   # ── Build ──────────────────────────────────────────────────────────────────
   # build-pool: first attempt on the planned runner (pool or hosted).
   # build-hosted: hosted-only fallback that runs when build-pool fails or is
@@ -293,11 +373,18 @@ jobs:
   # build: tiny aggregator that is the single required status check for Build.
   build-pool:
     name: Build (pool attempt)
-    needs: plan-runners
+    needs: [plan-runners, changes]
+    # !cancelled() forces this to run when changes fails (empty run means full CI);
+    # requiring plan-runners success keeps runs-on well-defined, so a plan-runners
+    # failure surfaces as a Build failure rather than an empty runner label.
+    if: ${{ !cancelled() && needs.plan-runners.result == 'success' }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: build
-      runner: ${{ needs.plan-runners.outputs.build_label }}
+      # Route to ubuntu on an index-confirmed skip so a docs-only push does not
+      # occupy a macOS pool slot (see the Quality job note).
+      runner: ${{ needs.changes.outputs.run == 'false' && 'ubuntu-latest' || needs.plan-runners.outputs.build_label }}
+      run: ${{ needs.changes.outputs.run }}
       xcode-version: ${{ inputs.xcode-version }}
       cache-profile: ${{ inputs.cache-profile }}
       cache-version: ${{ inputs.cache-version }}
@@ -369,11 +456,17 @@ jobs:
   # test: tiny aggregator that is the single required status check for Test.
   test-pool:
     name: Test (pool attempt)
-    needs: plan-runners
+    needs: [plan-runners, changes]
+    # See build-pool: fail-safe on a changes failure, but require plan-runners
+    # success so the runner label is always well-defined.
+    if: ${{ !cancelled() && needs.plan-runners.result == 'success' }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: test
-      runner: ${{ needs.plan-runners.outputs.test_label }}
+      # Route to ubuntu on an index-confirmed skip so a docs-only push does not
+      # occupy a macOS pool slot (see the Quality job note).
+      runner: ${{ needs.changes.outputs.run == 'false' && 'ubuntu-latest' || needs.plan-runners.outputs.test_label }}
+      run: ${{ needs.changes.outputs.run }}
       xcode-version: ${{ inputs.xcode-version }}
       cache-profile: ${{ inputs.cache-profile }}
       cache-version: ${{ inputs.cache-version }}
@@ -448,12 +541,15 @@ jobs:
     # always() defeats the implicit skip that fires when a needed job uses
     # if: always() (the build/test aggregates do); the explicit result checks
     # keep this gated on every upstream gate actually succeeding.
-    if: ${{ always() && needs.plan-runners.result == 'success' && needs.quality.result == 'success' && needs.build.result == 'success' && needs.test.result == 'success' && needs.plan-runners.outputs.extra_targets_enabled == 'true' }}
-    needs: [plan-runners, quality, build, test]
+    if: ${{ !cancelled() && always() && needs.plan-runners.result == 'success' && needs.quality.result == 'success' && needs.build.result == 'success' && needs.test.result == 'success' && needs.plan-runners.outputs.extra_targets_enabled == 'true' }}
+    needs: [plan-runners, changes, quality, build, test]
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: extra-targets
-      runner: ${{ needs.plan-runners.outputs.extra_targets_label }}
+      # Route to ubuntu on an index-confirmed skip so a docs-only push does not
+      # occupy a macOS pool slot (see the Quality job note).
+      runner: ${{ needs.changes.outputs.run == 'false' && 'ubuntu-latest' || needs.plan-runners.outputs.extra_targets_label }}
+      run: ${{ needs.changes.outputs.run }}
       extra-targets: ${{ inputs.extra-targets }}
       targets: ${{ inputs.targets }}
       xcode-version: ${{ inputs.xcode-version }}
