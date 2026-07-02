@@ -31,7 +31,7 @@ struct SwiftMk: ParsableCommand {
       CodesignRun.self,
       NotarizeCommand.self,
       TraceCommand.self, ToolchainCommand.self, BuildToolingAuditCommand.self,
-      CacheCommand.self,
+      CacheCommand.self, CiChangedCommand.self,
     ]
   )
 }

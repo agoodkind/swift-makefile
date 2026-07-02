@@ -136,6 +136,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCLI/NotarizeCommand.swift \
 	Sources/SwiftMkCLI/ToolchainCommand.swift \
 	Sources/SwiftMkCLI/CacheCommand.swift \
+	Sources/SwiftMkCLI/CiChangedCommand.swift \
 	Sources/SwiftMkCore/Findings.swift \
 	Sources/SwiftMkCore/BaselineKey.swift \
 	Sources/SwiftMkCore/BaselineRecord.swift \
@@ -169,6 +170,8 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/CachePaths.swift \
 	Sources/SwiftMkCore/CachePlan.swift \
 	Sources/SwiftMkCore/CacheService.swift \
+	Sources/SwiftMkCore/CiChanged.swift \
+	Sources/SwiftMkCore/CiChanged+Graph.swift \
 	Sources/SwiftMkCore/Codesign.swift \
 	Sources/SwiftMkCore/Notarize.swift \
 	Sources/SwiftMkCore/SigningBuildConfig.swift \
@@ -240,6 +243,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/CachePathsTests.swift \
 	Tests/SwiftMkCoreTests/CachePlanTests.swift \
 	Tests/SwiftMkCoreTests/CacheServiceTests.swift \
+	Tests/SwiftMkCoreTests/CiChangedTests.swift \
 	Tests/SwiftMkCoreTests/CodesignTests.swift \
 	Tests/SwiftMkCoreTests/NotarizeTests.swift \
 	Tests/SwiftMkCoreTests/CountAwareGateTests.swift \
