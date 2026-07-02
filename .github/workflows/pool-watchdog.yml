@@ -37,9 +37,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
         run: |
-          # shellcheck disable=SC2016
-          # The jq filters below use single-quoted `$label` as a jq variable bound
-          # by --arg, not a shell variable, so the no-expansion warning is expected.
           set -euo pipefail
 
           now_epoch="$(date -u +%s)"
@@ -64,8 +61,7 @@ jobs:
             stuck_created="$(
               gh api --paginate \
                 "repos/${REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" \
-                --jq --arg label "${POOL_LABEL}" \
-                '.jobs[] | select(.status == "queued") | select(any(.labels[]?; . == $label)) | .created_at'
+                --jq '.jobs[] | select(.status == "queued") | select(any(.labels[]?; . == env.POOL_LABEL)) | .created_at'
             )"
 
             for created_at in ${stuck_created}; do
