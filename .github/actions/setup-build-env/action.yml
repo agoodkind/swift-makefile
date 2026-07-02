@@ -89,14 +89,19 @@ runs:
         source_hash=$(xargs -0 shasum < "${file_list}" | awk '{ print $1 }' | LC_ALL=C sort | shasum | awk '{ print $1 }')
         rm -f "${file_list}"
         # Fold the ACTIVE toolchain into the key. The cached binary links
-        # libIndexStore from the exact Xcode/Swift it was built against, so reusing it
-        # under a different toolchain (the latest-stable label drifting across runner
-        # images) fails to load that dylib and aborts. Keying on the real version
-        # string makes a cache hit guarantee the same toolchain.
+        # libIndexStore by @rpath into the exact Xcode bundle it was built against, so
+        # reusing it under a different bundle fails to load that dylib and aborts on
+        # launch. The version strings alone are not enough: a release candidate and the
+        # final of the same version report the same `xcodebuild -version` and
+        # `swift --version`, yet live in different .app bundles, so a binary built
+        # against the RC bundle links a path that does not exist under the final bundle.
+        # Fold in the resolved developer dir (`xcode-select -p`), the .app bundle path
+        # the @rpath binds against, so a cache hit guarantees the same bundle.
         toolchain_id=$(
             {
                 xcodebuild -version 2>/dev/null || true
                 swift --version 2>/dev/null || true
+                xcode-select -p 2>/dev/null || true
             } | shasum | awk '{ print $1 }'
         )
         echo "hash=${source_hash}-${toolchain_id}" >> "${GITHUB_OUTPUT}"
@@ -126,18 +131,40 @@ runs:
       run: |
         set -euo pipefail
         bin="${HOME}/.swift-mk-ci-toolchain/swift-mk"
-        if [ "${TOOLCHAIN_CACHE_HIT}" = "true" ] && [ -x "${bin}" ]; then
-            # Real cache hit (the key pins the engine source and Xcode, so the cached
-            # binary matches). Clear the provenance xattr and re-sign so a restored
-            # arm64 binary is not killed on launch.
-            xattr -c "${bin}" 2>/dev/null || true
-            codesign --force --sign - "${bin}" >/dev/null 2>&1 || true
-        else
-            # Cache miss. Remove any stale binary a non-clean runner may have left, so
-            # the rebuild cannot be skipped by swift-mk-build.sh's mtime check.
+
+        build_engine() {
+            # Remove any stale binary a non-clean runner or a poisoned cache left, so the
+            # rebuild cannot be skipped by swift-mk-build.sh's mtime check.
             rm -rf "${HOME}/.swift-mk-ci-toolchain"
             SWIFT_MK_BIN="${bin}" SWIFT_MK_BUILD_REPO="${SWIFT_MK_SRC}" \
                 bash "${SWIFT_MK_SRC}/scripts/swift-mk-build.sh" resolve
+        }
+
+        if [ "${TOOLCHAIN_CACHE_HIT}" = "true" ] && [ -x "${bin}" ]; then
+            # Real cache hit (the key pins the engine source and Xcode bundle, so the
+            # cached binary matches). Clear the provenance xattr and re-sign so a restored
+            # arm64 binary is not killed on launch.
+            xattr -c "${bin}" 2>/dev/null || true
+            codesign --force --sign - "${bin}" >/dev/null 2>&1 || true
+            # Verify the restored binary actually launches under the active toolchain.
+            # A binary built against a different Xcode bundle links libIndexStore by
+            # @rpath into that bundle and aborts on launch (SIGABRT, exit 134). The key
+            # already folds the bundle path in to prevent that, so this is the safety
+            # net: if a cached binary ever cannot launch, discard it and rebuild rather
+            # than aborting the whole run. `swift-mk --help` is an ArgumentParser
+            # built-in that exits 0 whenever the process launches, so treat ANY non-zero
+            # (a dyld abort, an exec-format or arch mismatch, or any launch failure) as a
+            # failed probe and rebuild.
+            set +e
+            "${bin}" --help >/dev/null 2>&1
+            probe_rc=$?
+            set -e
+            if [ "${probe_rc}" -ne 0 ]; then
+                echo "cached swift-mk failed to launch (exit ${probe_rc}); rebuilding against the active toolchain"
+                build_engine
+            fi
+        else
+            build_engine
         fi
         "${bin}" cache plan
 
