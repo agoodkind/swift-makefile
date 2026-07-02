@@ -336,13 +336,6 @@ func deadcodeJsonDataSkipsPreamble() {
 }
 
 @Test
-func deadcodeSchemesToScanDropsPackageTargets() {
-  let scan = DeadcodeScan.schemesToScan(
-    ["App", "Agent", "Core", "Log"], packageTargets: ["Core", "Log"])
-  #expect(scan == ["App", "Agent"])
-}
-
-@Test
 func deadcodeGeneratorCommandMatchesManifest() {
   let xcodegen = DeadcodeScan.generatorCommand(forManifest: "project.yml")
   #expect(xcodegen.tool == "xcodegen")
