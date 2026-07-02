@@ -166,6 +166,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/BuildCache.swift \
 	Sources/SwiftMkCore/CachePaths.swift \
 	Sources/SwiftMkCore/CachePlan.swift \
+	Sources/SwiftMkCore/CacheService+Prune.swift \
 	Sources/SwiftMkCore/CacheService.swift \
 	Sources/SwiftMkCore/Codesign.swift \
 	Sources/SwiftMkCore/Notarize.swift \
@@ -214,6 +215,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/SigningBuildConfigTests.swift \
 	Tests/SwiftMkCoreTests/SigningVerificationTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainTests.swift \
+	Tests/SwiftMkCoreTests/ToolchainPoolCacheTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainReceiptTests.swift \
 	Tests/SwiftMkCoreTests/GatedBuildHarness.swift \
 	Tests/SwiftMkCoreTests/GatedBuildTests.swift \

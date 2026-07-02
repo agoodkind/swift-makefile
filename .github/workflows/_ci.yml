@@ -67,10 +67,10 @@ on:
         type: number
         default: 30
       # Self-hosted macOS pool support. When local-pool-capacity-url is set and
-      # the pool reports available capacity, Build, Test, and Extra Targets run
-      # on local-pool-label; otherwise they fall back to inputs.runner. Quality
-      # always runs on inputs.runner. An empty URL routes everything to hosted
-      # through the same plan-runners path; there is no separate no-op branch.
+      # the pool reports available capacity, every gate runs on local-pool-label;
+      # otherwise every gate falls back to inputs.runner. An empty URL routes
+      # everything to hosted through the same plan-runners path; there is no
+      # separate no-op branch.
       local-pool-capacity-url:
         type: string
         default: ""
@@ -116,7 +116,8 @@ env:
 jobs:
   quality:
     name: Quality / ${{ matrix.name }}
-    runs-on: ${{ inputs.runner }}
+    needs: plan-runners
+    runs-on: ${{ needs.plan-runners.outputs.runner_label }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
@@ -206,8 +207,8 @@ jobs:
         run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-team
 
   # ── Runner planning ────────────────────────────────────────────────────────
-  # Runs on ubuntu-latest (fast, cheap) and decides which runner label each
-  # heavy gate should use. Fork PRs short-circuit to hosted before any network
+  # Runs on ubuntu-latest (fast, cheap) and decides which runner label every
+  # gate should use. Fork PRs short-circuit to hosted before any network
   # call. When local-pool-capacity-url is empty or the capacity endpoint says
   # the pool is busy, all gates fall back to inputs.runner automatically; there
   # is no separate no-op branch for the empty-URL case.
@@ -218,14 +219,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      build_label: ${{ steps.pick.outputs.build_label }}
-      test_label: ${{ steps.pick.outputs.test_label }}
-      extra_targets_label: ${{ steps.pick.outputs.extra_targets_label }}
-      # on_pool: the gates were routed to the self-hosted pool, so a hosted
-      # fallback is meaningful. extra_targets_enabled: the run configured any
-      # extra targets. Both name the intent the gnarly fallback if: needs, so it
-      # reads as "always, was on the pool, the pool did not pass".
-      on_pool: ${{ steps.pick.outputs.on_pool }}
+      runner_label: ${{ steps.pick.outputs.runner_label }}
       extra_targets_enabled: ${{ inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]' }}
     steps:
       - name: Pick runner labels
@@ -266,259 +260,221 @@ jobs:
             fi
           fi
 
-          # on_pool is true only when a pool label was actually chosen, so the
-          # hosted fallback never re-runs a gate that already ran on hosted.
-          if [[ "${label}" != "${HOSTED_LABEL}" ]]; then
-            on_pool=true
-          else
-            on_pool=false
-          fi
-
-          {
-            printf 'build_label=%s\n' "${label}"
-            printf 'test_label=%s\n' "${label}"
-            printf 'extra_targets_label=%s\n' "${label}"
-            printf 'on_pool=%s\n' "${on_pool}"
-          } >> "${GITHUB_OUTPUT}"
+          printf 'runner_label=%s\n' "${label}" >> "${GITHUB_OUTPUT}"
 
   # ── Build ──────────────────────────────────────────────────────────────────
-  # build-pool: first attempt on the planned runner (pool or hosted).
-  # build-hosted: hosted-only fallback that runs when build-pool fails or is
-  # cancelled (a pool runner that disconnects mid-job ends as cancelled).
-  # build: tiny aggregator that is the single required status check for Build.
-  build-pool:
-    name: Build (pool attempt)
-    needs: plan-runners
-    uses: ./.github/workflows/_ci-gate.yml
-    with:
-      gate: build
-      runner: ${{ needs.plan-runners.outputs.build_label }}
-      xcode-version: ${{ inputs.xcode-version }}
-      cache-profile: ${{ inputs.cache-profile }}
-      cache-version: ${{ inputs.cache-version }}
-      extra-cache-paths: ${{ inputs.extra-cache-paths }}
-      brew-packages: ${{ inputs.brew-packages }}
-      import-signing-cert: ${{ inputs.import-signing-cert }}
-      install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
-      signing-identity-name: ${{ inputs.signing-identity-name }}
-      apple-team-id: ${{ inputs.apple-team-id }}
-      setup-target: ${{ inputs.setup-target }}
-      make-args: ${{ inputs.make-args }}
-      timeout-minutes: ${{ inputs.timeout-minutes }}
-      fetch-depth: ${{ inputs.fetch-depth }}
-    secrets: inherit
-
-  build-hosted:
-    name: Build (hosted fallback)
-    needs: [plan-runners, build-pool]
-    # always() defeats GitHub's implicit skip so the fallback runs when the pool
-    # attempt fails; on_pool gates it to pool-routed runs.
-    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && (needs.build-pool.result == 'failure' || needs.build-pool.result == 'cancelled') }}
-    uses: ./.github/workflows/_ci-gate.yml
-    with:
-      gate: build
-      runner: ${{ inputs.runner }}
-      xcode-version: ${{ inputs.xcode-version }}
-      cache-profile: ${{ inputs.cache-profile }}
-      cache-version: ${{ inputs.cache-version }}
-      extra-cache-paths: ${{ inputs.extra-cache-paths }}
-      brew-packages: ${{ inputs.brew-packages }}
-      import-signing-cert: ${{ inputs.import-signing-cert }}
-      install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
-      signing-identity-name: ${{ inputs.signing-identity-name }}
-      apple-team-id: ${{ inputs.apple-team-id }}
-      setup-target: ${{ inputs.setup-target }}
-      make-args: ${{ inputs.make-args }}
-      timeout-minutes: ${{ inputs.timeout-minutes }}
-      fetch-depth: ${{ inputs.fetch-depth }}
-    secrets: inherit
-
   build:
     name: Build
-    if: ${{ always() }}
-    needs: [build-pool, build-hosted]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    needs: plan-runners
+    runs-on: ${{ needs.plan-runners.outputs.runner_label }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
+    env:
+      SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
     steps:
-      - name: Check build result
-        env:
-          POOL_RESULT: ${{ needs.build-pool.result }}
-          HOSTED_RESULT: ${{ needs.build-hosted.result }}
-        run: |
-          if [[ "${POOL_RESULT}" == "success" ]] || [[ "${HOSTED_RESULT}" == "success" ]]; then
-            printf 'Build passed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}"
-          elif [[ "${POOL_RESULT}" == "skipped" ]] && [[ "${HOSTED_RESULT}" == "skipped" ]]; then
-            printf 'Build skipped (pool=skipped, hosted=skipped); plan-runners or an upstream step failed\n' >&2
-            exit 1
-          else
-            printf 'Build failed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}" >&2
-            exit 1
-          fi
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: ${{ inputs.fetch-depth }}
+
+      - name: Checkout swift-makefile helpers
+        if: github.repository != 'agoodkind/swift-makefile'
+        uses: actions/checkout@v7
+        with:
+          repository: agoodkind/swift-makefile
+          ref: main
+          path: .swift-makefile
+          fetch-depth: 1
+
+      - name: Run CI gate (swift-makefile)
+        if: github.repository == 'agoodkind/swift-makefile'
+        uses: ./.github/actions/ci-gate
+        with:
+          gate: build
+          xcode-version: ${{ inputs.xcode-version }}
+          cache-profile: ${{ inputs.cache-profile }}
+          cache-version: ${{ inputs.cache-version }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+          brew-packages: ${{ inputs.brew-packages }}
+          import-signing-cert: ${{ inputs.import-signing-cert }}
+          install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
+          signing-identity-name: ${{ inputs.signing-identity-name }}
+          apple-team-id: ${{ inputs.apple-team-id }}
+          setup-target: ${{ inputs.setup-target }}
+          make-args: ${{ inputs.make-args }}
+          apple-developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          apple-developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          apple-developer-id-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
+          apple-notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          apple-notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          apple-notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+
+      - name: Run CI gate
+        if: github.repository != 'agoodkind/swift-makefile'
+        uses: agoodkind/swift-makefile/.github/actions/ci-gate@main
+        with:
+          gate: build
+          xcode-version: ${{ inputs.xcode-version }}
+          cache-profile: ${{ inputs.cache-profile }}
+          cache-version: ${{ inputs.cache-version }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+          brew-packages: ${{ inputs.brew-packages }}
+          import-signing-cert: ${{ inputs.import-signing-cert }}
+          install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
+          signing-identity-name: ${{ inputs.signing-identity-name }}
+          apple-team-id: ${{ inputs.apple-team-id }}
+          setup-target: ${{ inputs.setup-target }}
+          make-args: ${{ inputs.make-args }}
+          apple-developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          apple-developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          apple-developer-id-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
+          apple-notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          apple-notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          apple-notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
 
   # ── Test ───────────────────────────────────────────────────────────────────
-  # test-pool: first attempt on the planned runner (pool or hosted).
-  # test-hosted: hosted-only fallback that runs when test-pool fails or is
-  # cancelled (a pool runner that disconnects mid-job ends as cancelled).
-  # test: tiny aggregator that is the single required status check for Test.
-  test-pool:
-    name: Test (pool attempt)
-    needs: plan-runners
-    uses: ./.github/workflows/_ci-gate.yml
-    with:
-      gate: test
-      runner: ${{ needs.plan-runners.outputs.test_label }}
-      xcode-version: ${{ inputs.xcode-version }}
-      cache-profile: ${{ inputs.cache-profile }}
-      cache-version: ${{ inputs.cache-version }}
-      extra-cache-paths: ${{ inputs.extra-cache-paths }}
-      brew-packages: ${{ inputs.brew-packages }}
-      import-signing-cert: ${{ inputs.import-signing-cert }}
-      install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
-      signing-identity-name: ${{ inputs.signing-identity-name }}
-      apple-team-id: ${{ inputs.apple-team-id }}
-      setup-target: ${{ inputs.setup-target }}
-      make-args: ${{ inputs.make-args }}
-      timeout-minutes: ${{ inputs.timeout-minutes }}
-      fetch-depth: ${{ inputs.fetch-depth }}
-    secrets: inherit
-
-  test-hosted:
-    name: Test (hosted fallback)
-    needs: [plan-runners, test-pool]
-    # See the build-hosted note: always() + on_pool + a failed pool attempt.
-    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && (needs.test-pool.result == 'failure' || needs.test-pool.result == 'cancelled') }}
-    uses: ./.github/workflows/_ci-gate.yml
-    with:
-      gate: test
-      runner: ${{ inputs.runner }}
-      xcode-version: ${{ inputs.xcode-version }}
-      cache-profile: ${{ inputs.cache-profile }}
-      cache-version: ${{ inputs.cache-version }}
-      extra-cache-paths: ${{ inputs.extra-cache-paths }}
-      brew-packages: ${{ inputs.brew-packages }}
-      import-signing-cert: ${{ inputs.import-signing-cert }}
-      install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
-      signing-identity-name: ${{ inputs.signing-identity-name }}
-      apple-team-id: ${{ inputs.apple-team-id }}
-      setup-target: ${{ inputs.setup-target }}
-      make-args: ${{ inputs.make-args }}
-      timeout-minutes: ${{ inputs.timeout-minutes }}
-      fetch-depth: ${{ inputs.fetch-depth }}
-    secrets: inherit
-
   test:
     name: Test
-    if: ${{ always() }}
-    needs: [test-pool, test-hosted]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    needs: plan-runners
+    runs-on: ${{ needs.plan-runners.outputs.runner_label }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
+    env:
+      SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
     steps:
-      - name: Check test result
-        env:
-          POOL_RESULT: ${{ needs.test-pool.result }}
-          HOSTED_RESULT: ${{ needs.test-hosted.result }}
-        run: |
-          if [[ "${POOL_RESULT}" == "success" ]] || [[ "${HOSTED_RESULT}" == "success" ]]; then
-            printf 'Test passed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}"
-          elif [[ "${POOL_RESULT}" == "skipped" ]] && [[ "${HOSTED_RESULT}" == "skipped" ]]; then
-            printf 'Test skipped (pool=skipped, hosted=skipped); plan-runners or an upstream step failed\n' >&2
-            exit 1
-          else
-            printf 'Test failed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}" >&2
-            exit 1
-          fi
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: ${{ inputs.fetch-depth }}
+
+      - name: Checkout swift-makefile helpers
+        if: github.repository != 'agoodkind/swift-makefile'
+        uses: actions/checkout@v7
+        with:
+          repository: agoodkind/swift-makefile
+          ref: main
+          path: .swift-makefile
+          fetch-depth: 1
+
+      - name: Run CI gate (swift-makefile)
+        if: github.repository == 'agoodkind/swift-makefile'
+        uses: ./.github/actions/ci-gate
+        with:
+          gate: test
+          xcode-version: ${{ inputs.xcode-version }}
+          cache-profile: ${{ inputs.cache-profile }}
+          cache-version: ${{ inputs.cache-version }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+          brew-packages: ${{ inputs.brew-packages }}
+          import-signing-cert: ${{ inputs.import-signing-cert }}
+          install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
+          signing-identity-name: ${{ inputs.signing-identity-name }}
+          apple-team-id: ${{ inputs.apple-team-id }}
+          setup-target: ${{ inputs.setup-target }}
+          make-args: ${{ inputs.make-args }}
+          apple-developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          apple-developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          apple-developer-id-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
+          apple-notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          apple-notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          apple-notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+
+      - name: Run CI gate
+        if: github.repository != 'agoodkind/swift-makefile'
+        uses: agoodkind/swift-makefile/.github/actions/ci-gate@main
+        with:
+          gate: test
+          xcode-version: ${{ inputs.xcode-version }}
+          cache-profile: ${{ inputs.cache-profile }}
+          cache-version: ${{ inputs.cache-version }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+          brew-packages: ${{ inputs.brew-packages }}
+          import-signing-cert: ${{ inputs.import-signing-cert }}
+          install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
+          signing-identity-name: ${{ inputs.signing-identity-name }}
+          apple-team-id: ${{ inputs.apple-team-id }}
+          setup-target: ${{ inputs.setup-target }}
+          make-args: ${{ inputs.make-args }}
+          apple-developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          apple-developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          apple-developer-id-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
+          apple-notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          apple-notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          apple-notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
 
   # ── Extra Targets ──────────────────────────────────────────────────────────
-  # extra-targets-pool: first attempt on the planned runner (pool or hosted).
-  # extra-targets-hosted: hosted-only fallback that runs when the pool attempt
-  # fails or is cancelled (a pool runner that disconnects ends as cancelled).
-  # extra-targets: tiny aggregator that is the single required status check.
-  # Both attempts skip when there are no bespoke targets to run.
-  extra-targets-pool:
-    name: Extra Targets (pool attempt)
-    # always() defeats the implicit skip that fires when a needed job uses
-    # if: always() (the build/test aggregates do); the explicit result checks
-    # keep this gated on every upstream gate actually succeeding.
-    if: ${{ always() && needs.plan-runners.result == 'success' && needs.quality.result == 'success' && needs.build.result == 'success' && needs.test.result == 'success' && needs.plan-runners.outputs.extra_targets_enabled == 'true' }}
-    needs: [plan-runners, quality, build, test]
-    uses: ./.github/workflows/_ci-gate.yml
-    with:
-      gate: extra-targets
-      runner: ${{ needs.plan-runners.outputs.extra_targets_label }}
-      extra-targets: ${{ inputs.extra-targets }}
-      targets: ${{ inputs.targets }}
-      xcode-version: ${{ inputs.xcode-version }}
-      cache-profile: ${{ inputs.cache-profile }}
-      cache-version: ${{ inputs.cache-version }}
-      extra-cache-paths: ${{ inputs.extra-cache-paths }}
-      brew-packages: ${{ inputs.brew-packages }}
-      import-signing-cert: ${{ inputs.import-signing-cert }}
-      install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
-      signing-identity-name: ${{ inputs.signing-identity-name }}
-      apple-team-id: ${{ inputs.apple-team-id }}
-      setup-target: ${{ inputs.setup-target }}
-      make-args: ${{ inputs.make-args }}
-      timeout-minutes: ${{ inputs.timeout-minutes }}
-      fetch-depth: ${{ inputs.fetch-depth }}
-    secrets: inherit
-
-  extra-targets-hosted:
-    name: Extra Targets (hosted fallback)
-    needs: [plan-runners, extra-targets-pool]
-    # See the build-hosted note, plus extra_targets_enabled so it only runs when
-    # extra targets were configured.
-    if: ${{ always() && needs.plan-runners.outputs.extra_targets_enabled == 'true' && needs.plan-runners.outputs.on_pool == 'true' && (needs.extra-targets-pool.result == 'failure' || needs.extra-targets-pool.result == 'cancelled') }}
-    uses: ./.github/workflows/_ci-gate.yml
-    with:
-      gate: extra-targets
-      runner: ${{ inputs.runner }}
-      extra-targets: ${{ inputs.extra-targets }}
-      targets: ${{ inputs.targets }}
-      xcode-version: ${{ inputs.xcode-version }}
-      cache-profile: ${{ inputs.cache-profile }}
-      cache-version: ${{ inputs.cache-version }}
-      extra-cache-paths: ${{ inputs.extra-cache-paths }}
-      brew-packages: ${{ inputs.brew-packages }}
-      import-signing-cert: ${{ inputs.import-signing-cert }}
-      install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
-      signing-identity-name: ${{ inputs.signing-identity-name }}
-      apple-team-id: ${{ inputs.apple-team-id }}
-      setup-target: ${{ inputs.setup-target }}
-      make-args: ${{ inputs.make-args }}
-      timeout-minutes: ${{ inputs.timeout-minutes }}
-      fetch-depth: ${{ inputs.fetch-depth }}
-    secrets: inherit
-
   extra-targets:
     name: Extra Targets
-    if: ${{ always() }}
-    needs: [extra-targets-pool, extra-targets-hosted]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # always() keeps the explicit upstream result checks in control instead of
+    # letting an implicit skip hide which upstream gate failed.
+    if: ${{ always() && needs.plan-runners.result == 'success' && needs.quality.result == 'success' && needs.build.result == 'success' && needs.test.result == 'success' && needs.plan-runners.outputs.extra_targets_enabled == 'true' }}
+    needs: [plan-runners, quality, build, test]
+    runs-on: ${{ needs.plan-runners.outputs.runner_label }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
+    env:
+      SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
     steps:
-      - name: Check extra-targets result
-        env:
-          POOL_RESULT: ${{ needs.extra-targets-pool.result }}
-          HOSTED_RESULT: ${{ needs.extra-targets-hosted.result }}
-          # True when bespoke targets are configured, so both attempts skipping
-          # means an upstream gate failed rather than a legitimate no-op.
-          HAS_EXTRA: ${{ inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]' }}
-        run: |
-          if [[ "${POOL_RESULT}" == "success" ]] || [[ "${HOSTED_RESULT}" == "success" ]]; then
-            printf 'Extra targets passed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}"
-          elif [[ "${POOL_RESULT}" == "skipped" ]] && [[ "${HOSTED_RESULT}" == "skipped" ]]; then
-            if [[ "${HAS_EXTRA}" == "true" ]]; then
-              printf 'Extra targets were configured but both attempts skipped; an upstream gate failed\n' >&2
-              exit 1
-            fi
-            printf 'Extra targets skipped (no bespoke targets configured)\n'
-          else
-            printf 'Extra targets failed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}" >&2
-            exit 1
-          fi
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: ${{ inputs.fetch-depth }}
+
+      - name: Checkout swift-makefile helpers
+        if: github.repository != 'agoodkind/swift-makefile'
+        uses: actions/checkout@v7
+        with:
+          repository: agoodkind/swift-makefile
+          ref: main
+          path: .swift-makefile
+          fetch-depth: 1
+
+      - name: Run CI gate (swift-makefile)
+        if: github.repository == 'agoodkind/swift-makefile'
+        uses: ./.github/actions/ci-gate
+        with:
+          gate: extra-targets
+          extra-targets: ${{ inputs.extra-targets }}
+          targets: ${{ inputs.targets }}
+          xcode-version: ${{ inputs.xcode-version }}
+          cache-profile: ${{ inputs.cache-profile }}
+          cache-version: ${{ inputs.cache-version }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+          brew-packages: ${{ inputs.brew-packages }}
+          import-signing-cert: ${{ inputs.import-signing-cert }}
+          install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
+          signing-identity-name: ${{ inputs.signing-identity-name }}
+          apple-team-id: ${{ inputs.apple-team-id }}
+          setup-target: ${{ inputs.setup-target }}
+          make-args: ${{ inputs.make-args }}
+          apple-developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          apple-developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          apple-developer-id-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
+          apple-notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          apple-notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          apple-notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+
+      - name: Run CI gate
+        if: github.repository != 'agoodkind/swift-makefile'
+        uses: agoodkind/swift-makefile/.github/actions/ci-gate@main
+        with:
+          gate: extra-targets
+          extra-targets: ${{ inputs.extra-targets }}
+          targets: ${{ inputs.targets }}
+          xcode-version: ${{ inputs.xcode-version }}
+          cache-profile: ${{ inputs.cache-profile }}
+          cache-version: ${{ inputs.cache-version }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+          brew-packages: ${{ inputs.brew-packages }}
+          import-signing-cert: ${{ inputs.import-signing-cert }}
+          install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
+          signing-identity-name: ${{ inputs.signing-identity-name }}
+          apple-team-id: ${{ inputs.apple-team-id }}
+          setup-target: ${{ inputs.setup-target }}
+          make-args: ${{ inputs.make-args }}
+          apple-developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          apple-developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          apple-developer-id-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
+          apple-notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          apple-notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          apple-notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
