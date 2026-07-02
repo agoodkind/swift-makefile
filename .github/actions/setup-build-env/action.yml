@@ -151,15 +151,16 @@ runs:
             # @rpath into that bundle and aborts on launch (SIGABRT, exit 134). The key
             # already folds the bundle path in to prevent that, so this is the safety
             # net: if a cached binary ever cannot launch, discard it and rebuild rather
-            # than aborting the whole run. An exit code at or above 128 is death by
-            # signal (the dyld abort); a normal non-zero exit means it launched and only
-            # rejected the probe args, which is fine.
+            # than aborting the whole run. `swift-mk --help` is an ArgumentParser
+            # built-in that exits 0 whenever the process launches, so treat ANY non-zero
+            # (a dyld abort, an exec-format or arch mismatch, or any launch failure) as a
+            # failed probe and rebuild.
             set +e
             "${bin}" --help >/dev/null 2>&1
             probe_rc=$?
             set -e
-            if [ "${probe_rc}" -ge 128 ]; then
-                echo "cached swift-mk aborted on launch (exit ${probe_rc}); rebuilding against the active toolchain"
+            if [ "${probe_rc}" -ne 0 ]; then
+                echo "cached swift-mk failed to launch (exit ${probe_rc}); rebuilding against the active toolchain"
                 build_engine
             fi
         else
