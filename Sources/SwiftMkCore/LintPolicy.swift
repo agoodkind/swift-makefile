@@ -303,7 +303,7 @@ enum LintPolicy {
   /// `LINT_LINE_RANGES`. A compile error in the coverage build, or a periphery hard
   /// failure, fails the gate loud before any baseline comparison, the same as the
   /// make path.
-  static func deadcode(context: PathContext, coverage: DeadcodeCoverageBuild?) -> Bool {
+  static func deadcode(context: PathContext) -> Bool {
     Output.debug("lint-deadcode: running periphery scan")
     Capture.ensureMakeDir()
     let raw = ".make/periphery.raw.out"
@@ -317,7 +317,7 @@ enum LintPolicy {
     GateStatus.last = result.status
     Capture.write(DeadcodeScan.packageScanLabel + "\n" + result.combined, to: raw)
     Output.log(result.combined.trimmingCharacters(in: .newlines))
-    let indexStore = DeadcodeScan.appendXcodeFindings(rawPath: raw, coverage: coverage)
+    let indexStore = DeadcodeScan.appendXcodeFindings(rawPath: raw)
     Capture.extractFindings(
       rawPath: raw,
       findingsPath: findingsPath,
@@ -332,7 +332,7 @@ enum LintPolicy {
     }
     // Unbypassable coverage check, shared with the make path: every owned Swift source
     // must be covered by the package scan or the Xcode index, so own code in an Xcode
-    // target with no coverage build is not silently unscanned.
+    // target with no Xcode scan is not silently unscanned.
     if case .incomplete(let message) = DeadcodeCoverageCompleteness.assert(
       xcodeIndexStorePath: indexStore, context: context)
     {
@@ -436,7 +436,7 @@ extension Lint {
     {
       failed.append("lint-complexity")
     }
-    if !LintPolicy.deadcode(context: context, coverage: hooks.deadcodeCoverage) {
+    if !LintPolicy.deadcode(context: context) {
       failed.append("lint-deadcode")
     }
     if !LintPolicy.swiftcheck(sources: sources, context: context) {

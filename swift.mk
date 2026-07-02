@@ -158,9 +158,11 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/Scope.swift \
 	Sources/SwiftMkCore/Swiftcheck.swift \
 	Sources/SwiftMkCore/DeadcodeScan.swift \
+	Sources/SwiftMkCore/DeadcodeScan+Coverage.swift \
 	Sources/SwiftMkCore/DeadcodeScan+Witness.swift \
 	Sources/SwiftMkCore/Lint+DeadcodeVerdict.swift \
 	Sources/SwiftMkCore/DeadcodeCoverageCompleteness.swift \
+	Sources/SwiftMkCore/DeadcodeCoverageMatrix.swift \
 	Sources/SwiftMkCore/DeadcodeBuildConfig.swift \
 	Sources/SwiftMkCore/WitnessFilter.swift \
 	Sources/SwiftMkCore/BuildCache.swift \
@@ -171,14 +173,16 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/Notarize.swift \
 	Sources/SwiftMkCore/SigningBuildConfig.swift \
 	Sources/SwiftMkCore/SigningVerification.swift \
+	Sources/SwiftMkCore/ToolchainPrebuild.swift \
 	Sources/SwiftMkCore/Toolchain.swift \
+	Sources/SwiftMkCore/Toolchain+Generate.swift \
+	Sources/SwiftMkCore/Toolchain+Coverage.swift \
 	Sources/SwiftMkCore/Toolchain+GatedCompile.swift \
 	Sources/SwiftMkCore/GatedBuild.swift \
 	Sources/SwiftMkCore/LintPolicy.swift \
 	Sources/SwiftMkCore/LintResources.swift \
 	Sources/SwiftMkCore/GeneratedFiles.swift \
 	Sources/SwiftMkCore/XcconfigValues.swift \
-	Sources/SwiftMkCore/DeadcodeCoverageAuthorization.swift \
 	Sources/SwiftMkCore/Resources/swiftlint.yml \
 	Sources/SwiftMkCore/Resources/swift-format.json \
 	Sources/SwiftMkCore/Resources/periphery.yml \
@@ -213,7 +217,10 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/WitnessFilterTests.swift \
 	Tests/SwiftMkCoreTests/SigningBuildConfigTests.swift \
 	Tests/SwiftMkCoreTests/SigningVerificationTests.swift \
+	Tests/SwiftMkCoreTests/ToolchainPrebuildTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainTests.swift \
+	Tests/SwiftMkCoreTests/ToolchainCoverageTests.swift \
+	Tests/SwiftMkCoreTests/ToolchainBuildCoverageTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainReceiptTests.swift \
 	Tests/SwiftMkCoreTests/GatedBuildHarness.swift \
 	Tests/SwiftMkCoreTests/GatedBuildTests.swift \
@@ -239,6 +246,8 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/DeadcodeScanTests.swift \
 	Tests/SwiftMkCoreTests/DeadcodeVerdictTests.swift \
 	Tests/SwiftMkCoreTests/DeadcodeCoverageCompletenessTests.swift \
+	Tests/SwiftMkCoreTests/DeadcodeCoverageMatrixTests.swift \
+	Tests/SwiftMkCoreTests/EnvTests.swift \
 	Tests/SwiftMkCoreTests/FindingsSourceTests.swift \
 	Tests/SwiftMkCoreTests/FindingTests.swift \
 	Tests/SwiftMkCoreTests/LoggingTests.swift \
@@ -489,13 +498,14 @@ BASELINE_UPDATE_MODE ?= sync
 SWIFT_XCODE_SCHEME ?=
 SWIFT_XCODE_GENERATOR ?= tuist
 SWIFT_XCODE_CONFIGURATION ?= Debug
-# The dead-code coverage build runs in Debug so ONLY_ACTIVE_ARCH defaults to YES.
-# A single-arch build avoids the cross-arch module race that a universal
-# (Release) build-for-testing hits on a multi-module test target.
+# The engine coverage xcconfig sets ONLY_ACTIVE_ARCH=YES so the dead-code
+# coverage build avoids the cross-arch module race that a universal
+# build-for-testing hits on a multi-module test target.
 SWIFT_XCODE_COVERAGE_CONFIGURATION ?= Debug
 SWIFT_XCODE_WORKSPACE ?=
 SWIFT_XCODE_PROJECT ?=
 SWIFT_XCODE_BUILD_SETTINGS ?=
+SWIFT_XCODE_PREBUILD_CMD ?=
 ifneq ($(strip $(SWIFT_XCODE_SCHEME)),)
 SWIFT_XCODE_CONTAINER_ARG := $(if $(filter xcodegen,$(SWIFT_XCODE_GENERATOR)),--project $(SWIFT_XCODE_PROJECT),--workspace $(SWIFT_XCODE_WORKSPACE))
 # Generate installs external dependencies first; Tuist cannot generate a project
@@ -515,14 +525,9 @@ SWIFT_TEST_CMD ?= "$(SWIFT_MK_BIN)" toolchain swiftpm test
 else
 SWIFT_TEST_CMD ?= "$(SWIFT_MK_BIN)" toolchain test --generator $(SWIFT_XCODE_GENERATOR) $(SWIFT_XCODE_CONTAINER_ARG) --scheme $(SWIFT_XCODE_SCHEME) --configuration Debug --derived-data-path $(SWIFT_MK_DERIVED_DATA) $(SWIFT_MK_XCODEBUILD_ARGS)
 endif
-SWIFT_DEADCODE_BUILD_CMD ?= rm -rf "$(SWIFT_MK_DERIVED_DATA)" && "$(SWIFT_MK_BIN)" toolchain install --generator $(SWIFT_XCODE_GENERATOR) && "$(SWIFT_MK_BIN)" toolchain generate --generator $(SWIFT_XCODE_GENERATOR) && "$(SWIFT_MK_BIN)" toolchain build-for-testing --generator $(SWIFT_XCODE_GENERATOR) $(SWIFT_XCODE_CONTAINER_ARG) --scheme $(SWIFT_XCODE_SCHEME) --configuration $(SWIFT_XCODE_COVERAGE_CONFIGURATION) --derived-data-path $(SWIFT_MK_DERIVED_DATA) COMPILER_INDEX_STORE_ENABLE=YES ONLY_ACTIVE_ARCH=YES $(SWIFT_XCODE_BUILD_SETTINGS) $(SWIFT_MK_XCODEBUILD_NO_CACHE_ARGS)
 endif
 
 SWIFT_BUILD_CMD ?= "$(SWIFT_MK_BIN)" toolchain swiftpm build
-# The build the dead-code gate runs to refresh the index store. Defaults to
-# SWIFT_BUILD_CMD; set it when SWIFT_BUILD_CMD needs a target argument or builds a
-# single platform, so the gate has a target-free build that covers every platform.
-SWIFT_DEADCODE_BUILD_CMD ?=
 SWIFT_TEST_CMD ?= "$(SWIFT_MK_BIN)" toolchain swiftpm test
 SWIFT_RUN_CMD ?=
 SWIFT_GENERATE_CMD ?=
@@ -602,6 +607,10 @@ export SWIFT_MK_XCODE_CACHE_PREFIX_MAP
 export SWIFT_MK_XCODE_CACHE_DIAGNOSTICS
 export SWIFT_MK_XCODEBUILD_ARGS
 export SWIFT_MK_XCODEBUILD_NO_CACHE_ARGS
+export SWIFT_XCODE_GENERATOR
+export SWIFT_XCODE_COVERAGE_CONFIGURATION
+export SWIFT_XCODE_BUILD_SETTINGS
+export SWIFT_XCODE_PREBUILD_CMD
 export SWIFT_MK_DERIVED_DATA
 export SWIFT_MK_SWIFTPM_CACHE_ARGS
 export LINT_GATES
@@ -617,7 +626,6 @@ export BYPASS_CONFIRM
 export BYPASS_TOKEN_CMD
 export SWIFT_MK_GATE_TOKEN_CMD
 export SWIFT_BUILD_CMD
-export SWIFT_DEADCODE_BUILD_CMD
 # Signing context the swift-mk binary reads when it owns a build (the signing
 # xcconfig, the dead-code coverage build). Consumers set these as plain make
 # variables, so without the export the gate processes never see them and a CI
@@ -631,12 +639,11 @@ export SWIFT_MK_SIGN_TEAM
 export SWIFT_MK_SIGN_STYLE
 export SWIFT_MK_REQUIRE_SIGNING
 export SWIFT_MK_VERIFY_XCCONFIG
-# A consumer builds via Xcode when it declares a scheme or a dead-code coverage
-# build; a plain SwiftPM package declares neither. The dead-code gate and the build
-# chokepoint key off this one flag rather than guessing from on-disk project files,
-# so a stray generated .xcodeproj/.xcworkspace (a developer opening Xcode, a manual
-# tuist run) never changes behavior.
-SWIFT_MK_XCODE_BUILD := $(if $(strip $(SWIFT_XCODE_SCHEME))$(strip $(SWIFT_DEADCODE_BUILD_CMD)),1,)
+# A consumer builds via Xcode when it declares a scheme or Xcode container; a plain
+# SwiftPM package declares neither. The dead-code gate and the build chokepoint key
+# off this one flag rather than guessing from on-disk project files, so a stray
+# generated .xcodeproj/.xcworkspace never changes behavior.
+SWIFT_MK_XCODE_BUILD := $(if $(strip $(SWIFT_XCODE_SCHEME))$(strip $(SWIFT_XCODE_WORKSPACE))$(strip $(SWIFT_XCODE_PROJECT)),1,)
 export SWIFT_MK_XCODE_BUILD
 export SWIFT_TEST_CMD
 export SWIFT_RUN_CMD

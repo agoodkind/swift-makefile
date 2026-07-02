@@ -229,19 +229,14 @@ public enum Toolchain {
     case .tuist:
       return Shell.runForwardingOutput("tuist", tuistTestArguments(request))
     case .xcodegen:
-      return Shell.runForwardingOutput(
-        "xcodebuild", xcodebuildArguments(request, action: "test"))
+      return runXcodebuildForwarding(request, actions: ["test"], environment: [:])
     }
   }
 
-  /// Build-for-testing the scheme through the make path, the coverage build a
-  /// consumer's `SWIFT_DEADCODE_BUILD_CMD` runs as `swift-mk toolchain
-  /// build-for-testing`. It is a compile surface, so it refuses unless this process
-  /// is inside a swift-mk gated make flow: the make dead-code gate marks the gate
-  /// proof first, so the coverage subprocess has a live make/swift-mk ancestor and
-  /// passes, while a direct `swift-mk toolchain build-for-testing` from a shell with
-  /// no gate ancestor is refused. The in-process API path uses the
-  /// `buildForTesting(_:authorization:environment:)` overload instead.
+  /// Build-for-testing the scheme through the public CLI. It is a compile surface,
+  /// so it refuses unless this process is inside a swift-mk gated make flow. The
+  /// dead-code gate no longer shells this command; it calls `buildCoverage(_:)`
+  /// directly so the engine owns the full coverage matrix.
   @discardableResult
   public static func buildForTesting(_ request: Request) -> Int32 {
     if let refusal = GateProof.refusal(entry: "toolchain build-for-testing") {
@@ -265,6 +260,9 @@ public enum Toolchain {
       return refusal
     }
     let actions = clean ? ["clean", "build"] : ["build"]
+    guard ToolchainPrebuild.run() else {
+      return prebuildFailureStatus
+    }
     return Shell.runWritingOutput(
       "xcodebuild",
       xcodebuildArguments(request, actions: actions),
@@ -310,6 +308,21 @@ public enum Toolchain {
     return Shell.run("xcodebuild", arguments)
   }
 
+  /// The `xcodebuild -showdestinations` transcript for a scheme, naming an explicit
+  /// container so xcodebuild never auto-discovers. The dead-code coverage build reads
+  /// the destinations a scheme can build from this, resolved through the consumer's
+  /// xcconfigs the way a real build resolves them, rather than reconstructing platforms
+  /// from the raw project file where a dynamically resolved `SUPPORTED_PLATFORMS` reads
+  /// as absent.
+  public static func showDestinations(
+    container: String, isWorkspace: Bool, scheme: String
+  ) -> Shell.Result {
+    let containerFlag = isWorkspace ? "-workspace" : "-project"
+    return Shell.run(
+      "xcodebuild",
+      ["-showdestinations", containerFlag, container, "-scheme", scheme])
+  }
+
   /// Download an on-demand Xcode component via xcodebuild. The component name
   /// is caller-supplied data, never engine policy; routed here so the consumer
   /// does not name xcodebuild itself.
@@ -344,13 +357,6 @@ public enum Toolchain {
       args.append(contentsOf: settingArguments(request.extraSettings))
     }
     return args
-  }
-
-  /// xcodebuild argument vector naming an explicit container, for a single action.
-  static func xcodebuildArguments(
-    _ request: Request, action: String, resultBundleDirectory: String? = nil
-  ) -> [String] {
-    xcodebuildArguments(request, actions: [action], resultBundleDirectory: resultBundleDirectory)
   }
 
   /// xcodebuild argument vector naming an explicit container, for one or more
@@ -523,114 +529,6 @@ extension Toolchain {
   }
 }
 
-// MARK: - Xcode-app DerivedData redirect
-
-extension Toolchain {
-  /// Generate the project (and, for Tuist, the workspace). On success, point the
-  /// generated container's Xcode-app DerivedData at the same per-worktree
-  /// `.derived-data` the CLI uses, so opening the worktree in Xcode.app stops writing
-  /// to the global `~/Library/.../DerivedData/<Name>-<hash>` pile.
-  @discardableResult
-  public static func generate(_ generator: Generator, extraArguments: [String] = []) -> Int32 {
-    let status: Int32
-    switch generator {
-    case .tuist:
-      Output.info("toolchain: tuist generate")
-      status = Shell.runForwardingOutput("tuist", ["generate", "--no-open"] + extraArguments)
-    case .xcodegen:
-      Output.info("toolchain: xcodegen generate")
-      status = Shell.runForwardingOutput("xcodegen", ["generate"] + extraArguments)
-    }
-    if status == 0 {
-      redirectGuiDerivedData(generator: generator)
-    }
-    return status
-  }
-
-  /// Point the generated container's Xcode-app DerivedData at the same per-worktree
-  /// `.derived-data` the CLI uses, via an absolute path so the relative-base ambiguity
-  /// between Xcode versions cannot misplace it. Best-effort: a write failure only means
-  /// Xcode keeps its default location, so it never fails generation.
-  static func redirectGuiDerivedData(generator: Generator) {
-    let cwd = FileManager.default.currentDirectoryPath
-    guard let workspace = generatedWorkspacePath(generator: generator, in: cwd) else {
-      Output.log("toolchain: no generated workspace found to redirect DerivedData")
-      return
-    }
-    let derivedData = resolvedDerivedDataPath()
-    do {
-      try writeDerivedDataRedirect(workspace: workspace, derivedDataPath: derivedData)
-      Output.info("toolchain: Xcode DerivedData -> \(derivedData)")
-    } catch {
-      Output.log("toolchain: could not redirect Xcode DerivedData: \(error)")
-    }
-  }
-
-  /// Write the per-user `WorkspaceSettings.xcsettings` that pins the container's Xcode
-  /// DerivedData to `derivedDataPath`. Separated from env/cwd lookup so it is testable.
-  static func writeDerivedDataRedirect(workspace: String, derivedDataPath: String) throws {
-    let settingsDir =
-      (workspace as NSString)
-      .appendingPathComponent("xcuserdata")
-      + "/\(NSUserName()).xcuserdatad"
-    let settingsPath =
-      (settingsDir as NSString)
-      .appendingPathComponent("WorkspaceSettings.xcsettings")
-    try FileManager.default.createDirectory(
-      atPath: settingsDir, withIntermediateDirectories: true)
-    let data = try PropertyListSerialization.data(
-      fromPropertyList: derivedDataRedirectSettings(derivedDataPath: derivedDataPath),
-      format: .xml,
-      options: 0)
-    try data.write(to: URL(fileURLWithPath: settingsPath), options: .atomic)
-  }
-
-  /// The plist keys Xcode reads for a custom DerivedData location. `AbsolutePath`
-  /// avoids the relative-base ambiguity between Xcode versions.
-  static func derivedDataRedirectSettings(derivedDataPath: String) -> [String: String] {
-    [
-      "DerivedDataLocationStyle": "AbsolutePath",
-      "DerivedDataCustomLocation": derivedDataPath,
-      "BuildLocationStyle": "UseAppPreferences",
-    ]
-  }
-
-  /// The per-worktree DerivedData path, resolved to absolute. Honors
-  /// `SWIFT_MK_DERIVED_DATA` (the make layer sets it), else `<cwd>/.derived-data`.
-  static func resolvedDerivedDataPath() -> String {
-    let configured =
-      Env.get("SWIFT_MK_DERIVED_DATA")
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-    let path = configured.isEmpty ? ".derived-data" : configured
-    if (path as NSString).isAbsolutePath {
-      return path
-    }
-    let cwd = FileManager.default.currentDirectoryPath
-    return (cwd as NSString).appendingPathComponent(path)
-  }
-
-  /// Locate the generated container in `directory`: the `.xcworkspace` a Tuist generate
-  /// emits, or the xcodegen project's embedded `project.xcworkspace`. Entries are sorted
-  /// so the choice is deterministic when more than one container is present.
-  static func generatedWorkspacePath(generator: Generator, in directory: String) -> String? {
-    let entries = ((try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? []).sorted()
-    switch generator {
-    case .tuist:
-      guard let workspace = entries.first(where: { $0.hasSuffix(".xcworkspace") }) else {
-        return nil
-      }
-      return (directory as NSString).appendingPathComponent(workspace)
-    case .xcodegen:
-      guard let project = entries.first(where: { $0.hasSuffix(".xcodeproj") }) else {
-        return nil
-      }
-      return
-        (directory as NSString)
-        .appendingPathComponent(project) + "/project.xcworkspace"
-    }
-  }
-}
-
 // MARK: - Toolchain version probes
 
 extension Toolchain {
@@ -666,6 +564,9 @@ extension Toolchain {
 // MARK: - Raw xcodebuild invocation
 
 extension Toolchain {
+  /// The exit status returned when a prebuild command fails before xcodebuild.
+  static let prebuildFailureStatus: Int32 = 1
+
   /// The single module-internal site that streams an xcodebuild action vector.
   /// Every build, build-for-testing, and analyze path funnels through here, so the
   /// raw `xcodebuild` spawn lives in this one chokepoint file and the build-tooling
@@ -674,6 +575,9 @@ extension Toolchain {
     _ request: Request, actions: [String], environment: [String: String]
   ) -> Int32 {
     Output.debug("toolchain: xcodebuild \(actions.joined(separator: " "))")
+    guard ToolchainPrebuild.run() else {
+      return prebuildFailureStatus
+    }
     return Shell.runForwardingOutput(
       "xcodebuild", xcodebuildArguments(request, actions: actions), environment: environment)
   }
@@ -682,10 +586,17 @@ extension Toolchain {
   /// while forwarding stderr live, for the dead-code coverage build whose fail-hard
   /// diagnosis needs the transcript.
   static func runXcodebuildCapturing(
-    _ request: Request, actions: [String], environment: [String: String]
+    _ request: Request,
+    actions: [String],
+    environment: [String: String],
+    resultBundleDirectory: String? = nil
   ) -> Shell.StreamingResult {
     Output.debug("toolchain: xcodebuild (captured) \(actions.joined(separator: " "))")
-    return Shell.runStreamingStderr(
-      "xcodebuild", xcodebuildArguments(request, actions: actions), environment: environment)
+    guard ToolchainPrebuild.run() else {
+      return Shell.StreamingResult(status: prebuildFailureStatus, stdout: "", timedOut: false)
+    }
+    let arguments = xcodebuildArguments(
+      request, actions: actions, resultBundleDirectory: resultBundleDirectory)
+    return Shell.runStreamingStderr("xcodebuild", arguments, environment: environment)
   }
 }

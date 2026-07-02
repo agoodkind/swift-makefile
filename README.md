@@ -9,7 +9,7 @@ Provided AS IS under the MIT License with no warranty. See [LICENSE](LICENSE).
 Each subsystem has a present-tense overview under `docs/<area>/overview.md` that links to the source and test holding each detail, so the docs track the code.
 
 - [Build gate](docs/gate/overview.md) covers the gate proof, the in-process receipt, the build chokepoints, and the per-worktree build lock.
-- [Dead-code gate](docs/deadcode/overview.md) covers the two scans, the signing-disabled coverage build, the index-completeness check, and the coverage-completeness check.
+- [Dead-code gate](docs/deadcode/overview.md) covers the two scans, the engine-derived coverage build and its owned settings, the shared prebuild seam, the index-completeness check, and the coverage-completeness check.
 - [Signing](docs/signing/overview.md) covers the single-source-of-truth xcconfig override, inferred style, and post-build signing and notarization.
 - [Caching](docs/caching/overview.md) covers the engine-owned cache plan and the compile-cache stores.
 - [CI](docs/ci/overview.md) covers the reusable workflows, the required gate set, runner fallback, and the non-overridable OSV policy.
@@ -23,7 +23,7 @@ Each subsystem has a present-tense overview under `docs/<area>/overview.md` that
 - `swift-build.mk` defines shared build, run, generate, clean, deploy, and install targets from consumer-provided commands.
 - `swift-release.mk` defines shared release wrapper targets from consumer-provided commands.
 - `xcconfig.mk` renders `*.template` files into `Derived/Generated/$(TARGET_NAME)/` for Tuist projects that treat one or more xcconfig files as the source of truth. The consumer Makefile `-include`s its xcconfig files, lists the keys it wants exposed (`XCCONFIG_EXPORTED_VARS`), points at its templates dir (`XCCONFIG_TEMPLATES_DIR`), and lists target names (`XCCONFIG_GENERATOR_TARGETS`). The `xcconfig-generate-config` target renders once per target; `xcconfig-generate-project` chains that into `tuist generate --no-open` so the glob inside `Project.swift` finds the generated files. Templates use `[[KEY]]` substitutions. See `swift-mk render-batch --help` for the underlying renderer.
-- `swift-app.mk` defines shared macOS app packaging for an app that ships as a signed `.app` inside a `.dmg` and updates through Sparkle. A consumer loads it with `SWIFT_MK_MODULES := swift-build.mk swift-app.mk`, sets `SWIFT_APP_NAME` plus a few `SWIFT_APP_*` overrides, and gets `app`, `dmg`, `release-assets`, `prepare-sparkle-updates`, `sparkle-appcast`, and `app-coverage-build`. `swift-build.mk` still owns `build`; `swift-app.mk` owns everything after the build. The build line stays the consumer's `SWIFT_BUILD_CMD`. See the header of `swift-app.mk` for the full variable surface.
+- `swift-app.mk` defines shared macOS app packaging for an app that ships as a signed `.app` inside a `.dmg` and updates through Sparkle. A consumer loads it with `SWIFT_MK_MODULES := swift-build.mk swift-app.mk`, sets `SWIFT_APP_NAME` plus a few `SWIFT_APP_*` overrides, and gets `app`, `dmg`, `release-assets`, `prepare-sparkle-updates`, and `sparkle-appcast`. `swift-build.mk` still owns `build`; `swift-app.mk` owns everything after the build. The build line stays the consumer's `SWIFT_BUILD_CMD`. See the header of `swift-app.mk` for the full variable surface.
 - `scripts/` holds only the bash bootstrap, fetch, build, and distribution layer that runs before the binary exists: `swift-mk-fetch-one.sh`, `swift-mk-build.sh`, `swift-mk-sync.sh`, `swift-mk-fleet-update.sh`, and `install-hooks.sh`.
 - `swiftcheck/` contains the shared SwiftSyntax analyzer package.
 
@@ -86,18 +86,20 @@ Distribution and fleet:
 
 ### Dead-code coverage of Xcode targets
 
-The dead-code gate scans the Swift package and, when the repository has an Xcode project, every Xcode target. It reuses the index store from the project's own build, so it passes no scan configuration and no build settings to Periphery. A consumer with an Xcode project wires three things:
+The dead-code gate scans the Swift package and, when the repository declares an Xcode build, every Xcode target. It builds a fresh coverage index through `Toolchain.buildCoverage`, then passes no scan configuration and no build settings to Periphery. A consumer with an Xcode project wires these values:
 
 - Include `bootstrap.mk` and the `swift-build.mk` module.
-- Set `SWIFT_BUILD_CMD` to the command that builds the Xcode targets, and route that build through `-derivedDataPath $(SWIFT_MK_DERIVED_DATA)`. The gate runs this build before every scan so the index reflects the current sources; an incremental build keeps it fast. When `SWIFT_BUILD_CMD` needs a target argument or builds a single platform, set `SWIFT_DEADCODE_BUILD_CMD` to a target-free build that compiles every platform to cover, and the gate uses it instead. Coverage follows what compiled, so build each platform whose `#if` branches you want analyzed.
-- Set `SWIFT_GENERATE_CMD` to the command that generates the project when the project is a generated artifact. When `SWIFT_GENERATE_CMD` is unset, the gate runs `xcodegen generate` for a `project.yml` or `tuist generate` for a `Project.swift` or `Workspace.swift`.
+- Set `SWIFT_XCODE_GENERATOR` to `tuist` or `xcodegen`, set `SWIFT_XCODE_SCHEME`, and set either `SWIFT_XCODE_WORKSPACE` or `SWIFT_XCODE_PROJECT`.
+- Set `SWIFT_XCODE_COVERAGE_CONFIGURATION` when coverage should build a configuration other than Debug, and set `SWIFT_XCODE_BUILD_SETTINGS` for extra `KEY=value` build settings.
+- Set `SWIFT_GENERATE_CMD` when the project needs a custom generation command. When `SWIFT_GENERATE_CMD` is unset, the gate runs `xcodegen generate` for a `project.yml` or `tuist generate` for a `Project.swift` or `Workspace.swift`.
+- Set `SWIFT_XCODE_PREBUILD_CMD` when the build needs a step before xcodebuild, such as building a native library the project links. The engine runs it before every xcodebuild it drives, so the coverage build and the normal build share one prep step.
 
-The coverage build must produce a compiler index store, so build a configuration with indexing enabled. Debug enables it by default; a Release build usually disables it, so build Debug or pass `COMPILER_INDEX_STORE_ENABLE=YES`. `SWIFT_MK_DERIVED_DATA` is the canonical DerivedData path the build writes to and the gate reads the index store from. It defaults to `$(CURDIR)/.derived-data`; add it to `.gitignore`. Schemes come from `xcodebuild -list -json`, and schemes whose name is a Swift package target are excluded from the Xcode scan because the package scan already covers them. Coverage follows what the build compiled, so building each platform a target supports covers each `#if` branch.
+The coverage build writes a compiler index store under `SWIFT_MK_DERIVED_DATA`, and swift-mk disables signing and the local Xcode compilation cache for that coverage build. `SWIFT_MK_DERIVED_DATA` defaults to `$(CURDIR)/.derived-data`; add it to `.gitignore`. Schemes and supported platforms come from the generated Xcode container, and schemes whose name is a Swift package target are excluded from the Xcode scan because the package scan already covers them.
 
 The gate fails with a message naming the cause when a repository declares an Xcode project it cannot scan:
 
 - A `Project.swift`, `Workspace.swift`, or `project.yml` is present but no project was generated.
-- An Xcode project is present but `SWIFT_BUILD_CMD` is unset.
+- An Xcode project is present but the coverage build fails.
 - No index store exists under `SWIFT_MK_DERIVED_DATA` after the build.
 - No Xcode schemes resolve to scan.
 

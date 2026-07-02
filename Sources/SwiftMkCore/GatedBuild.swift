@@ -56,24 +56,19 @@ public enum GatedBuild {
   }
 
   /// The consumer-supplied steps the hard gate runs: project generation before
-  /// discovery, the in-process dead-code coverage build, and the log audit. Each is
-  /// optional; a SwiftPM consumer that generates nothing and has no log audit
-  /// supplies none. The make path reads `SWIFT_GENERATE_CMD`, `SWIFT_LOG_AUDIT_CMD`,
-  /// and `SWIFT_DEADCODE_BUILD_CMD` from the environment instead; the decoupled path
-  /// has no such environment, so it carries them as typed closures.
+  /// discovery and the log audit. Each is optional; a SwiftPM consumer that
+  /// generates nothing and has no log audit supplies none. The coverage build is
+  /// engine-owned and reads the same Xcode environment as the make path.
   public struct Hooks: Sendable {
     public let generate: (@Sendable () -> Bool)?
-    public let deadcodeCoverage: DeadcodeCoverageBuild?
     public let logAudit: (@Sendable () -> Bool)?
 
     @preconcurrency
     public init(
       generate: (@Sendable () -> Bool)? = nil,
-      deadcodeCoverage: DeadcodeCoverageBuild? = nil,
       logAudit: (@Sendable () -> Bool)? = nil
     ) {
       self.generate = generate
-      self.deadcodeCoverage = deadcodeCoverage
       self.logAudit = logAudit
     }
   }
