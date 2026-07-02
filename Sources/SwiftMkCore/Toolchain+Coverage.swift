@@ -57,7 +57,7 @@ extension Toolchain {
     switch platform {
     case .macosx:
       return macOSCoverageDestination
-    case .iphoneos, .iphonesimulator:
+    case .iphonesimulator:
       return iOSSimulatorCoverageDestination
     case .maccatalyst:
       return macCatalystCoverageDestination
@@ -74,7 +74,12 @@ extension Toolchain {
         containerPath: options.containerPath,
         isWorkspace: options.isWorkspace,
         packageTargetNames: options.packageTargetNames,
-        buildableSchemeNames: options.buildableSchemeNames)
+        buildableSchemeNames: options.buildableSchemeNames
+      ) { scheme in
+        let result = showDestinations(
+          container: options.containerPath, isWorkspace: options.isWorkspace, scheme: scheme)
+        return DeadcodeCoverageMatrix.coveragePlatforms(showDestinationsOutput: result.stdout)
+      }
     } catch {
       let message =
         "deadcode: could not enumerate coverage schemes from \(options.containerPath): \(error)"

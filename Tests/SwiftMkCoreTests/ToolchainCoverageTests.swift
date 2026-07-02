@@ -18,9 +18,6 @@ enum ToolchainCoverageTests {
   static func coverageDestinationMapsEveryKnownPlatform() {
     #expect(Toolchain.coverageDestination(for: .macosx) == "platform=macOS")
     #expect(
-      Toolchain.coverageDestination(for: .iphoneos)
-        == "generic/platform=iOS Simulator")
-    #expect(
       Toolchain.coverageDestination(for: .iphonesimulator)
         == "generic/platform=iOS Simulator")
     #expect(

@@ -12,13 +12,10 @@ import XcodeProj
 
 // MARK: - CoveragePlatform
 
-/// The Xcode SDK platforms the dead-code coverage build can target, one per
-/// `SUPPORTED_PLATFORMS` token (or `SUPPORTS_MACCATALYST`) a target's build settings
-/// name. Kept here, not on `Toolchain`: this file derives which platforms a target
-/// needs, a later task maps each case to a `build-for-testing` destination, and that
-/// mapping has no reason to depend on how the set was derived.
+/// The Xcode SDK platforms the dead-code coverage build can target. A later mapper
+/// turns each case into a `build-for-testing` destination. iOS always builds on the
+/// simulator, so device and simulator both resolve to `.iphonesimulator`.
 public enum CoveragePlatform: String, Sendable, CaseIterable {
-  case iphoneos
   case iphonesimulator
   case maccatalyst
   case macosx
@@ -39,25 +36,28 @@ public struct DeadcodeCoverageEntry: Equatable, Sendable {
 /// Derives the dead-code coverage build matrix from a generated Xcode project or
 /// workspace, so a consumer declares no deadcode knob.
 ///
-/// The generator (Tuist or xcodegen) already wrote every shared scheme, each target's
-/// product type, and each target's supported platforms; this reads that instead of a
-/// consumer listing schemes and platforms by hand, the same "derive from what the
-/// generator wrote" approach `IndexCompleteness` uses for its expected-source set.
+/// Two authoritative sources drive the matrix, and neither guesses from static build
+/// settings. The scheme set comes from the project's schemes, filtered to the schemes
+/// `xcodebuild -list` reports and to targets that carry indexable app or framework code.
+/// The platform set for each scheme comes from `xcodebuild -showdestinations`, which
+/// resolves through the consumer's xcconfigs the same way a real build does, so a
+/// dynamically resolved `SUPPORTED_PLATFORMS` or a Mac Catalyst opt-in is read correctly
+/// rather than reconstructed from the raw project file.
 public enum DeadcodeCoverageMatrix {
-  /// Thrown when a kept target's build settings name no platform this enumerator
-  /// recognizes. There is no safe default destination for such a target, so the
-  /// caller cannot build a coverage matrix for it and must fail loud instead of
-  /// silently dropping the target from coverage.
+  /// Thrown when a scheme the matrix must build reports no destination this enumerator
+  /// maps to a coverage platform. Failing loud is required: silently dropping the scheme
+  /// would leave its sources unindexed and turn real references into false unused
+  /// findings.
   enum EnumerationError: Error, CustomStringConvertible {
-    case noKnownPlatform(scheme: String, target: String)
+    case noKnownPlatform(scheme: String)
 
     var description: String {
       switch self {
-      case let .noKnownPlatform(scheme, target):
+      case let .noKnownPlatform(scheme):
         return
-          "deadcode coverage: scheme \"\(scheme)\" target \"\(target)\" has no known "
-          + "coverage platform (SUPPORTED_PLATFORMS / SUPPORTS_MACCATALYST); cannot "
-          + "compute a build-for-testing destination"
+          "deadcode coverage: scheme \"\(scheme)\" reports no macOS, Mac Catalyst, or iOS "
+          + "destination from xcodebuild -showdestinations; cannot compute a "
+          + "build-for-testing destination"
       }
     }
   }
@@ -66,58 +66,100 @@ public enum DeadcodeCoverageMatrix {
 
   /// The full `(scheme, platform)` matrix for `containerPath`, an `.xcodeproj` path or
   /// (when `isWorkspace`) an `.xcworkspace` path. `packageTargetNames` excludes targets
-  /// the SwiftPM package scan already covers, so they are not double-built here.
-  /// `buildableSchemeNames`, when non-empty, is the set of schemes `xcodebuild -list`
-  /// reports for the container, and the matrix keeps only entries whose scheme is in it,
-  /// so a target read from a workspace's dependency project (WireGuardKit, Nimble, a
-  /// vendored package) never becomes a `-scheme` the workspace cannot build. An empty
-  /// set applies no filter. Deduplicated and sorted by scheme then platform, so the
-  /// output is deterministic.
+  /// the SwiftPM package scan already covers. `buildableSchemeNames`, when non-empty, is
+  /// the set of schemes `xcodebuild -list` reports for the container, so a scheme read
+  /// from a workspace's dependency project (WireGuardKit, a vendored package) that the
+  /// workspace cannot build drops out. `platformsForScheme` returns the coverage
+  /// platforms a scheme can build, from `xcodebuild -showdestinations`. Deduplicated and
+  /// sorted by scheme then platform, so the output is deterministic.
   public static func entries(
     containerPath: String,
     isWorkspace: Bool,
     packageTargetNames: Set<String>,
-    buildableSchemeNames: Set<String> = []
+    buildableSchemeNames: Set<String> = [],
+    platformsForScheme: (String) throws -> Set<CoveragePlatform>
   ) throws -> [DeadcodeCoverageEntry] {
     Output.debug(
       "deadcode: deriving coverage matrix from \(containerPath) isWorkspace=\(isWorkspace)")
+    let schemeNames = try coverageSchemeNames(
+      containerPath: containerPath,
+      isWorkspace: isWorkspace,
+      packageTargetNames: packageTargetNames,
+      buildableSchemeNames: buildableSchemeNames)
+    return try expandPlatforms(schemeNames: schemeNames, platformsForScheme: platformsForScheme)
+  }
+
+  /// Expand each scheme across the platforms `platformsForScheme` reports, deduplicated
+  /// and sorted by scheme then platform so the output is deterministic. A scheme that
+  /// reports no coverage platform is a hard failure, not a silent drop.
+  static func expandPlatforms(
+    schemeNames: Set<String>,
+    platformsForScheme: (String) throws -> Set<CoveragePlatform>
+  ) throws -> [DeadcodeCoverageEntry] {
+    var seenKeys: Set<String> = []
+    var result: [DeadcodeCoverageEntry] = []
+    for scheme in schemeNames.sorted() {
+      let platforms = try platformsForScheme(scheme)
+      guard !platforms.isEmpty else {
+        throw EnumerationError.noKnownPlatform(scheme: scheme)
+      }
+      for platform in platforms.sorted(by: { $0.rawValue < $1.rawValue }) {
+        let key = "\(scheme)|\(platform.rawValue)"
+        if seenKeys.insert(key).inserted {
+          result.append(DeadcodeCoverageEntry(scheme: scheme, platform: platform))
+        }
+      }
+    }
+    return result
+  }
+
+  // MARK: Scheme selection
+
+  /// The schemes the coverage build must build: every scheme whose build-for-testing
+  /// targets include an indexable app or framework, filtered to the schemes
+  /// `xcodebuild -list` reports so a workspace's dependency-project schemes drop out.
+  static func coverageSchemeNames(
+    containerPath: String,
+    isWorkspace: Bool,
+    packageTargetNames: Set<String>,
+    buildableSchemeNames: Set<String>
+  ) throws -> Set<String> {
+    Output.debug("deadcode: selecting coverage schemes from \(containerPath)")
     let projectPaths =
       isWorkspace
       ? try IndexCompleteness.xcodeProjectPaths(inWorkspace: containerPath)
       : [containerPath]
-    var seenKeys: Set<String> = []
-    var result: [DeadcodeCoverageEntry] = []
+    var names: Set<String> = []
     for projectFile in projectPaths {
       let project = try XcodeProj(path: Path(projectFile))
       let schemes = sharedSchemes(for: project, projectFile: projectFile)
-      // A project with no shared schemes (xcodegen writes none by default) still
-      // builds through Xcode's auto-created per-target schemes, which `xcodebuild
-      // -list` reports and `xcodebuild -scheme <target>` resolves on demand. Derive
-      // one auto-scheme entry per buildable native target so an xcodegen consumer
-      // gets a coverage matrix, matching the schemes the periphery scan reads from
-      // `xcodebuild -list`. A project with shared schemes uses those verbatim.
-      let projectEntries =
-        schemes.isEmpty
-        ? try autoSchemeEntries(project: project, packageTargetNames: packageTargetNames)
-        : try sharedSchemeEntries(
-          schemes: schemes, project: project, packageTargetNames: packageTargetNames)
-      for entry in projectEntries {
-        if !buildableSchemeNames.isEmpty, !buildableSchemeNames.contains(entry.scheme) {
-          continue
+      if schemes.isEmpty {
+        // A project with no shared schemes (xcodegen writes none by default) builds
+        // through Xcode's auto-created per-target schemes, which `xcodebuild -list`
+        // reports and `xcodebuild -scheme <target>` resolves on demand. Use one
+        // auto-scheme per indexable native target.
+        for target in project.pbxproj.nativeTargets
+        where isCoverageTarget(
+          productType: target.productType,
+          name: target.name,
+          packageTargetNames: packageTargetNames)
+        {
+          names.insert(target.name)
         }
-        let key = "\(entry.scheme)|\(entry.platform.rawValue)"
-        if seenKeys.insert(key).inserted {
-          result.append(entry)
+      } else {
+        for scheme in schemes
+        where schemeHasCoverageTarget(
+          scheme, project: project, packageTargetNames: packageTargetNames)
+        {
+          names.insert(scheme.name)
         }
       }
     }
-    return result.sorted { lhs, rhs in
-      lhs.scheme == rhs.scheme
-        ? lhs.platform.rawValue < rhs.platform.rawValue : lhs.scheme < rhs.scheme
+    if buildableSchemeNames.isEmpty {
+      return names
     }
+    return names.intersection(buildableSchemeNames)
   }
-
-  // MARK: Scheme resolution
 
   /// A project's shared (`xcshareddata`) schemes. `sharedData` is usually populated by
   /// `XcodeProj(path:)`, but reads it again through `XCSharedData` directly as a
@@ -131,85 +173,31 @@ public enum DeadcodeCoverageMatrix {
       return try XCSharedData(path: XCSharedData.path(Path(projectFile))).schemes
     } catch {
       // No `xcshareddata` directory on disk at all is the expected shape for a
-      // project with no shared schemes, not a failure this enumerator should
-      // report; the caller sees an empty scheme list either way.
+      // project with no shared schemes, not a failure this enumerator should report.
       return []
     }
   }
 
-  // MARK: Scheme derivation
-
-  /// The coverage entries every shared scheme contributes, flattened across the schemes.
-  static func sharedSchemeEntries(
-    schemes: [XCScheme], project: XcodeProj, packageTargetNames: Set<String>
-  ) throws -> [DeadcodeCoverageEntry] {
-    var entries: [DeadcodeCoverageEntry] = []
-    for scheme in schemes {
-      entries += try coverageEntries(
-        scheme: scheme, project: project, packageTargetNames: packageTargetNames)
-    }
-    return entries
-  }
-
-  /// The coverage entries for a project with no shared schemes: one auto-scheme per
-  /// buildable native target, named after the target the way Xcode names an
-  /// auto-created scheme. Each qualifying target expands to one entry per platform it
-  /// supports, the same expansion `coverageEntries` applies to a shared scheme's
-  /// targets.
-  static func autoSchemeEntries(
-    project: XcodeProj, packageTargetNames: Set<String>
-  ) throws -> [DeadcodeCoverageEntry] {
-    var entries: [DeadcodeCoverageEntry] = []
-    for target in project.pbxproj.nativeTargets {
-      guard
-        isCoverageTarget(
-          productType: target.productType,
-          name: target.name,
-          packageTargetNames: packageTargetNames)
-      else {
-        continue
-      }
-      let targetPlatforms = resolvedPlatforms(for: target)
-      guard !targetPlatforms.isEmpty else {
-        throw EnumerationError.noKnownPlatform(scheme: target.name, target: target.name)
-      }
-      for platform in targetPlatforms {
-        entries.append(DeadcodeCoverageEntry(scheme: target.name, platform: platform))
-      }
-    }
-    return entries
-  }
-
-  /// The coverage entries one scheme contributes: every build-for-testing entry whose
-  /// target resolves and qualifies (`isCoverageTarget`), expanded to one entry per
-  /// platform the target supports.
-  static func coverageEntries(
-    scheme: XCScheme, project: XcodeProj, packageTargetNames: Set<String>
-  ) throws -> [DeadcodeCoverageEntry] {
+  /// True when a shared scheme builds at least one indexable app or framework for
+  /// testing, so the scheme belongs in the coverage build.
+  static func schemeHasCoverageTarget(
+    _ scheme: XCScheme, project: XcodeProj, packageTargetNames: Set<String>
+  ) -> Bool {
     let buildActionEntries = scheme.buildAction?.buildActionEntries ?? []
-    var entries: [DeadcodeCoverageEntry] = []
     for entry in buildActionEntries where entry.buildFor.contains(.testing) {
       let targetName = entry.buildableReference.blueprintName
       guard let target = nativeTarget(named: targetName, in: project) else {
         continue
       }
-      guard
-        isCoverageTarget(
-          productType: target.productType,
-          name: target.name,
-          packageTargetNames: packageTargetNames)
-      else {
-        continue
-      }
-      let targetPlatforms = resolvedPlatforms(for: target)
-      guard !targetPlatforms.isEmpty else {
-        throw EnumerationError.noKnownPlatform(scheme: scheme.name, target: target.name)
-      }
-      for platform in targetPlatforms {
-        entries.append(DeadcodeCoverageEntry(scheme: scheme.name, platform: platform))
+      if isCoverageTarget(
+        productType: target.productType,
+        name: target.name,
+        packageTargetNames: packageTargetNames)
+      {
+        return true
       }
     }
-    return entries
+    return false
   }
 
   /// The `PBXNativeTarget` named `name`, matched by name rather than by
@@ -219,89 +207,11 @@ public enum DeadcodeCoverageMatrix {
     project.pbxproj.nativeTargets.first { $0.name == name }
   }
 
-  /// The platforms a target's build settings name, unioned across every build
-  /// configuration: a target whose configurations disagree (a Debug-only platform
-  /// addition, for example) must still cover the union, since the coverage build
-  /// always runs one fixed configuration and needs every platform any configuration
-  /// declares.
-  static func resolvedPlatforms(for target: PBXNativeTarget) -> Set<CoveragePlatform> {
-    var result: Set<CoveragePlatform> = []
-    let configurations = target.buildConfigurationList?.buildConfigurations ?? []
-    for configuration in configurations {
-      let settings = configuration.buildSettings
-      let supportsMacCatalyst = settings["SUPPORTS_MACCATALYST"]?.boolValue ?? false
-      let fromSupported = platforms(
-        supportedPlatforms: settings["SUPPORTED_PLATFORMS"]?.stringValue,
-        supportsMacCatalyst: supportsMacCatalyst)
-      if fromSupported.isEmpty {
-        // xcodegen encodes a single-platform target with `SDKROOT` (`macosx`,
-        // `iphoneos`) and writes no `SUPPORTED_PLATFORMS`, so fall back to the SDK
-        // when the platform list is absent. Tuist writes `SUPPORTED_PLATFORMS`, so
-        // this fallback never fires for a tuist target.
-        result.formUnion(
-          platformsFromSDKRoot(
-            settings["SDKROOT"]?.stringValue, supportsMacCatalyst: supportsMacCatalyst))
-      } else {
-        result.formUnion(fromSupported)
-      }
-    }
-    return result
-  }
-
-  /// The coverage platform a target's `SDKROOT` names, the single-SDK fallback for a
-  /// target with no `SUPPORTED_PLATFORMS`. `SDKROOT` is `macosx`, `iphoneos`,
-  /// `iphonesimulator`, or a versioned or absolute form of one; this matches the SDK
-  /// token and adds `.maccatalyst` when the target opts in, mirroring `platforms`.
-  static func platformsFromSDKRoot(
-    _ sdkRoot: String?, supportsMacCatalyst: Bool
-  ) -> Set<CoveragePlatform> {
-    var result: Set<CoveragePlatform> = []
-    let raw = (sdkRoot ?? "").lowercased()
-    if raw.contains("macosx") {
-      result.insert(.macosx)
-    } else if raw.contains("iphonesimulator") {
-      result.insert(.iphonesimulator)
-    } else if raw.contains("iphoneos") {
-      result.insert(.iphoneos)
-    }
-    if supportsMacCatalyst, !result.isEmpty {
-      result.insert(.maccatalyst)
-    }
-    return result
-  }
-
-  // MARK: Pure decision helpers
-
-  /// Parse `SUPPORTED_PLATFORMS` (comma and/or space separated tokens, for example
-  /// `"macosx iphoneos iphonesimulator"`) into the matching `CoveragePlatform` set,
-  /// dropping any token that names no known platform, and add `.maccatalyst` when
-  /// `supportsMacCatalyst` is true. `SUPPORTS_MACCATALYST` is a separate build setting,
-  /// not a `SUPPORTED_PLATFORMS` token, so it is checked independently rather than
-  /// folded into the token parse.
-  static func platforms(
-    supportedPlatforms: String?, supportsMacCatalyst: Bool
-  ) -> Set<CoveragePlatform> {
-    var result: Set<CoveragePlatform> = []
-    let raw = supportedPlatforms ?? ""
-    for token in raw.split(whereSeparator: { $0 == "," || $0 == " " }) {
-      if let platform = CoveragePlatform(rawValue: String(token)) {
-        result.insert(platform)
-      }
-    }
-    if supportsMacCatalyst {
-      result.insert(.maccatalyst)
-    }
-    return result
-  }
-
   /// True when the target's compiled Swift belongs in the dead-code coverage build. A
-  /// test bundle is already covered by the scheme's test action, not build-for-testing
-  /// coverage; a command-line tool builds no app/framework the coverage matrix targets;
-  /// and a SwiftPM package target named in `packageTargetNames` is already covered by
-  /// periphery's package scan. Excluding all three avoids double coverage. A `nil`
-  /// product type means the target's kind could not be resolved from the project, and
-  /// there is no safe basis to build such a target for testing, so this returns false
-  /// rather than guessing it belongs.
+  /// test bundle is already covered by the scheme's test action; a command-line tool
+  /// builds no app or framework the coverage matrix targets; and a SwiftPM package
+  /// target named in `packageTargetNames` is already covered by periphery's package
+  /// scan. A `nil` product type is unresolved, so this returns false rather than guess.
   static func isCoverageTarget(
     productType: PBXProductType?, name: String, packageTargetNames: Set<String>
   ) -> Bool {
@@ -313,6 +223,68 @@ public enum DeadcodeCoverageMatrix {
       return false
     default:
       return !packageTargetNames.contains(name)
+    }
+  }
+
+  // MARK: Destination parsing
+
+  /// The coverage platforms named by an `xcodebuild -showdestinations` transcript. Only
+  /// the "Available destinations" section counts, so an ineligible destination never
+  /// enters the matrix. iOS device and iOS Simulator both map to `.iphonesimulator`,
+  /// since the coverage build compiles iOS on the simulator to avoid device signing.
+  static func coveragePlatforms(showDestinationsOutput output: String) -> Set<CoveragePlatform> {
+    var result: Set<CoveragePlatform> = []
+    var inAvailableSection = false
+    for rawLine in output.split(separator: "\n", omittingEmptySubsequences: false) {
+      let line = rawLine.trimmingCharacters(in: .whitespaces)
+      if line.hasPrefix("Available destinations") {
+        inAvailableSection = true
+        continue
+      }
+      if line.hasPrefix("Ineligible destinations") {
+        inAvailableSection = false
+        continue
+      }
+      guard inAvailableSection, line.hasPrefix("{") else {
+        continue
+      }
+      guard let platform = destinationField("platform", in: line) else {
+        continue
+      }
+      let variant = destinationField("variant", in: line)
+      if let coverage = coveragePlatform(platform: platform, variant: variant) {
+        result.insert(coverage)
+      }
+    }
+    return result
+  }
+
+  /// The value of a `key:value` field in an `xcodebuild -showdestinations` line such as
+  /// `{ platform:iOS Simulator, arch:arm64, variant:Mac Catalyst, id:… }`. Values may
+  /// contain spaces (`iOS Simulator`, `Mac Catalyst`), so fields split on commas and
+  /// each field splits on its first colon.
+  static func destinationField(_ key: String, in line: String) -> String? {
+    let inner = line.trimmingCharacters(in: CharacterSet(charactersIn: "{} \t"))
+    for part in inner.split(separator: ",") {
+      let field = part.trimmingCharacters(in: .whitespaces)
+      let prefix = key + ":"
+      if field.hasPrefix(prefix) {
+        return String(field.dropFirst(prefix.count))
+      }
+    }
+    return nil
+  }
+
+  /// The coverage platform a destination's `platform` (and `variant`) names, or nil for
+  /// a platform the coverage build does not target (watchOS, tvOS, DriverKit).
+  static func coveragePlatform(platform: String, variant: String?) -> CoveragePlatform? {
+    switch platform {
+    case "macOS":
+      return variant == "Mac Catalyst" ? .maccatalyst : .macosx
+    case "iOS", "iOS Simulator":
+      return .iphonesimulator
+    default:
+      return nil
     }
   }
 }

@@ -15,14 +15,13 @@ import XcodeProj
 
 // MARK: - DeadcodeCoverageMatrixTests
 
-/// Covers the pure `platforms`/`isCoverageTarget` decision helpers directly (the bulk of
-/// this suite, per the task brief), plus an in-memory `XcodeProj` object graph that
-/// exercises `coverageEntries` end to end: scheme resolution, build-for-testing
-/// filtering, target-name matching, and the test-bundle/command-line-tool/package
-/// exclusions together. The on-disk `entries(containerPath:...)` file-resolution path is
-/// not covered by a written fixture here (see the task report for the reasoning); it
-/// reuses `IndexCompleteness.xcodeProjectPaths` and `XcodeProj(path:)`, both already
-/// exercised elsewhere, and gets its real coverage from a live consumer in a later task.
+/// Covers scheme selection (`isCoverageTarget`, `schemeHasCoverageTarget`) over an
+/// in-memory `XcodeProj` object graph, and `entries` end to end with an injected
+/// platform source, so the matrix logic is exercised without shelling xcodebuild. The
+/// on-disk `coverageSchemeNames(containerPath:...)` file-resolution path is not covered
+/// by a written fixture here; it reuses `IndexCompleteness.xcodeProjectPaths` and
+/// `XcodeProj(path:)`, both exercised elsewhere, and gets real coverage from a live
+/// consumer.
 @Suite(.serialized)
 enum DeadcodeCoverageMatrixTests {
   // MARK: isCoverageTarget
@@ -64,193 +63,58 @@ enum DeadcodeCoverageMatrixTests {
 
   @Test
   static func isCoverageTargetDropsAnUnresolvedProductType() {
-    // An unresolved product type carries no known kind, so there is no safe basis to
-    // build the target for testing; this documents that choice as a test, not just a
-    // comment, since a `nil` product type is easy to mistake for "unknown, so keep it".
     #expect(
       !DeadcodeCoverageMatrix.isCoverageTarget(
         productType: nil, name: "Mystery", packageTargetNames: []))
   }
 
-  // MARK: resolvedPlatforms(for:)
+  // MARK: schemeHasCoverageTarget
 
   @Test
-  static func resolvedPlatformsUnionsAcrossConfigurations() {
-    let debug = XCBuildConfiguration(
-      name: "Debug", buildSettings: ["SUPPORTED_PLATFORMS": "macosx"])
-    let release = XCBuildConfiguration(
-      name: "Release",
-      buildSettings: ["SUPPORTED_PLATFORMS": "macosx", "SUPPORTS_MACCATALYST": "YES"])
-    let configurationList = XCConfigurationList(buildConfigurations: [debug, release])
-    let target = PBXNativeTarget(
-      name: "App", buildConfigurationList: configurationList, productType: .application)
-    #expect(DeadcodeCoverageMatrix.resolvedPlatforms(for: target) == [.macosx, .maccatalyst])
-  }
-
-  @Test
-  static func resolvedPlatformsIsEmptyWithNoBuildConfigurationList() {
-    let target = PBXNativeTarget(name: "App", productType: .application)
-    #expect(DeadcodeCoverageMatrix.resolvedPlatforms(for: target).isEmpty)
-  }
-
-  @Test
-  static func resolvedPlatformsFallsBackToSDKRootWhenNoSupportedPlatforms() {
-    // The xcodegen shape: a macOS target carries SDKROOT and no SUPPORTED_PLATFORMS.
-    let configuration = XCBuildConfiguration(
-      name: "Debug", buildSettings: ["SDKROOT": "macosx"])
-    let configurationList = XCConfigurationList(buildConfigurations: [configuration])
-    let target = PBXNativeTarget(
-      name: "Helper", buildConfigurationList: configurationList, productType: .application)
-    #expect(DeadcodeCoverageMatrix.resolvedPlatforms(for: target) == [.macosx])
-  }
-
-  @Test
-  static func resolvedPlatformsPrefersSupportedPlatformsOverSDKRoot() {
-    // SUPPORTED_PLATFORMS present means the SDKROOT fallback must not fire, so a
-    // tuist target that names iOS is not also read as macOS from a stray SDKROOT.
-    let configuration = XCBuildConfiguration(
-      name: "Debug",
-      buildSettings: ["SUPPORTED_PLATFORMS": "iphoneos", "SDKROOT": "macosx"])
-    let configurationList = XCConfigurationList(buildConfigurations: [configuration])
-    let target = PBXNativeTarget(
-      name: "App", buildConfigurationList: configurationList, productType: .application)
-    #expect(DeadcodeCoverageMatrix.resolvedPlatforms(for: target) == [.iphoneos])
-  }
-
-  // MARK: sharedSchemes(for:projectFile:)
-
-  @Test
-  static func sharedSchemesReadsSchemesAttachedToTheProject() {
-    let scheme = makeScheme(name: "App", entries: [])
-    let project = XcodeProj(
-      workspace: XCWorkspace(data: XCWorkspaceData(children: [])),
-      pbxproj: PBXProj(objects: []),
-      sharedData: XCSharedData(schemes: [scheme]))
-    let schemes = DeadcodeCoverageMatrix.sharedSchemes(
-      for: project, projectFile: "/nowhere.xcodeproj")
-    #expect(schemes.map(\.name) == ["App"])
-  }
-
-  // MARK: coverageEntries end to end (in-memory object graph)
-
-  @Test
-  static func coverageEntriesDerivesTheFullMatrixFromAScheme() throws {
+  static func schemeHasCoverageTargetIsTrueForAnAppSchemeBuiltForTesting() {
     let fixture = makeFixtureProject()
-    let entries = try DeadcodeCoverageMatrix.coverageEntries(
-      scheme: fixture.scheme, project: fixture.project, packageTargetNames: ["PackageLib"])
+    #expect(
+      DeadcodeCoverageMatrix.schemeHasCoverageTarget(
+        fixture.scheme, project: fixture.project, packageTargetNames: ["PackageLib"]))
+  }
+
+  @Test
+  static func schemeHasCoverageTargetIsFalseWhenOnlyExcludedTargetsBuildForTesting() {
+    let fixture = makeTestOnlyScheme()
+    #expect(
+      !DeadcodeCoverageMatrix.schemeHasCoverageTarget(
+        fixture.scheme, project: fixture.project, packageTargetNames: []))
+  }
+
+  // MARK: expandPlatforms with an injected platform source
+
+  @Test
+  static func expandPlatformsExpandsEachSchemeAcrossItsInjectedPlatforms() throws {
+    let entries = try DeadcodeCoverageMatrix.expandPlatforms(schemeNames: ["App"]) { _ in
+      [.iphonesimulator, .maccatalyst]
+    }
     let pairs = Set(entries.map { "\($0.scheme)|\($0.platform.rawValue)" })
-    #expect(pairs == ["App|iphoneos", "App|iphonesimulator"])
+    #expect(pairs == ["App|iphonesimulator", "App|maccatalyst"])
   }
 
   @Test
-  static func coverageEntriesSkipsAnEntryNotBuiltForTesting() throws {
-    let fixture = makeFixtureProject()
-    let entries = try DeadcodeCoverageMatrix.coverageEntries(
-      scheme: fixture.scheme, project: fixture.project, packageTargetNames: ["PackageLib"])
-    #expect(!entries.contains { $0.scheme == "App" && $0.platform == .macosx })
-  }
-
-  @Test
-  static func coverageEntriesSkipsAnEntryWithNoMatchingTarget() throws {
-    let fixture = makeFixtureProject()
-    let entries = try DeadcodeCoverageMatrix.coverageEntries(
-      scheme: fixture.scheme, project: fixture.project, packageTargetNames: [])
-    #expect(!entries.contains { $0.scheme == "Ghost" })
-  }
-
-  @Test
-  static func coverageEntriesThrowsWhenAKeptTargetHasNoKnownPlatform() {
-    let configuration = XCBuildConfiguration(name: "Debug", buildSettings: [:])
-    let configurationList = XCConfigurationList(
-      buildConfigurations: [configuration])
-    let target = PBXNativeTarget(
-      name: "NoPlatform", buildConfigurationList: configurationList, productType: .application)
-    let entry = XCScheme.BuildAction.Entry(
-      buildableReference: makeBuildableReference(name: "NoPlatform"), buildFor: [.testing])
-    let scheme = makeScheme(name: "NoPlatform", entries: [entry])
-    let objects: [PBXObject] = [target, configurationList, configuration]
-    let project = XcodeProj(
-      workspace: XCWorkspace(data: XCWorkspaceData(children: [])),
-      pbxproj: PBXProj(objects: objects),
-      sharedData: XCSharedData(schemes: [scheme]))
+  static func expandPlatformsThrowsWhenASchemeReportsNoCoveragePlatform() {
     #expect(throws: DeadcodeCoverageMatrix.EnumerationError.self) {
-      try DeadcodeCoverageMatrix.coverageEntries(
-        scheme: scheme, project: project, packageTargetNames: [])
+      try DeadcodeCoverageMatrix.expandPlatforms(schemeNames: ["App"]) { _ in [] }
     }
   }
 
-  // MARK: autoSchemeEntries (no shared schemes)
-
   @Test
-  static func autoSchemeEntriesDerivesOneSchemePerBuildableNativeTarget() throws {
-    let project = makeNoSharedSchemeProject()
-    let entries = try DeadcodeCoverageMatrix.autoSchemeEntries(
-      project: project, packageTargetNames: ["PackageLib"])
-    let pairs = Set(entries.map { "\($0.scheme)|\($0.platform.rawValue)" })
-    // The two macOS app/helper targets each become a same-named auto-scheme; the test
-    // bundle, the command-line tool, and the package target drop out.
-    #expect(pairs == ["Helper|macosx", "MainApp|macosx"])
+  static func expandPlatformsIsSortedAndDeduplicated() throws {
+    let entries = try DeadcodeCoverageMatrix.expandPlatforms(
+      schemeNames: ["Beta", "Alpha"]
+    ) { _ in [.macosx] }
+    #expect(entries.map(\.scheme) == ["Alpha", "Beta"])
+    #expect(entries.allSatisfy { $0.platform == .macosx })
   }
 
-  @Test
-  static func autoSchemeEntriesThrowsWhenAKeptTargetHasNoKnownPlatform() {
-    let noPlatformTarget = PBXNativeTarget(name: "NoPlatform", productType: .application)
-    let project = XcodeProj(
-      workspace: XCWorkspace(data: XCWorkspaceData(children: [])),
-      pbxproj: PBXProj(objects: [noPlatformTarget]),
-      sharedData: nil)
-    #expect(throws: DeadcodeCoverageMatrix.EnumerationError.self) {
-      try DeadcodeCoverageMatrix.autoSchemeEntries(
-        project: project, packageTargetNames: [])
-    }
-  }
+  // MARK: fixtures
 
-  /// A project with no shared schemes and four native targets: two macOS
-  /// app/helper targets that must each become an auto-scheme, plus a test bundle, a
-  /// command-line tool, and a package-owned framework that must all drop out. This is
-  /// the xcodegen shape, where `xcodebuild -list` reports auto-created schemes but no
-  /// `xcshareddata` scheme file exists.
-  static func makeNoSharedSchemeProject() -> XcodeProj {
-    let mainConfiguration = XCBuildConfiguration(
-      name: "Debug", buildSettings: ["SUPPORTED_PLATFORMS": "macosx"])
-    let mainConfigurationList = XCConfigurationList(buildConfigurations: [mainConfiguration])
-    let mainTarget = PBXNativeTarget(
-      name: "MainApp",
-      buildConfigurationList: mainConfigurationList,
-      productType: .application)
-    let helperConfiguration = XCBuildConfiguration(
-      name: "Debug", buildSettings: ["SUPPORTED_PLATFORMS": "macosx"])
-    let helperConfigurationList = XCConfigurationList(
-      buildConfigurations: [helperConfiguration])
-    let helperTarget = PBXNativeTarget(
-      name: "Helper",
-      buildConfigurationList: helperConfigurationList,
-      productType: .application)
-    let testsTarget = PBXNativeTarget(name: "AppTests", productType: .unitTestBundle)
-    let toolTarget = PBXNativeTarget(name: "Tool", productType: .commandLineTool)
-    let packageConfiguration = XCBuildConfiguration(
-      name: "Debug", buildSettings: ["SUPPORTED_PLATFORMS": "macosx"])
-    let packageConfigurationList = XCConfigurationList(
-      buildConfigurations: [packageConfiguration])
-    let packageTarget = PBXNativeTarget(
-      name: "PackageLib",
-      buildConfigurationList: packageConfigurationList,
-      productType: .framework)
-    let objects: [PBXObject] = [
-      mainTarget, helperTarget, testsTarget, toolTarget, packageTarget,
-      mainConfigurationList, helperConfigurationList, packageConfigurationList,
-      mainConfiguration, helperConfiguration, packageConfiguration,
-    ]
-    return XcodeProj(
-      workspace: XCWorkspace(data: XCWorkspaceData(children: [])),
-      pbxproj: PBXProj(objects: objects),
-      sharedData: nil)
-  }
-
-  // MARK: fixture builders
-
-  /// A `BuildableReference` matched by name only, the same resolution
-  /// `coverageEntries` uses: no `PBXObject` blueprint link required.
   static func makeBuildableReference(name: String) -> XCScheme.BuildableReference {
     XCScheme.BuildableReference(
       referencedContainer: "container:Fixture.xcodeproj",
@@ -267,30 +131,14 @@ enum DeadcodeCoverageMatrixTests {
       buildAction: XCScheme.BuildAction(buildActionEntries: entries))
   }
 
-  /// One project with four targets exercising every exclusion the derivation rule
-  /// makes (an app, its test bundle, a command-line tool, and a SwiftPM package
-  /// target), plus a build-for-testing-only entry, a build-for-running-only entry, and
-  /// an entry naming a target absent from the project.
+  /// A project whose "App" scheme builds an app, its test bundle, a command-line tool,
+  /// and a package framework for testing, so scheme selection keeps the scheme on the
+  /// strength of the app alone.
   static func makeFixtureProject() -> (project: XcodeProj, scheme: XCScheme) {
-    let appConfiguration = XCBuildConfiguration(
-      name: "Debug",
-      buildSettings: ["SUPPORTED_PLATFORMS": "iphoneos iphonesimulator"])
-    let appConfigurationList = XCConfigurationList(
-      buildConfigurations: [appConfiguration])
-    let appTarget = PBXNativeTarget(
-      name: "App", buildConfigurationList: appConfigurationList, productType: .application)
+    let appTarget = PBXNativeTarget(name: "App", productType: .application)
     let testsTarget = PBXNativeTarget(name: "AppTests", productType: .unitTestBundle)
     let toolTarget = PBXNativeTarget(name: "Tool", productType: .commandLineTool)
-    let packageConfiguration = XCBuildConfiguration(
-      name: "Debug",
-      buildSettings: ["SUPPORTED_PLATFORMS": "macosx"])
-    let packageConfigurationList = XCConfigurationList(
-      buildConfigurations: [packageConfiguration])
-    let packageTarget = PBXNativeTarget(
-      name: "PackageLib",
-      buildConfigurationList: packageConfigurationList,
-      productType: .framework)
-
+    let packageTarget = PBXNativeTarget(name: "PackageLib", productType: .framework)
     let entries = [
       XCScheme.BuildAction.Entry(
         buildableReference: makeBuildableReference(name: "App"),
@@ -301,120 +149,141 @@ enum DeadcodeCoverageMatrixTests {
         buildableReference: makeBuildableReference(name: "Tool"), buildFor: [.testing]),
       XCScheme.BuildAction.Entry(
         buildableReference: makeBuildableReference(name: "PackageLib"), buildFor: [.testing]),
-      XCScheme.BuildAction.Entry(
-        buildableReference: makeBuildableReference(name: "App"), buildFor: [.running]),
-      XCScheme.BuildAction.Entry(
-        buildableReference: makeBuildableReference(name: "Ghost"), buildFor: [.testing]),
     ]
     let scheme = makeScheme(name: "App", entries: entries)
-
-    let objects: [PBXObject] =
-      [
-        appTarget, testsTarget, toolTarget, packageTarget, appConfigurationList,
-        packageConfigurationList, appConfiguration, packageConfiguration,
-      ]
+    let objects: [PBXObject] = [appTarget, testsTarget, toolTarget, packageTarget]
     let project = XcodeProj(
       workspace: XCWorkspace(data: XCWorkspaceData(children: [])),
       pbxproj: PBXProj(objects: objects),
       sharedData: XCSharedData(schemes: [scheme]))
     return (project, scheme)
   }
+
+  /// A scheme whose only build-for-testing entry is a test bundle, so it contributes no
+  /// coverage target.
+  static func makeTestOnlyScheme() -> (project: XcodeProj, scheme: XCScheme) {
+    let testsTarget = PBXNativeTarget(name: "OnlyTests", productType: .unitTestBundle)
+    let entries = [
+      XCScheme.BuildAction.Entry(
+        buildableReference: makeBuildableReference(name: "OnlyTests"), buildFor: [.testing])
+    ]
+    let scheme = makeScheme(name: "OnlyTests", entries: entries)
+    let project = XcodeProj(
+      workspace: XCWorkspace(data: XCWorkspaceData(children: [])),
+      pbxproj: PBXProj(objects: [testsTarget]),
+      sharedData: XCSharedData(schemes: [scheme]))
+    return (project, scheme)
+  }
 }
 
-// MARK: - DeadcodeCoverageMatrixPlatformTests
+// MARK: - DeadcodeCoverageMatrixDestinationTests
 
-/// The pure platform-derivation helpers (`platforms`, `platformsFromSDKRoot`), split
-/// into their own suite so neither enum body crosses the complexity gate's line limit.
+/// Covers `coveragePlatforms` and its helpers, the pure parser that reads an
+/// `xcodebuild -showdestinations` transcript into the coverage platform set. This is the
+/// authoritative platform source, so the parser is tested against the real transcript
+/// shape, including the ineligible section and Mac Catalyst variant.
 @Suite(.serialized)
-enum DeadcodeCoverageMatrixPlatformTests {
-  // MARK: platforms
+enum DeadcodeCoverageMatrixDestinationTests {
+  // MARK: coveragePlatform mapper
 
   @Test
-  static func platformsParsesASingleToken() {
-    #expect(
-      DeadcodeCoverageMatrix.platforms(supportedPlatforms: "macosx", supportsMacCatalyst: false)
-        == [.macosx])
+  static func coveragePlatformMapsMacOS() {
+    #expect(DeadcodeCoverageMatrix.coveragePlatform(platform: "macOS", variant: nil) == .macosx)
   }
 
   @Test
-  static func platformsParsesSpaceSeparatedTokens() {
+  static func coveragePlatformMapsMacCatalystVariant() {
     #expect(
-      DeadcodeCoverageMatrix.platforms(
-        supportedPlatforms: "iphoneos iphonesimulator", supportsMacCatalyst: false)
-        == [.iphoneos, .iphonesimulator])
+      DeadcodeCoverageMatrix.coveragePlatform(platform: "macOS", variant: "Mac Catalyst")
+        == .maccatalyst)
   }
 
   @Test
-  static func platformsParsesCommaSeparatedTokens() {
+  static func coveragePlatformMapsIOSAndSimulatorToSimulator() {
     #expect(
-      DeadcodeCoverageMatrix.platforms(
-        supportedPlatforms: "iphoneos,macosx", supportsMacCatalyst: false)
-        == [.iphoneos, .macosx])
+      DeadcodeCoverageMatrix.coveragePlatform(platform: "iOS Simulator", variant: nil)
+        == .iphonesimulator)
+    #expect(
+      DeadcodeCoverageMatrix.coveragePlatform(platform: "iOS", variant: nil) == .iphonesimulator)
   }
 
   @Test
-  static func platformsAddsMacCatalystWhenSupported() {
-    #expect(
-      DeadcodeCoverageMatrix.platforms(supportedPlatforms: "iphoneos", supportsMacCatalyst: true)
-        == [.iphoneos, .maccatalyst])
+  static func coveragePlatformIgnoresUnsupportedPlatforms() {
+    #expect(DeadcodeCoverageMatrix.coveragePlatform(platform: "watchOS", variant: nil) == nil)
+    #expect(DeadcodeCoverageMatrix.coveragePlatform(platform: "DriverKit", variant: nil) == nil)
+  }
+
+  // MARK: destinationField
+
+  @Test
+  static func destinationFieldReadsAValueWithSpaces() {
+    let line = "{ platform:iOS Simulator, arch:arm64, id:ABC, name:iPhone 17 }"
+    #expect(DeadcodeCoverageMatrix.destinationField("platform", in: line) == "iOS Simulator")
+    #expect(DeadcodeCoverageMatrix.destinationField("arch", in: line) == "arm64")
   }
 
   @Test
-  static func platformsDropsAnUnknownToken() {
-    #expect(
-      DeadcodeCoverageMatrix.platforms(
-        supportedPlatforms: "macosx watchos", supportsMacCatalyst: false) == [.macosx])
+  static func destinationFieldReadsTheMacCatalystVariant() {
+    let line = "{ platform:macOS, arch:arm64, variant:Mac Catalyst, id:XYZ, name:My Mac }"
+    #expect(DeadcodeCoverageMatrix.destinationField("variant", in: line) == "Mac Catalyst")
   }
 
   @Test
-  static func platformsIsEmptyForNilOrBlankInputWithNoMacCatalyst() {
-    #expect(
-      DeadcodeCoverageMatrix.platforms(supportedPlatforms: nil, supportsMacCatalyst: false)
-        .isEmpty)
-    #expect(
-      DeadcodeCoverageMatrix.platforms(supportedPlatforms: "", supportsMacCatalyst: false)
-        .isEmpty)
+  static func destinationFieldIsNilForAnAbsentKey() {
+    let line = "{ platform:macOS, name:My Mac }"
+    #expect(DeadcodeCoverageMatrix.destinationField("variant", in: line) == nil)
   }
 
-  // MARK: platformsFromSDKRoot
+  // MARK: coveragePlatforms parser
 
   @Test
-  static func platformsFromSDKRootMatchesMacOS() {
+  static func coveragePlatformsReadsAnIOSPlusCatalystScheme() {
+    // The real CellTunnelPhone transcript shape: Mac Catalyst, an iOS device
+    // placeholder, and many iOS simulators. The result is the base iOS simulator plus
+    // Mac Catalyst, so the iPhone build compiles the non-Catalyst branch.
+    let output = """
+        Available destinations for the "PhoneApp" scheme:
+      \t\t{ platform:macOS, arch:arm64, variant:Mac Catalyst, id:00, name:My Mac }
+      \t\t{ platform:iOS, id:dvtdevice-...:placeholder, name:Any iOS Device }
+      \t\t{ platform:iOS Simulator, id:dvt-...:placeholder, name:Any iOS Simulator Device }
+      \t\t{ platform:iOS Simulator, arch:arm64, id:AA, OS:26.5, name:iPhone 17 }
+      """
     #expect(
-      DeadcodeCoverageMatrix.platformsFromSDKRoot("macosx", supportsMacCatalyst: false)
-        == [.macosx])
-  }
-
-  @Test
-  static func platformsFromSDKRootMatchesAVersionedSDK() {
-    #expect(
-      DeadcodeCoverageMatrix.platformsFromSDKRoot("macosx14.0", supportsMacCatalyst: false)
-        == [.macosx])
-  }
-
-  @Test
-  static func platformsFromSDKRootDistinguishesSimulatorFromDevice() {
-    #expect(
-      DeadcodeCoverageMatrix.platformsFromSDKRoot("iphonesimulator", supportsMacCatalyst: false)
-        == [.iphonesimulator])
-    #expect(
-      DeadcodeCoverageMatrix.platformsFromSDKRoot("iphoneos", supportsMacCatalyst: false)
-        == [.iphoneos])
+      DeadcodeCoverageMatrix.coveragePlatforms(showDestinationsOutput: output)
+        == [.iphonesimulator, .maccatalyst])
   }
 
   @Test
-  static func platformsFromSDKRootAddsMacCatalystOnlyWithABasePlatform() {
+  static func coveragePlatformsReadsAMacOnlyScheme() {
+    let output = """
+        Available destinations for the "Helper" scheme:
+      \t\t{ platform:macOS, arch:arm64, id:00, name:My Mac }
+      """
     #expect(
-      DeadcodeCoverageMatrix.platformsFromSDKRoot("iphoneos", supportsMacCatalyst: true)
-        == [.iphoneos, .maccatalyst])
-    #expect(
-      DeadcodeCoverageMatrix.platformsFromSDKRoot(nil, supportsMacCatalyst: true).isEmpty)
+      DeadcodeCoverageMatrix.coveragePlatforms(showDestinationsOutput: output) == [.macosx])
   }
 
   @Test
-  static func platformsFromSDKRootIsEmptyForAnUnknownSDK() {
+  static func coveragePlatformsIgnoresTheIneligibleSection() {
+    // A destination under "Ineligible destinations" must never enter the matrix, so a
+    // scheme whose only iOS destination is ineligible does not gain the iOS platform.
+    let output = """
+        Available destinations for the "MacApp" scheme:
+      \t\t{ platform:macOS, arch:arm64, id:00, name:My Mac }
+        Ineligible destinations for the "MacApp" scheme:
+      \t\t{ platform:iOS Simulator, id:11, name:iPhone 17, error:unavailable }
+      """
     #expect(
-      DeadcodeCoverageMatrix.platformsFromSDKRoot("watchos", supportsMacCatalyst: false)
-        .isEmpty)
+      DeadcodeCoverageMatrix.coveragePlatforms(showDestinationsOutput: output) == [.macosx])
+  }
+
+  @Test
+  static func coveragePlatformsIsEmptyForNoUsableDestinations() {
+    let output = """
+        Available destinations for the "Watch" scheme:
+      \t\t{ platform:watchOS Simulator, arch:arm64, id:00, name:Apple Watch }
+      """
+    #expect(
+      DeadcodeCoverageMatrix.coveragePlatforms(showDestinationsOutput: output).isEmpty)
   }
 }

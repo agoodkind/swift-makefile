@@ -175,6 +175,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/SigningVerification.swift \
 	Sources/SwiftMkCore/ToolchainPrebuild.swift \
 	Sources/SwiftMkCore/Toolchain.swift \
+	Sources/SwiftMkCore/Toolchain+Generate.swift \
 	Sources/SwiftMkCore/Toolchain+Coverage.swift \
 	Sources/SwiftMkCore/Toolchain+GatedCompile.swift \
 	Sources/SwiftMkCore/GatedBuild.swift \
