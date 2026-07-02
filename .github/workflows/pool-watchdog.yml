@@ -1,0 +1,80 @@
+# Backstop for the self-hosted M1 pool. The broker owns the primary failover: it
+# reports truthful capacity and cancels any job it accepts but cannot serve. This
+# workflow covers the one case the broker cannot, which is being fully down or
+# unreachable, so it cannot cancel. It finds pool-label jobs stuck queued past a
+# threshold and cancels their runs, so CI never hangs even when the broker is dead.
+# A cancelled run is picked up by ci-infra-retry, which reruns the cancelled jobs;
+# on the rerun plan-runners routes them to hosted because capacity is unavailable.
+name: Pool watchdog
+
+on:
+  schedule:
+    # Every 5 minutes. Scheduled workflows run on the default branch only.
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+env:
+  # The self-hosted pool label. A job queued on this label with no runner is the
+  # stranding case this watchdog resolves.
+  POOL_LABEL: agk-local-macos-26
+  # A pool job that has been queued longer than this many seconds is treated as
+  # stranded. The broker's own serving deadline is shorter, so this only fires
+  # when the broker could not act at all.
+  STUCK_THRESHOLD_SECONDS: "480"
+
+jobs:
+  cancel-stranded:
+    name: Cancel stranded pool jobs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Cancel runs with a pool job stuck queued
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          now_epoch="$(date -u +%s)"
+
+          # Only in-progress runs can hold a stuck-queued job; queued runs have not
+          # scheduled jobs yet, and completed runs cannot hang.
+          run_ids="$(
+            gh api --paginate \
+              "repos/${REPOSITORY}/actions/runs?status=in_progress&per_page=100" \
+              --jq '.workflow_runs[].id'
+          )"
+
+          if [ -z "${run_ids}" ]; then
+            printf 'no in-progress runs\n'
+            exit 0
+          fi
+
+          for run_id in ${run_ids}; do
+            # A job is stranded when it is still queued, carries the pool label, and
+            # was created longer ago than the threshold. jq emits the created_at of
+            # each such job so the shell can compare ages.
+            stuck_created="$(
+              gh api --paginate \
+                "repos/${REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" \
+                --jq --arg label "${POOL_LABEL}" \
+                '.jobs[] | select(.status == "queued") | select(any(.labels[]?; . == $label)) | .created_at'
+            )"
+
+            for created_at in ${stuck_created}; do
+              created_epoch="$(date -u -d "${created_at}" +%s 2>/dev/null || printf '0')"
+              if [ "${created_epoch}" -eq 0 ]; then
+                continue
+              fi
+              age=$(( now_epoch - created_epoch ))
+              if [ "${age}" -ge "${STUCK_THRESHOLD_SECONDS}" ]; then
+                printf 'run %s has a pool job queued for %ss; cancelling\n' "${run_id}" "${age}"
+                gh api -X POST "repos/${REPOSITORY}/actions/runs/${run_id}/cancel" || true
+                break
+              fi
+            done
+          done
