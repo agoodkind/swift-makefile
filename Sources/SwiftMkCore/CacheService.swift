@@ -239,9 +239,9 @@ public enum CacheService {
       isCompileWriter: isCompileWriterGate(writer))
   }
 
-  /// The gates that actually compile the package and therefore own the compile cache:
-  /// the build, test, and dead-code gates. The engine decides this from the gate name
-  /// alone, so a consumer sets nothing.
+  /// The gates that actually compile the package and therefore own the compile cache.
+  /// The engine decides this from the gate name alone, so a consumer sets nothing. The
+  /// exact writer gate strings are `build`, `test`, `lint-deadcode`, and `deadcode`.
   static func isCompileWriterGate(_ gate: String) -> Bool {
     ["build", "test", "lint-deadcode", "deadcode"].contains(gate)
   }
