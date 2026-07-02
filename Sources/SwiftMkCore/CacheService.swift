@@ -239,19 +239,11 @@ public enum CacheService {
       isCompileWriter: isCompileWriterGate(writer))
   }
 
-  /// The gates that actually compile the package and therefore own the compile cache:
-  /// the build, test, and dead-code gates. A consumer with a bespoke compiling
-  /// extra-target sets `SWIFT_MK_COMPILE_CACHE_WRITE=1` to opt that gate in; `0`/`off`
-  /// opts a gate out.
+  /// The gates that actually compile the package and therefore own the compile cache.
+  /// The engine decides this from the gate name alone, so a consumer sets nothing. The
+  /// exact writer gate strings are `build`, `test`, `lint-deadcode`, and `deadcode`.
   static func isCompileWriterGate(_ gate: String) -> Bool {
-    let override = Env.get("SWIFT_MK_COMPILE_CACHE_WRITE").lowercased()
-    if ["1", "true", "yes", "on"].contains(override) {
-      return true
-    }
-    if ["0", "false", "no", "off"].contains(override) {
-      return false
-    }
-    return ["build", "test", "lint-deadcode", "deadcode"].contains(gate)
+    ["build", "test", "lint-deadcode", "deadcode"].contains(gate)
   }
 
   /// A value unique to this run attempt, so each compile-cache save lands under a fresh
@@ -281,7 +273,9 @@ public enum CacheService {
       xcodeCachePath: Toolchain.resolvedSharedCachePath(
         "SWIFT_MK_XCODE_CACHE_PATH", defaultSubdirectory: "CompilationCache"),
       swiftpmCachePath: Toolchain.resolvedSharedCachePath(
-        "SWIFT_MK_SWIFTPM_CACHE_PATH", defaultSubdirectory: "SwiftPMCompilationCache"),
+        "SWIFT_MK_SWIFTPM_CACHE_PATH",
+        defaultSubdirectory: "SwiftPMCompilationCache",
+        honorDisableToken: false),
       extraPaths: extraCachePaths())
     return CachePaths.resolve(inputs)
   }

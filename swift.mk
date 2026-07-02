@@ -447,23 +447,18 @@ SWIFT_MK_XCODE_CACHE_PATH ?= $(SWIFT_MK_CACHE_ROOT)/CompilationCache
 export SWIFT_MK_XCODE_CACHE_PATH
 # The shared LLVM CAS store for `swift build` compilation caching. Kept outside
 # DerivedData and shared across worktrees (content-addressed), the SwiftPM peer
-# of SWIFT_MK_XCODE_CACHE_PATH. Set to `off` to opt out.
+# of SWIFT_MK_XCODE_CACHE_PATH. The engine owns this cache with no consumer opt-out:
+# a real path relocates the store, and a disable token (off/none/0/disabled) is treated
+# as unset and resolves to the default store rather than turning caching off.
 SWIFT_MK_SWIFTPM_CACHE_PATH ?= $(SWIFT_MK_CACHE_ROOT)/SwiftPMCompilationCache
 export SWIFT_MK_SWIFTPM_CACHE_PATH
-# Opt-in SwiftPM compilation caching via -explicit-module-build -cache-compile-job.
-# OFF by default because -explicit-module-build changes the build mode and can
-# break macro or C-interop builds; enable after validating in your consumer.
-# When requested, enable only on a toolchain that supports the flag: detect the
-# capability from the frontend help, and fall back to a Swift 6.3 version floor
-# (the release where swift build compilation caching is available) so a change in
-# the hidden-help text cannot wrongly disable it.
-SWIFT_MK_SWIFTPM_COMPILE_CACHE ?=
-SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED := NO
-ifneq ($(filter $(SWIFT_MK_SWIFTPM_COMPILE_CACHE),1 true TRUE yes YES on ON auto AUTO),)
+# SwiftPM compilation caching via -explicit-module-build -cache-compile-job. On by
+# default, the SwiftPM peer of the Xcode compilation cache, engine-owned with no consumer
+# opt-in or opt-out: the engine enables it whenever the toolchain supports the flag,
+# detected from the frontend help with a Swift 6.3 version-floor fallback (the release
+# where swift build compilation caching is available) so a change in the hidden-help text
+# cannot wrongly disable it, and a toolchain that lacks it never receives the flags.
 SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED := $(shell sc=$$(command -v swiftc 2>/dev/null || true); if [ -z "$$sc" ]; then printf 'NO'; elif "$$sc" -frontend -help-hidden 2>&1 | grep -q -- '-cache-compile-job'; then printf 'YES'; else v=$$("$$sc" -version 2>&1 | sed -n 's/.*Swift version \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p'); set -- $$v; maj=$${1:-0}; min=$${2:-0}; if [ "$$maj" -gt 6 ] || { [ "$$maj" -eq 6 ] && [ "$$min" -ge 3 ]; }; then printf 'YES'; else printf 'NO'; fi; fi)
-else ifneq ($(filter $(SWIFT_MK_SWIFTPM_COMPILE_CACHE),0 false FALSE no NO off OFF),)
-SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED := NO
-endif
 export SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED
 # Exported so `toolchain generate` can point Xcode.app's DerivedData at the same path.
 export SWIFT_MK_DERIVED_DATA
@@ -692,8 +687,7 @@ help:
 	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_PREFIX_MAP=auto|1|0' 'remap absolute paths for cross-runner cache hits'
 	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_PATH=...|off' 'shared CAS store path, kept outside DerivedData'
 	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_DIAGNOSTICS=1' 'emit Xcode compilation cache diagnostic remarks'
-	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE_PATH=...|off' 'shared CAS store for swift build compilation caching'
-	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_COMPILE_CACHE=auto|1|0' 'opt-in swift build compilation caching (off by default)'
+	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE_PATH=...' 'relocate the swift build compilation cache store (on by default, no opt-out)'
 	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS=1' 'emit swift build compilation cache diagnostic remarks'
 	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE_ARGS=...' 'override shared SwiftPM cache flags'
 	@printf '  %-40s %s\n' 'ccache/sccache' 'C-family cache tools; not Swift compilation caches'
