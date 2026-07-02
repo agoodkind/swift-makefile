@@ -16,6 +16,23 @@ import Testing
 @Suite(.serialized)
 enum ToolchainBuildCoverageTests {
   @Test
+  static func wipeableDerivedDataAcceptsAStrictProjectSubdirectory() {
+    #expect(Toolchain.isWipeableDerivedData("/proj/build/DerivedData", relativeTo: "/proj"))
+    #expect(Toolchain.isWipeableDerivedData("/proj/.derived-data", relativeTo: "/proj"))
+  }
+
+  @Test
+  static func wipeableDerivedDataRejectsBroadPaths() {
+    // The project root itself, a parent, a sibling, a home directory, and root must
+    // never be wiped, so a misconfigured SWIFT_MK_DERIVED_DATA cannot rm -rf them.
+    #expect(!Toolchain.isWipeableDerivedData("/proj", relativeTo: "/proj"))
+    #expect(!Toolchain.isWipeableDerivedData("/", relativeTo: "/proj"))
+    #expect(!Toolchain.isWipeableDerivedData("/Users/dev", relativeTo: "/proj"))
+    #expect(!Toolchain.isWipeableDerivedData("/proj-other/build", relativeTo: "/proj"))
+    #expect(!Toolchain.isWipeableDerivedData("/proj/build/../../etc", relativeTo: "/proj"))
+  }
+
+  @Test
   static func buildCoverageEntriesRunsEveryEntryWithDestinationAndResultBundle() throws {
     try GatedBuildHarness.run { setup in
       let entries = [

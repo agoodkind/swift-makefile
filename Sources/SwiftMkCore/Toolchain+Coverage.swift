@@ -175,6 +175,17 @@ extension Toolchain {
     guard !resolvedPath.isEmpty else {
       return
     }
+    // Guard the blast radius before `rm -rf`. SWIFT_MK_DERIVED_DATA is consumer-provided,
+    // so a misconfigured absolute path (a shared DerivedData, a home directory, or the
+    // project root itself) must never be deleted. Only a strict subdirectory of the
+    // working directory is a project-owned DerivedData the coverage build may wipe.
+    let cwd = FileManager.default.currentDirectoryPath
+    guard isWipeableDerivedData(resolvedPath, relativeTo: cwd) else {
+      Output.error(
+        "deadcode: refusing to wipe DerivedData at \(resolvedPath); it is not a subdirectory of "
+          + "the project at \(cwd). Set SWIFT_MK_DERIVED_DATA to a project-local path.")
+      return
+    }
     do {
       try FileManager.default.removeItem(atPath: resolvedPath)
       Output.info("deadcode: wiped DerivedData at \(resolvedPath)")
@@ -185,6 +196,19 @@ extension Toolchain {
       }
       Output.error("deadcode: could not wipe DerivedData at \(resolvedPath): \(error)")
     }
+  }
+
+  /// True when `path` is a strict subdirectory of `cwd`, so the coverage build may wipe
+  /// it. Rejects the working directory itself and any path outside it (a shared
+  /// DerivedData, a home directory, `/`), bounding the `rm -rf` blast radius. Standardizes
+  /// both paths first so `..` and trailing slashes cannot smuggle a path past the check.
+  static func isWipeableDerivedData(_ path: String, relativeTo cwd: String) -> Bool {
+    let standardizedPath = (path as NSString).standardizingPath
+    let standardizedCwd = (cwd as NSString).standardizingPath
+    guard !standardizedCwd.isEmpty, standardizedPath != standardizedCwd else {
+      return false
+    }
+    return standardizedPath.hasPrefix(standardizedCwd + "/")
   }
 
   private static func isMissingFile(_ error: Error) -> Bool {
