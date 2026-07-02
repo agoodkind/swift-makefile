@@ -392,6 +392,15 @@ final class AuditVisitor: SyntaxVisitor {
     if buildToolNeedlePresent(in: literal), isInvocationContext(node) {
       record(.unroutedBuildTooling, position: node.positionAfterSkippingLeadingTrivia)
     }
+    // Also flag a `swift build`/`run`/`test` spawn: the `"swift"` executable literal
+    // in invocation context whose following literal argument is a compiling
+    // subcommand. `swift package` and a `<file>.swift` script argument stay allowed.
+    if swiftExecutableNeedlePresent(in: literal), isInvocationContext(node),
+      let subcommand = swiftSubcommand(after: node),
+      swiftBuildSubcommandBanned(in: subcommand)
+    {
+      record(.unroutedBuildTooling, position: node.positionAfterSkippingLeadingTrivia)
+    }
     return .visitChildren
   }
 

@@ -54,9 +54,23 @@ func auditAllowsSanctionedToolchainCall() {
 }
 
 @Test
-func auditAllowsSwiftBuild() {
-  #expect(!BuildToolingAudit.lineInvokesToolchain("\tswift build -c release"))
-  #expect(!BuildToolingAudit.lineInvokesToolchain("\tFOO=tuist swift run"))
+func auditFlagsRecipeSwiftBuildRunTest() {
+  // A tab-indented recipe running the compiling subcommands must route through
+  // $(SWIFT_MK_BIN); a leading env-assignment prefix does not exempt it.
+  #expect(BuildToolingAudit.lineInvokesToolchain("\tswift build -c release"))
+  #expect(BuildToolingAudit.lineInvokesToolchain("\tswift test"))
+  #expect(BuildToolingAudit.lineInvokesToolchain("\tFOO=tuist swift run"))
+  #expect(BuildToolingAudit.lineInvokesToolchain("\tcd Tools && swift build"))
+}
+
+@Test
+func auditAllowsSwiftPackageScriptAndVariableBuild() {
+  // swift package (metadata/clean) and a script argument are not compiling
+  // subcommands. A `swift build` in a make variable assignment is not a recipe
+  // command line, so the consumer's configured SWIFT_BUILD_CMD stays clean.
+  #expect(!BuildToolingAudit.lineInvokesToolchain("\tswift package clean"))
+  #expect(!BuildToolingAudit.lineInvokesToolchain("\tswift Tools/Build.swift"))
+  #expect(!BuildToolingAudit.lineInvokesToolchain("SWIFT_BUILD_CMD := swift build"))
   #expect(!BuildToolingAudit.lineInvokesToolchain("xcodegen generate"))
 }
 
