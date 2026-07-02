@@ -476,6 +476,9 @@ extension Toolchain {
       "SWIFT_MK_SPM_CACHE", defaultSubdirectory: "SourcePackages")
     if let spm {
       args.append(contentsOf: ["-clonedSourcePackagesDirPath", spm])
+      if Env.get("SWIFT_MK_POOL") == "1" {
+        args.append("-disableAutomaticPackageResolution")
+      }
     }
     let module = resolvedSharedCachePath(
       "SWIFT_MK_MODULE_CACHE", defaultSubdirectory: "ModuleCache")

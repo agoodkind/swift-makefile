@@ -21,6 +21,7 @@ struct CacheCommand: ParsableCommand {
     abstract: "Emit the CI cache plan and manage the local build caches.",
     subcommands: [
       CachePlanCommand.self, CachePathsCommand.self, CacheInfoCommand.self, CacheCleanCommand.self,
+      CachePruneCommand.self,
     ]
   )
 }
@@ -77,6 +78,26 @@ struct CacheCleanCommand: ParsableCommand {
 
   func run() throws {
     let status = CacheService.runClean()
+    if status != 0 { throw ExitCode(status) }
+  }
+}
+
+// MARK: - CachePruneCommand
+
+struct CachePruneCommand: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "prune",
+    abstract: "Remove least-recently-used shared cache entries until the cache is under a byte cap."
+  )
+
+  @Option(help: "Maximum cache size in bytes.")
+  var maxBytes: UInt64
+
+  @Option(help: "Shared cache root to prune.")
+  var path: String?
+
+  func run() throws {
+    let status = CacheService.runPrune(maxBytes: maxBytes, path: path)
     if status != 0 { throw ExitCode(status) }
   }
 }

@@ -1,0 +1,55 @@
+name: CI infra retry
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  rerun-cancelled:
+    name: Rerun cancelled CI jobs
+    if: github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.run_attempt == 1
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rerun only infra-cancelled jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          failure_found=false
+          cancelled_found=false
+          while IFS= read -r conclusion; do
+            case "${conclusion}" in
+              failure)
+                failure_found=true
+                ;;
+              cancelled)
+                cancelled_found=true
+                ;;
+            esac
+          done < <(
+            gh api --paginate \
+              "repos/${REPOSITORY}/actions/runs/${RUN_ID}/jobs" \
+              --jq '.jobs[].conclusion'
+          )
+
+          if [[ "${failure_found}" == "true" ]]; then
+            printf 'CI run %s has a failed job; not retrying a real failure.\n' "${RUN_ID}"
+            exit 0
+          fi
+
+          if [[ "${cancelled_found}" == "true" ]]; then
+            gh api \
+              -X POST \
+              "repos/${REPOSITORY}/actions/runs/${RUN_ID}/rerun-failed-jobs"
+            printf 'CI run %s had cancelled jobs only; requested one failed-job rerun.\n' "${RUN_ID}"
+          else
+            printf 'CI run %s had no failed or cancelled jobs; no retry needed.\n' "${RUN_ID}"
+          fi
