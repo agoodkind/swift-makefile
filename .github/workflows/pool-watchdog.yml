@@ -37,10 +37,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
         run: |
-          set -euo pipefail
+          # shellcheck disable=SC2016
           # The jq filters below use single-quoted `$label` as a jq variable bound
           # by --arg, not a shell variable, so the no-expansion warning is expected.
-          # shellcheck disable=SC2016
+          set -euo pipefail
 
           now_epoch="$(date -u +%s)"
 
