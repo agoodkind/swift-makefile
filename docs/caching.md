@@ -12,13 +12,13 @@ The SwiftPM store serves `swift build`. The engine injects the compile-cache fla
 
 Both stores live outside DerivedData, under `SWIFT_MK_CACHE_ROOT` (default `$HOME/Library/Caches/swift-mk`). Keeping them outside DerivedData matters because the dead-code coverage build runs `rm -rf $(SWIFT_MK_DERIVED_DATA)`, which would otherwise destroy a store kept inside it. Both stores are content-addressed, so one shared copy is safe across worktrees, and both are cached cross-runner in the dependency bucket of `CachePaths`, so a code-only change restores the store and the next build replays.
 
-## SwiftPM compilation caching is opt-in
+## SwiftPM compilation caching is on by default
 
-SwiftPM compilation caching is off by default. A consumer turns it on with `SWIFT_MK_SWIFTPM_COMPILE_CACHE=auto` after validating its own build.
+SwiftPM compilation caching is on by default, the SwiftPM peer of the Xcode compilation cache, so a consumer sets nothing. Opt out by setting `SWIFT_MK_SWIFTPM_CACHE_PATH=off`, the same escape hatch the Xcode cache path has.
 
-The reason is the required flag. `swift build` only caches when it runs in explicit-module-build mode, so the engine passes `-Xswiftc -explicit-module-build` alongside `-Xswiftc -cache-compile-job` and `-Xswiftc -cas-path`. Without `-explicit-module-build`, `swift build` prints `cannot be used without explicit module build, turn off caching` and the store stays empty.
+The required flag is explicit-module-build. `swift build` only caches when it runs in explicit-module-build mode, so the engine passes `-Xswiftc -explicit-module-build` alongside `-Xswiftc -cache-compile-job` and `-Xswiftc -cas-path`. Without `-explicit-module-build`, `swift build` prints `cannot be used without explicit module build, turn off caching` and the store stays empty.
 
-Explicit module builds change how the compiler resolves modules, which can break a macro or C-interop target that an implicit-module build compiled. The off-by-default knob keeps that risk on the consumer that opts in, not on every `swift build` the engine runs. When a consumer opts in, the make layer enables the flags only on a supporting toolchain: it detects the capability from the frontend help, and falls back to a Swift 6.3 version floor when that help text is absent, so an older toolchain never receives the flags.
+The engine enables the flags only on a toolchain that supports them: it detects the capability from the frontend help, and falls back to a Swift 6.3 version floor when that help text is absent, so a toolchain that lacks the flag never receives it. Explicit module builds change how the compiler resolves modules, which in principle can affect a macro or C-interop target; in practice it built clean and replayed on every real graph tested (Swift macros, MLX C++), and if a graph ever breaks under explicit modules that consumer's own CI surfaces it.
 
 `SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS=1` adds `-Xswiftc -Rcache-compile-job`, which prints a replay or miss remark per output file. Use it to confirm replay.
 

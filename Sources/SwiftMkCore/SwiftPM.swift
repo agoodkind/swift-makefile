@@ -308,7 +308,7 @@ public enum SwiftPM {
   // MARK: Argument assembly
 
   /// The shared SwiftPM cache flags the make layer computes, injected by the engine so
-  /// no consumer hand-rolls them. Includes compilation-cache flags when the opt-in
+  /// no consumer hand-rolls them. Includes compilation-cache flags when the engine's
   /// `SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED` flag is YES.
   static func cacheArguments() -> [String] {
     var args = Env.words(Env.get("SWIFT_MK_SWIFTPM_CACHE_ARGS"))
@@ -316,10 +316,10 @@ public enum SwiftPM {
     return args
   }
 
-  /// The LLVM compilation-cache flags for `swift build`/`swift test` when the opt-in
-  /// enable flag is YES and the CAS store path is usable. Requires Swift 6.3.2 or later;
-  /// the make layer probes the toolchain and forces `SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED`
-  /// to NO on older toolchains, so these flags never reach an unsupporting compiler.
+  /// The LLVM compilation-cache flags for `swift build`/`swift test` when the enable
+  /// flag is YES and the CAS store path is usable. The make layer sets the enable flag
+  /// on by default on any toolchain that supports `-cache-compile-job` (Swift 6.3+) and
+  /// to NO otherwise, so these flags never reach an unsupporting compiler.
   private static func compileCacheArguments() -> [String] {
     guard Env.get("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED") == "YES" else {
       return []
