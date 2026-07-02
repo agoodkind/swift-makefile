@@ -19,6 +19,14 @@ public struct CachePruneResult: Equatable, Sendable {
   public let removedEntries: Int
 }
 
+// MARK: - CachePruneError
+
+/// Refuses to prune a path that is empty, root, or too shallow, so a mistyped
+/// `--path` cannot delete unrelated directories.
+public enum CachePruneError: Error, Equatable, Sendable {
+  case unsafePath(String)
+}
+
 // MARK: - CacheService Prune
 
 extension CacheService {
@@ -43,6 +51,7 @@ extension CacheService {
 
   public static func prune(maxBytes: UInt64, path: String? = nil) throws -> CachePruneResult {
     let prunePath = path ?? defaultSharedCacheRootPath()
+    try validatePrunePath(prunePath)
     let root = URL(fileURLWithPath: prunePath, isDirectory: true)
     Output.debug("cache prune: inspecting \(root.path)")
     guard FileManager.default.fileExists(atPath: root.path) else {
@@ -65,10 +74,17 @@ extension CacheService {
         if currentBytes <= maxBytes {
           break
         }
-        try FileManager.default.removeItem(at: entry.url)
-        currentBytes = currentBytes > entry.bytes ? currentBytes - entry.bytes : 0
-        removedBytes += entry.bytes
-        removedEntries += 1
+        // Isolate per-entry failures: a single undeletable entry (a permission
+        // error or a file vanishing mid-run) must not discard the eviction
+        // progress already made, so log it and keep going.
+        do {
+          try FileManager.default.removeItem(at: entry.url)
+          currentBytes = currentBytes > entry.bytes ? currentBytes - entry.bytes : 0
+          removedBytes += entry.bytes
+          removedEntries += 1
+        } catch {
+          Output.error("cache prune: skipping \(entry.url.path): \(error)")
+        }
       }
     }
     return CachePruneResult(
@@ -79,6 +95,25 @@ extension CacheService {
       removedBytes: removedBytes,
       removedEntries: removedEntries
     )
+  }
+
+  /// The fewest path components a prune root must have below filesystem root. A
+  /// cache dir like /Users/x/pool-cache clears the bar; "/" or "/Users" does
+  /// not, so a mistyped `--path` cannot evict unrelated data.
+  private static let minimumPrunePathComponents = 2
+
+  /// Rejects an empty, root, or shallow prune path so a mistyped `--path` like
+  /// "/" or "/Users" cannot evict unrelated data.
+  private static func validatePrunePath(_ path: String) throws {
+    let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty {
+      throw CachePruneError.unsafePath(path)
+    }
+    let standardized = URL(fileURLWithPath: trimmed).standardizedFileURL.path
+    let components = standardized.split(separator: "/", omittingEmptySubsequences: true)
+    if standardized == "/" || components.count < minimumPrunePathComponents {
+      throw CachePruneError.unsafePath(standardized)
+    }
   }
 
   private struct PruneEntry {

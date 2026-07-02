@@ -86,6 +86,15 @@ func pruneRemovesLeastRecentlyUsedEntriesUntilUnderMaxBytes() throws {
   #expect(FileManager.default.fileExists(atPath: temporaryEntry.path))
 }
 
+@Test
+func pruneRejectsUnsafePaths() {
+  for unsafe in ["", " ", "/", "/Users"] {
+    #expect(throws: CachePruneError.self) {
+      _ = try CacheService.prune(maxBytes: 0, path: unsafe)
+    }
+  }
+}
+
 private func makeTemporaryCacheRoot() throws -> URL {
   let root = FileManager.default.temporaryDirectory.appendingPathComponent(
     "swiftmk-cache-prune-\(UUID().uuidString)",

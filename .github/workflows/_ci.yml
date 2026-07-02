@@ -143,6 +143,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: ${{ inputs.fetch-depth }}
+          # The gate runs helper scripts and make targets; the checkout token is
+          # not needed for local git or the GH_TOKEN-based API calls, so drop it
+          # from git config to shrink the blast radius.
+          persist-credentials: false
 
       - name: Checkout swift-makefile helpers
         if: github.repository != 'agoodkind/swift-makefile'
@@ -276,6 +280,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: ${{ inputs.fetch-depth }}
+          # The gate runs helper scripts and make targets; the checkout token is
+          # not needed for local git or the GH_TOKEN-based API calls, so drop it
+          # from git config to shrink the blast radius.
+          persist-credentials: false
 
       - name: Checkout swift-makefile helpers
         if: github.repository != 'agoodkind/swift-makefile'
@@ -311,7 +319,13 @@ jobs:
 
       - name: Run CI gate
         if: github.repository != 'agoodkind/swift-makefile'
-        uses: agoodkind/swift-makefile/.github/actions/ci-gate@main
+        # Local path from the helper checkout, not a remote @main ref: GitHub
+        # pre-downloads every remote `uses:` in a job before evaluating step
+        # `if:`, so a remote ci-gate@main would fail on the swift-makefile self
+        # test (the action does not exist on main until this merges). A `./`
+        # path is resolved at step runtime, after the helper checkout populates
+        # .swift-makefile, so both roles load the same action.
+        uses: ./.swift-makefile/.github/actions/ci-gate
         with:
           gate: build
           xcode-version: ${{ inputs.xcode-version }}
@@ -346,6 +360,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: ${{ inputs.fetch-depth }}
+          # The gate runs helper scripts and make targets; the checkout token is
+          # not needed for local git or the GH_TOKEN-based API calls, so drop it
+          # from git config to shrink the blast radius.
+          persist-credentials: false
 
       - name: Checkout swift-makefile helpers
         if: github.repository != 'agoodkind/swift-makefile'
@@ -381,7 +399,13 @@ jobs:
 
       - name: Run CI gate
         if: github.repository != 'agoodkind/swift-makefile'
-        uses: agoodkind/swift-makefile/.github/actions/ci-gate@main
+        # Local path from the helper checkout, not a remote @main ref: GitHub
+        # pre-downloads every remote `uses:` in a job before evaluating step
+        # `if:`, so a remote ci-gate@main would fail on the swift-makefile self
+        # test (the action does not exist on main until this merges). A `./`
+        # path is resolved at step runtime, after the helper checkout populates
+        # .swift-makefile, so both roles load the same action.
+        uses: ./.swift-makefile/.github/actions/ci-gate
         with:
           gate: test
           xcode-version: ${{ inputs.xcode-version }}
@@ -419,6 +443,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: ${{ inputs.fetch-depth }}
+          # The gate runs helper scripts and make targets; the checkout token is
+          # not needed for local git or the GH_TOKEN-based API calls, so drop it
+          # from git config to shrink the blast radius.
+          persist-credentials: false
 
       - name: Checkout swift-makefile helpers
         if: github.repository != 'agoodkind/swift-makefile'
@@ -456,7 +484,13 @@ jobs:
 
       - name: Run CI gate
         if: github.repository != 'agoodkind/swift-makefile'
-        uses: agoodkind/swift-makefile/.github/actions/ci-gate@main
+        # Local path from the helper checkout, not a remote @main ref: GitHub
+        # pre-downloads every remote `uses:` in a job before evaluating step
+        # `if:`, so a remote ci-gate@main would fail on the swift-makefile self
+        # test (the action does not exist on main until this merges). A `./`
+        # path is resolved at step runtime, after the helper checkout populates
+        # .swift-makefile, so both roles load the same action.
+        uses: ./.swift-makefile/.github/actions/ci-gate
         with:
           gate: extra-targets
           extra-targets: ${{ inputs.extra-targets }}
