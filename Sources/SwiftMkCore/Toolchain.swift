@@ -501,7 +501,7 @@ extension Toolchain {
   ) -> String? {
     let raw = Env.get(envName).trimmingCharacters(in: .whitespacesAndNewlines)
     let isDisableToken = sharedCacheDisableTokens.contains(raw.lowercased())
-    if isDisableToken && honorDisableToken {
+    if isDisableToken, honorDisableToken {
       return nil
     }
     if raw.isEmpty || isDisableToken {

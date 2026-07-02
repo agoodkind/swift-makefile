@@ -329,7 +329,8 @@ public enum SwiftPM {
     // relocates the store), and the path always resolves.
     guard
       let path = Toolchain.resolvedSharedCachePath(
-        "SWIFT_MK_SWIFTPM_CACHE_PATH", defaultSubdirectory: "SwiftPMCompilationCache",
+        "SWIFT_MK_SWIFTPM_CACHE_PATH",
+        defaultSubdirectory: "SwiftPMCompilationCache",
         honorDisableToken: false)
     else {
       return []
