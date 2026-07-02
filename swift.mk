@@ -452,12 +452,11 @@ export SWIFT_MK_XCODE_CACHE_PATH
 SWIFT_MK_SWIFTPM_CACHE_PATH ?= $(SWIFT_MK_CACHE_ROOT)/SwiftPMCompilationCache
 export SWIFT_MK_SWIFTPM_CACHE_PATH
 # SwiftPM compilation caching via -explicit-module-build -cache-compile-job. On by
-# default, the SwiftPM peer of the Xcode compilation cache, with no consumer opt-in:
-# the engine enables it whenever the toolchain supports the flag, detected from the
-# frontend help with a Swift 6.3 version-floor fallback (the release where swift build
-# compilation caching is available) so a change in the hidden-help text cannot wrongly
-# disable it, and a toolchain that lacks it never receives the flags. Opt out by setting
-# SWIFT_MK_SWIFTPM_CACHE_PATH=off, the same escape hatch the Xcode cache path has.
+# default, the SwiftPM peer of the Xcode compilation cache, engine-owned with no consumer
+# opt-in or opt-out: the engine enables it whenever the toolchain supports the flag,
+# detected from the frontend help with a Swift 6.3 version-floor fallback (the release
+# where swift build compilation caching is available) so a change in the hidden-help text
+# cannot wrongly disable it, and a toolchain that lacks it never receives the flags.
 SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED := $(shell sc=$$(command -v swiftc 2>/dev/null || true); if [ -z "$$sc" ]; then printf 'NO'; elif "$$sc" -frontend -help-hidden 2>&1 | grep -q -- '-cache-compile-job'; then printf 'YES'; else v=$$("$$sc" -version 2>&1 | sed -n 's/.*Swift version \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p'); set -- $$v; maj=$${1:-0}; min=$${2:-0}; if [ "$$maj" -gt 6 ] || { [ "$$maj" -eq 6 ] && [ "$$min" -ge 3 ]; }; then printf 'YES'; else printf 'NO'; fi; fi)
 export SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED
 # Exported so `toolchain generate` can point Xcode.app's DerivedData at the same path.
