@@ -62,32 +62,7 @@ public enum DeadcodeCoverageMatrix {
     }
   }
 
-  // MARK: Integration entry point
-
-  /// The full `(scheme, platform)` matrix for `containerPath`, an `.xcodeproj` path or
-  /// (when `isWorkspace`) an `.xcworkspace` path. `packageTargetNames` excludes targets
-  /// the SwiftPM package scan already covers. `buildableSchemeNames`, when non-empty, is
-  /// the set of schemes `xcodebuild -list` reports for the container, so a scheme read
-  /// from a workspace's dependency project (WireGuardKit, a vendored package) that the
-  /// workspace cannot build drops out. `platformsForScheme` returns the coverage
-  /// platforms a scheme can build, from `xcodebuild -showdestinations`. Deduplicated and
-  /// sorted by scheme then platform, so the output is deterministic.
-  public static func entries(
-    containerPath: String,
-    isWorkspace: Bool,
-    packageTargetNames: Set<String>,
-    buildableSchemeNames: Set<String> = [],
-    platformsForScheme: (String) throws -> Set<CoveragePlatform>
-  ) throws -> [DeadcodeCoverageEntry] {
-    Output.debug(
-      "deadcode: deriving coverage matrix from \(containerPath) isWorkspace=\(isWorkspace)")
-    let schemeNames = try coverageSchemeNames(
-      containerPath: containerPath,
-      isWorkspace: isWorkspace,
-      packageTargetNames: packageTargetNames,
-      buildableSchemeNames: buildableSchemeNames)
-    return try expandPlatforms(schemeNames: schemeNames, platformsForScheme: platformsForScheme)
-  }
+  // MARK: Platform expansion
 
   /// Expand each scheme across the platforms `platformsForScheme` reports, deduplicated
   /// and sorted by scheme then platform so the output is deterministic. A scheme that

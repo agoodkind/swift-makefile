@@ -11,9 +11,9 @@ import Foundation
 // MARK: - DeadcodeCoverageResult
 
 /// The outcome of an engine-owned coverage build: the exit status of the build, and
-/// its captured combined output. The captured output feeds the gate's fail-hard
-/// transcript when the coverage build fails, so the structured xcresult diagnosis
-/// and the saved build log still work.
+/// its captured stdout. The build streams stderr live and captures stdout, so this
+/// carries the stdout transcript that feeds the gate's fail-hard diagnosis, alongside
+/// the structured xcresult diagnosis and the saved build log.
 public struct DeadcodeCoverageResult: Sendable {
   public let status: Int32
   public let output: String
@@ -33,8 +33,7 @@ extension Toolchain {
     public var generator = Generator.tuist
     public var configuration = "Debug"
     public var derivedDataPath = ""
-    public var packageTargetNames: Set<String> = []
-    public var buildableSchemeNames: Set<String> = []
+    public var schemes: Set<String> = []
     public var extraSettings: [String: String] = [:]
     public var environment: [String: String] = [:]
 
@@ -70,11 +69,8 @@ extension Toolchain {
   public static func buildCoverage(_ options: CoverageBuildOptions) -> DeadcodeCoverageResult {
     let entries: [DeadcodeCoverageEntry]
     do {
-      entries = try DeadcodeCoverageMatrix.entries(
-        containerPath: options.containerPath,
-        isWorkspace: options.isWorkspace,
-        packageTargetNames: options.packageTargetNames,
-        buildableSchemeNames: options.buildableSchemeNames
+      entries = try DeadcodeCoverageMatrix.expandPlatforms(
+        schemeNames: options.schemes
       ) { scheme in
         let result = showDestinations(
           container: options.containerPath, isWorkspace: options.isWorkspace, scheme: scheme)
@@ -82,12 +78,12 @@ extension Toolchain {
       }
     } catch {
       let message =
-        "deadcode: could not enumerate coverage schemes from \(options.containerPath): \(error)"
+        "deadcode: could not derive coverage platforms for \(options.containerPath): \(error)"
       Output.error(message)
       return DeadcodeCoverageResult(status: coverageDriverFailureStatus, output: message + "\n")
     }
     guard !entries.isEmpty else {
-      let message = "deadcode: no coverage schemes derived from \(options.containerPath)"
+      let message = "deadcode: no coverage schemes to build for \(options.containerPath)"
       Output.error(message)
       return DeadcodeCoverageResult(status: coverageDriverFailureStatus, output: message + "\n")
     }
@@ -124,11 +120,6 @@ extension Toolchain {
       }
     }
     return DeadcodeCoverageResult(status: firstNonzeroStatus, output: combinedOutput)
-  }
-
-  public static func deadcodeCoverageEnvironment(derivedDataPath: String) -> [String: String] {
-    let derivedData = DeadcodeBuildConfig.resolvedDerivedDataRoot(derivedDataPath)
-    return DeadcodeBuildConfig.buildEnvironment(derivedData: derivedData)
   }
 
   private static func coverageRequest(
@@ -176,7 +167,7 @@ extension Toolchain {
     if trimmedPath.isEmpty {
       return nil
     }
-    return path
+    return trimmedPath
   }
 
   private static func wipeCoverageDerivedData(_ derivedDataPath: String) {

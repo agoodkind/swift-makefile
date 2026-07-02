@@ -192,10 +192,27 @@ enum DeadcodeScan {
   private static func scanProject(
     path: String, isWorkspace: Bool, rawPath: String
   ) -> String? {
-    let schemes = discoverSchemes(project: path, isWorkspace: isWorkspace)
     let packageTargets = packageTargetNames()
-    let scanSchemes = schemesToScan(schemes, packageTargets: packageTargets)
-    guard !scanSchemes.isEmpty else {
+    // One scheme set is the source of truth for the whole gate: the coverage build
+    // builds exactly these, and periphery scans exactly these, so the built index and
+    // the scanned schemes can never diverge. The set is derived from the project's
+    // schemes, filtered to the schemes `xcodebuild -list` reports and to targets that
+    // carry indexable app or framework code.
+    let listedSchemes = discoverSchemes(project: path, isWorkspace: isWorkspace)
+    let coverageSchemes: Set<String>
+    do {
+      coverageSchemes = try DeadcodeCoverageMatrix.coverageSchemeNames(
+        containerPath: path,
+        isWorkspace: isWorkspace,
+        packageTargetNames: packageTargets,
+        buildableSchemeNames: Set(listedSchemes))
+    } catch {
+      failHard(
+        rawPath: rawPath,
+        message: "lint-deadcode: could not enumerate coverage schemes from \(path): \(error)")
+      return nil
+    }
+    guard !coverageSchemes.isEmpty else {
       failHard(
         rawPath: rawPath,
         message: "lint-deadcode: no Xcode schemes to scan in \(path)")
@@ -211,8 +228,7 @@ enum DeadcodeScan {
         let indexStore = ensureIndexStore(
           path: path,
           isWorkspace: isWorkspace,
-          packageTargets: packageTargets,
-          buildableSchemes: Set(scanSchemes),
+          schemes: coverageSchemes,
           rawPath: rawPath)
       else {
         return nil
@@ -234,18 +250,12 @@ enum DeadcodeScan {
       }
       runPeriphery(
         project: path,
-        schemes: scanSchemes,
+        schemes: coverageSchemes.sorted(),
         excludeTargets: Array(packageTargets).sorted(),
         indexStore: indexStore,
         rawPath: rawPath)
       return indexStore
     }
-  }
-
-  /// The schemes to scan: every Xcode scheme whose name is not a Swift package
-  /// target, since the package scan owns the package targets.
-  static func schemesToScan(_ schemes: [String], packageTargets: Set<String>) -> [String] {
-    schemes.filter { !packageTargets.contains($0) }
   }
 
   /// Refresh and locate the build's index store, then wait for it to settle.
@@ -257,21 +267,19 @@ enum DeadcodeScan {
   static func ensureIndexStore(
     path: String,
     isWorkspace: Bool,
-    packageTargets: Set<String>,
-    buildableSchemes: Set<String>,
+    schemes: Set<String>,
     rawPath: String
   ) -> String? {
     // Absolutize the derived-data root (PR #32) so a relative SWIFT_MK_DERIVED_DATA
     // does not resolve OBJROOT against each SwiftPM package's source root.
     let derivedData = DeadcodeBuildConfig.resolvedDerivedDataRoot(
       Env.get("SWIFT_MK_DERIVED_DATA"))
-    Output.info("deadcode: building coverage via swift-mk toolchain coverage")
+    Output.info("deadcode: building the coverage index")
     let result = Toolchain.buildCoverage(
       coverageBuildOptions(
         path: path,
         isWorkspace: isWorkspace,
-        packageTargets: packageTargets,
-        buildableSchemes: buildableSchemes))
+        schemes: schemes))
     if result.status != 0 {
       diagnoseFailedCoverage(
         rawPath: rawPath,

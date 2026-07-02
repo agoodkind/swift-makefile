@@ -12,13 +12,12 @@ import Foundation
 
 extension DeadcodeScan {
   /// Build the engine-owned coverage request from the consumer's normal Xcode inputs.
-  /// `buildableSchemes` is the scheme set `xcodebuild -list` reports, so the derived
-  /// matrix drops any dependency-project target that is not a buildable scheme.
+  /// `schemes` is the gate's single source-of-truth scheme set; the coverage build
+  /// builds exactly these, and periphery scans exactly these.
   static func coverageBuildOptions(
     path: String,
     isWorkspace: Bool,
-    packageTargets: Set<String>,
-    buildableSchemes: Set<String>
+    schemes: Set<String>
   ) -> Toolchain.CoverageBuildOptions {
     let rawDerivedData = Env.get("SWIFT_MK_DERIVED_DATA")
     let derivedData = DeadcodeBuildConfig.resolvedDerivedDataRoot(rawDerivedData)
@@ -28,8 +27,7 @@ extension DeadcodeScan {
     options.generator = coverageGenerator()
     options.configuration = Env.get("SWIFT_XCODE_COVERAGE_CONFIGURATION", "Debug")
     options.derivedDataPath = rawDerivedData
-    options.packageTargetNames = packageTargets
-    options.buildableSchemeNames = buildableSchemes
+    options.schemes = schemes
     options.extraSettings = coverageBuildSettings()
     options.environment = DeadcodeBuildConfig.buildEnvironment(derivedData: derivedData)
     return options

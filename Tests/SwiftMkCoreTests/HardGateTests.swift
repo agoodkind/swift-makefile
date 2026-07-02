@@ -13,7 +13,7 @@ import Testing
 
 // MARK: - HardGateTests
 
-/// `Lint.runHardBuildCheck`: caller narrowers and the bypass token do not change the
+/// `Lint.runHardBuildCheck`: caller narrows and the bypass token do not change the
 /// gate, and the dead-code gate fails closed for an Xcode consumer whose coverage
 /// build produces no index.
 @Suite(.serialized)

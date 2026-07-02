@@ -22,7 +22,7 @@ struct ToolchainCommand: ParsableCommand {
     abstract: "Drive the Xcode toolchain (tuist/xcodegen/xcodebuild) and SwiftPM.",
     subcommands: [
       ToolchainGenerate.self, ToolchainInstall.self, ToolchainBuild.self,
-      ToolchainBuildForTesting.self, ToolchainCoverage.self, ToolchainTest.self,
+      ToolchainBuildForTesting.self, ToolchainTest.self,
       ToolchainAnalyze.self,
       ToolchainVersion.self, ToolchainDownloadComponent.self,
       ToolchainSwiftPM.self, ToolchainRunTool.self,
@@ -168,100 +168,6 @@ struct ToolchainBuildForTesting: ParsableCommand {
   @OptionGroup var options: ToolchainRequestOptions
 
   func run() throws { try toolchainExit(Toolchain.buildForTesting(options.request())) }
-}
-
-// MARK: - ToolchainCoverage
-
-struct ToolchainCoverage: ParsableCommand {
-  static let configuration = CommandConfiguration(commandName: "coverage")
-
-  @Option(name: .long, help: "Project generator: tuist or xcodegen.")
-  var generator: String = "tuist"
-
-  @Option(name: .long, help: "Path to the .xcworkspace.")
-  var workspace: String?
-
-  @Option(name: .long, help: "Path to the .xcodeproj.")
-  var project: String?
-
-  @Option(name: .customLong("configuration"), help: "Build configuration.")
-  var configurationName: String = "Debug"
-
-  @Option(name: .customLong("derived-data-path"), help: "xcodebuild -derivedDataPath value.")
-  var derivedDataPath: String?
-
-  @Argument(help: "Extra KEY=value build settings.")
-  var settings: [String] = []
-
-  func run() throws {
-    if let refusal = GateProof.refusal(entry: "toolchain coverage") {
-      try toolchainExit(refusal)
-      return
-    }
-    let resolvedGenerator = try resolveGenerator(generator)
-    let container = try coverageContainer()
-    let extraSettings = try parseBuildSettings(settings)
-    try validateSettings(extraSettings, generator: resolvedGenerator, container: container)
-    let resolvedDerivedDataPath = coverageDerivedDataPath()
-    var coverageOptions = Toolchain.CoverageBuildOptions()
-    coverageOptions.containerPath = container.path
-    coverageOptions.isWorkspace = container.isWorkspace
-    coverageOptions.generator = resolvedGenerator
-    coverageOptions.configuration = configurationName
-    coverageOptions.derivedDataPath = resolvedDerivedDataPath ?? ""
-    coverageOptions.packageTargetNames = []
-    coverageOptions.extraSettings = extraSettings
-    if let resolvedDerivedDataPath {
-      coverageOptions.environment = Toolchain.deadcodeCoverageEnvironment(
-        derivedDataPath: resolvedDerivedDataPath)
-    }
-    let result = Toolchain.buildCoverage(coverageOptions)
-    Output.emitStandardOutput(result.output)
-    try toolchainExit(result.status)
-  }
-
-  private func coverageContainer() throws -> (path: String, isWorkspace: Bool) {
-    if let workspace, let project {
-      throw ValidationError(
-        "toolchain coverage requires exactly one of --workspace or --project; got "
-          + "\(workspace) and \(project)")
-    }
-    if let workspace {
-      return (workspace, true)
-    }
-    if let project {
-      return (project, false)
-    }
-    throw ValidationError("toolchain coverage requires --workspace or --project")
-  }
-
-  private func coverageDerivedDataPath() -> String? {
-    let rawPath = derivedDataPath ?? Env.get("SWIFT_MK_DERIVED_DATA")
-    let trimmedPath = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
-    if trimmedPath.isEmpty {
-      return nil
-    }
-    return rawPath
-  }
-
-  private func validateSettings(
-    _ settings: [String: String],
-    generator: Toolchain.Generator,
-    container: (path: String, isWorkspace: Bool)
-  ) throws {
-    let request = Toolchain.Request(
-      generator: generator,
-      scheme: "Coverage",
-      workspace: container.isWorkspace ? container.path : nil,
-      project: container.isWorkspace ? nil : container.path,
-      extraSettings: settings)
-    if let key = Toolchain.forbiddenSigningSetting(in: request) {
-      throw ValidationError(
-        "build setting '\(key)' is forbidden; swift-mk owns code signing via "
-          + "XCODE_XCCONFIG_FILE and a command-line setting would beat it. Remove it "
-          + "and set the identity and team through the swift-mk signing source.")
-    }
-  }
 }
 
 // MARK: - ToolchainTest
