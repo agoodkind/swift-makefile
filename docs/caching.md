@@ -14,7 +14,7 @@ Both stores live outside DerivedData, under `SWIFT_MK_CACHE_ROOT` (default `$HOM
 
 ## SwiftPM compilation caching is on by default
 
-SwiftPM compilation caching is on by default, the SwiftPM peer of the Xcode compilation cache, so a consumer sets nothing. Opt out by setting `SWIFT_MK_SWIFTPM_CACHE_PATH=off`, the same escape hatch the Xcode cache path has.
+SwiftPM compilation caching is on by default, the SwiftPM peer of the Xcode compilation cache, so a consumer sets nothing and the engine owns it with no consumer opt-out.
 
 The required flag is explicit-module-build. `swift build` only caches when it runs in explicit-module-build mode, so the engine passes `-Xswiftc -explicit-module-build` alongside `-Xswiftc -cache-compile-job` and `-Xswiftc -cas-path`. Without `-explicit-module-build`, `swift build` prints `cannot be used without explicit module build, turn off caching` and the store stays empty.
 

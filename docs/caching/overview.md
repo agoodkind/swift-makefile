@@ -24,4 +24,4 @@ GitHub `actions/cache` saves the first entry under a key and refuses later saves
 
 ## Cross-runner reuse
 
-The compile bucket is content-addressed and restored by architecture-stable keys, so a pile built on one runner replays on another, pool or hosted. The SwiftPM compile cache is on by default, the SwiftPM peer of the Xcode cache, enabled by the engine on any toolchain that supports the flag (Swift 6.3+) and routed through the [`SwiftPM`](../../Sources/SwiftMkCore/SwiftPM.swift) chokepoint; a consumer sets nothing, and `SWIFT_MK_SWIFTPM_CACHE_PATH=off` opts out.
+The compile bucket is content-addressed and restored by architecture-stable keys, so a pile built on one runner replays on another, pool or hosted. The SwiftPM compile cache is on by default, the SwiftPM peer of the Xcode cache, enabled by the engine on any toolchain that supports the flag (Swift 6.3+) and routed through the [`SwiftPM`](../../Sources/SwiftMkCore/SwiftPM.swift) chokepoint; a consumer sets nothing and the engine owns it with no opt-out.

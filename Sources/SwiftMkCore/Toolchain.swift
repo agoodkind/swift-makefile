@@ -493,15 +493,18 @@ extension Toolchain {
   /// Resolve one shared-cache env var into a usable directory path, or nil when the
   /// value names a disable token. An empty value falls back to the built-in default
   /// under `~/Library/Caches/swift-mk`. Pure (no filesystem writes); xcodebuild and
-  /// clang create the directory at build time.
+  /// clang create the directory at build time. Pass `honorDisableToken: false` for a
+  /// cache the engine owns with no consumer opt-out, where a disable token is ignored
+  /// and resolves to the default path so the value only ever relocates the store.
   static func resolvedSharedCachePath(
-    _ envName: String, defaultSubdirectory: String
+    _ envName: String, defaultSubdirectory: String, honorDisableToken: Bool = true
   ) -> String? {
     let raw = Env.get(envName).trimmingCharacters(in: .whitespacesAndNewlines)
-    if sharedCacheDisableTokens.contains(raw.lowercased()) {
+    let isDisableToken = sharedCacheDisableTokens.contains(raw.lowercased())
+    if isDisableToken && honorDisableToken {
       return nil
     }
-    if raw.isEmpty {
+    if raw.isEmpty || isDisableToken {
       return defaultSharedCacheRoot().appendingPathComponent(defaultSubdirectory).path
     }
     return raw

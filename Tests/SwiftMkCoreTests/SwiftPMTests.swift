@@ -127,10 +127,36 @@ enum SwiftPMTests {
 
     setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", "NO", 1)
     #expect(!SwiftPM.cacheArguments().contains("-explicit-module-build"))
+  }
 
+  @Test
+  static func compileCachePathDisableTokenIsIgnored() {
+    // The engine owns the compile cache with no consumer opt-out, so a disable token on
+    // the store path is ignored: with the enable flag YES, the flags are still injected.
+    let priorEnabled = getenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED").map { String(cString: $0) }
+    let priorPath = getenv("SWIFT_MK_SWIFTPM_CACHE_PATH").map { String(cString: $0) }
+    let priorArgs = getenv("SWIFT_MK_SWIFTPM_CACHE_ARGS").map { String(cString: $0) }
     setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", "YES", 1)
     setenv("SWIFT_MK_SWIFTPM_CACHE_PATH", "off", 1)
-    #expect(!SwiftPM.cacheArguments().contains("-explicit-module-build"))
+    unsetenv("SWIFT_MK_SWIFTPM_CACHE_ARGS")
+    defer {
+      if let value = priorEnabled {
+        setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", value, 1)
+      } else {
+        unsetenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED")
+      }
+      if let value = priorPath {
+        setenv("SWIFT_MK_SWIFTPM_CACHE_PATH", value, 1)
+      } else {
+        unsetenv("SWIFT_MK_SWIFTPM_CACHE_PATH")
+      }
+      if let value = priorArgs {
+        setenv("SWIFT_MK_SWIFTPM_CACHE_ARGS", value, 1)
+      } else {
+        unsetenv("SWIFT_MK_SWIFTPM_CACHE_ARGS")
+      }
+    }
+    #expect(SwiftPM.cacheArguments().contains("-explicit-module-build"))
   }
 
   @Test

@@ -324,11 +324,13 @@ public enum SwiftPM {
     guard Env.get("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED") == "YES" else {
       return []
     }
-    // Resolve the store path the same way the cache-path list does, so every disable
-    // token (off/none/0/disabled) and the empty-value default are handled in one place.
+    // Resolve the store path the same way the cache-path list does. The engine owns
+    // this cache with no consumer opt-out, so a disable token is ignored (the value only
+    // relocates the store), and the path always resolves.
     guard
       let path = Toolchain.resolvedSharedCachePath(
-        "SWIFT_MK_SWIFTPM_CACHE_PATH", defaultSubdirectory: "SwiftPMCompilationCache")
+        "SWIFT_MK_SWIFTPM_CACHE_PATH", defaultSubdirectory: "SwiftPMCompilationCache",
+        honorDisableToken: false)
     else {
       return []
     }

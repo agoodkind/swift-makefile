@@ -447,7 +447,8 @@ SWIFT_MK_XCODE_CACHE_PATH ?= $(SWIFT_MK_CACHE_ROOT)/CompilationCache
 export SWIFT_MK_XCODE_CACHE_PATH
 # The shared LLVM CAS store for `swift build` compilation caching. Kept outside
 # DerivedData and shared across worktrees (content-addressed), the SwiftPM peer
-# of SWIFT_MK_XCODE_CACHE_PATH. Set to `off` to opt out.
+# of SWIFT_MK_XCODE_CACHE_PATH. The engine owns this cache with no consumer opt-out:
+# the value only relocates the store, a disable token does not turn it off.
 SWIFT_MK_SWIFTPM_CACHE_PATH ?= $(SWIFT_MK_CACHE_ROOT)/SwiftPMCompilationCache
 export SWIFT_MK_SWIFTPM_CACHE_PATH
 # SwiftPM compilation caching via -explicit-module-build -cache-compile-job. On by
@@ -686,7 +687,7 @@ help:
 	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_PREFIX_MAP=auto|1|0' 'remap absolute paths for cross-runner cache hits'
 	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_PATH=...|off' 'shared CAS store path, kept outside DerivedData'
 	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_DIAGNOSTICS=1' 'emit Xcode compilation cache diagnostic remarks'
-	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE_PATH=...|off' 'shared CAS store for swift build compilation caching (on by default; off opts out)'
+	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE_PATH=...' 'relocate the swift build compilation cache store (on by default, no opt-out)'
 	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS=1' 'emit swift build compilation cache diagnostic remarks'
 	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE_ARGS=...' 'override shared SwiftPM cache flags'
 	@printf '  %-40s %s\n' 'ccache/sccache' 'C-family cache tools; not Swift compilation caches'
