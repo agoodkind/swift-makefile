@@ -240,18 +240,10 @@ public enum CacheService {
   }
 
   /// The gates that actually compile the package and therefore own the compile cache:
-  /// the build, test, and dead-code gates. A consumer with a bespoke compiling
-  /// extra-target sets `SWIFT_MK_COMPILE_CACHE_WRITE=1` to opt that gate in; `0`/`off`
-  /// opts a gate out.
+  /// the build, test, and dead-code gates. The engine decides this from the gate name
+  /// alone, so a consumer sets nothing.
   static func isCompileWriterGate(_ gate: String) -> Bool {
-    let override = Env.get("SWIFT_MK_COMPILE_CACHE_WRITE").lowercased()
-    if ["1", "true", "yes", "on"].contains(override) {
-      return true
-    }
-    if ["0", "false", "no", "off"].contains(override) {
-      return false
-    }
-    return ["build", "test", "lint-deadcode", "deadcode"].contains(gate)
+    ["build", "test", "lint-deadcode", "deadcode"].contains(gate)
   }
 
   /// A value unique to this run attempt, so each compile-cache save lands under a fresh
