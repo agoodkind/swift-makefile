@@ -52,6 +52,16 @@ enum GatedBuildHarness {
   struct Setup {
     let root: String
     let xcodebuildMarker: String
+    let xcodebuildArgumentsLog: String
+    let xcodebuildEnvironmentLog: String
+  }
+
+  private struct Paths {
+    let root: String
+    let binDir: String
+    let xcodebuildMarker: String
+    let xcodebuildArgumentsLog: String
+    let xcodebuildEnvironmentLog: String
   }
 
   /// A SwiftPM manifest with one target covering Sources, so the coverage-completeness
@@ -83,25 +93,23 @@ enum GatedBuildHarness {
   ) throws {
     let manager = FileManager.default
     let root = NSTemporaryDirectory() + "swiftmk-gated-" + UUID().uuidString
-    let binDir = root + "/fakebin"
-    try manager.createDirectory(atPath: root + "/Sources", withIntermediateDirectories: true)
-    try manager.createDirectory(atPath: binDir, withIntermediateDirectories: true)
-    try "// fake source\nlet appValue = 1\n".write(
-      toFile: root + "/Sources/App.swift", atomically: true, encoding: .utf8)
-    // packageManifest declares a target covering Sources so the coverage gate sees
-    // App.swift as package-scanned, the way a real consumer's package covers its
-    // sources; a degenerate no-target package would read as an unscanned-own-code bypass.
-    try packageManifest.write(toFile: root + "/Package.swift", atomically: true, encoding: .utf8)
-
-    let xcodebuildMarker = root + "/xcodebuild-ran"
-    try writeFakes(binDir: binDir)
+    let paths = Paths(
+      root: root,
+      binDir: root + "/fakebin",
+      xcodebuildMarker: root + "/xcodebuild-ran",
+      xcodebuildArgumentsLog: root + "/xcodebuild-args.log",
+      xcodebuildEnvironmentLog: root + "/xcodebuild-env.log")
+    try writeCheckout(paths: paths, manager: manager)
+    try writeFakes(binDir: paths.binDir)
 
     let savedCwd = manager.currentDirectoryPath
     let saved = Environment.snapshot([
       "PATH", "SWIFT_FORMAT", "SWIFTLINT", "PERIPHERY", "OSV_SCANNER",
       "SWIFTCHECK_EXTRA_BIN", "SWIFTCHECK_EXTRA_FLAGS", "SWIFTCHECK_EXTRA_BUILD_REPO",
-      "FAKE_XCODEBUILD_MARKER", "FAKE_SWIFTLINT_FAIL", "SWIFT_MK_ROOT",
-      "SWIFT_MK_XCODE_BUILD", "SWIFT_DEADCODE_BUILD_CMD", "SWIFT_BUILD_CMD",
+      "FAKE_XCODEBUILD_MARKER", "FAKE_XCODEBUILD_ARGS_LOG", "FAKE_XCODEBUILD_ENV_LOG",
+      "FAKE_XCODEBUILD_FAIL_SCHEME", "FAKE_XCODEBUILD_FAIL_STATUS",
+      "FAKE_SWIFTLINT_FAIL", "SWIFT_MK_ROOT",
+      "SWIFT_MK_XCODE_BUILD", "SWIFT_BUILD_CMD",
       "SWIFT_MK_SIGN_TEAM", "DEVELOPMENT_TEAM", "XCODE_XCCONFIG_FILE",
       "LINT_GATES", "LINT_FILES", "SWIFTLINT_TARGETS", "BYPASS_LINT",
     ])
@@ -112,21 +120,65 @@ enum GatedBuildHarness {
     }
 
     let priorPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
-    setenv("PATH", binDir + ":" + priorPath, 1)
+    configureEnvironment(
+      paths: paths,
+      priorPath: priorPath,
+      failSwiftlint: failSwiftlint,
+      signingTeam: signingTeam)
+
+    manager.changeCurrentDirectoryPath(root)
+    let runGit = Shell.run("git", ["-C", root, "init", "-q"])
+    if runGit.status != 0 {
+      Output.error("test: git init failed in \(root): \(runGit.combined)")
+    }
+    _ = Shell.run("git", ["-C", root, "add", "-A"])
+
+    try body(
+      Setup(
+        root: root,
+        xcodebuildMarker: paths.xcodebuildMarker,
+        xcodebuildArgumentsLog: paths.xcodebuildArgumentsLog,
+        xcodebuildEnvironmentLog: paths.xcodebuildEnvironmentLog))
+  }
+
+  private static func writeCheckout(paths: Paths, manager: FileManager) throws {
+    try manager.createDirectory(
+      atPath: paths.root + "/Sources", withIntermediateDirectories: true)
+    try manager.createDirectory(atPath: paths.binDir, withIntermediateDirectories: true)
+    try "// fake source\nlet appValue = 1\n".write(
+      toFile: paths.root + "/Sources/App.swift", atomically: true, encoding: .utf8)
+    // packageManifest declares a target covering Sources so the coverage gate sees
+    // App.swift as package-scanned, the way a real consumer's package covers its
+    // sources; a degenerate no-target package would read as an unscanned-own-code bypass.
+    try packageManifest.write(
+      toFile: paths.root + "/Package.swift", atomically: true, encoding: .utf8)
+  }
+
+  private static func configureEnvironment(
+    paths: Paths,
+    priorPath: String,
+    failSwiftlint: Bool,
+    signingTeam: String?
+  ) {
+    Output.debug("test: configuring fake build environment")
+    setenv("PATH", paths.binDir + ":" + priorPath, 1)
     setenv("SWIFT_FORMAT", "swift-format", 1)
     setenv("SWIFTLINT", "swiftlint", 1)
     setenv("PERIPHERY", "periphery", 1)
     setenv("OSV_SCANNER", "osv-scanner", 1)
-    setenv("SWIFTCHECK_EXTRA_BIN", binDir + "/swiftcheck-extra", 1)
+    setenv("SWIFTCHECK_EXTRA_BIN", paths.binDir + "/swiftcheck-extra", 1)
     setenv("SWIFTCHECK_EXTRA_FLAGS", "", 1)
-    setenv("FAKE_XCODEBUILD_MARKER", xcodebuildMarker, 1)
-    setenv("SWIFT_MK_ROOT", root, 1)
-    // A pure SwiftPM checkout: no Xcode coverage build, so the dead-code gate runs
-    // the periphery package scan only.
+    setenv("FAKE_XCODEBUILD_MARKER", paths.xcodebuildMarker, 1)
+    setenv("FAKE_XCODEBUILD_ARGS_LOG", paths.xcodebuildArgumentsLog, 1)
+    setenv("FAKE_XCODEBUILD_ENV_LOG", paths.xcodebuildEnvironmentLog, 1)
+    setenv("SWIFT_MK_ROOT", paths.root, 1)
     unsetenv("SWIFT_MK_XCODE_BUILD")
-    unsetenv("SWIFT_DEADCODE_BUILD_CMD")
     unsetenv("SWIFT_BUILD_CMD")
     unsetenv("XCODE_XCCONFIG_FILE")
+    configureOptionalEnvironment(failSwiftlint: failSwiftlint, signingTeam: signingTeam)
+  }
+
+  private static func configureOptionalEnvironment(failSwiftlint: Bool, signingTeam: String?) {
     if failSwiftlint {
       setenv("FAKE_SWIFTLINT_FAIL", "1", 1)
     } else {
@@ -138,15 +190,6 @@ enum GatedBuildHarness {
       unsetenv("SWIFT_MK_SIGN_TEAM")
       unsetenv("DEVELOPMENT_TEAM")
     }
-
-    manager.changeCurrentDirectoryPath(root)
-    let runGit = Shell.run("git", ["-C", root, "init", "-q"])
-    if runGit.status != 0 {
-      Output.error("test: git init failed in \(root): \(runGit.combined)")
-    }
-    _ = Shell.run("git", ["-C", root, "add", "-A"])
-
-    try body(Setup(root: root, xcodebuildMarker: xcodebuildMarker))
   }
 
   /// A `Toolchain.Request` whose container is named, so the fake xcodebuild gets a
@@ -180,8 +223,33 @@ enum GatedBuildHarness {
       """
     let xcodebuild = """
       #!/bin/sh
+      scheme=""
+      previous=""
+      for arg in "$@"; do
+        if [ "$previous" = "-scheme" ]; then
+          scheme="$arg"
+        fi
+        previous="$arg"
+      done
       if [ -n "$FAKE_XCODEBUILD_MARKER" ]; then
         : > "$FAKE_XCODEBUILD_MARKER"
+      fi
+      if [ -n "$FAKE_XCODEBUILD_ARGS_LOG" ]; then
+        {
+          printf 'BEGIN\\n'
+          for arg in "$@"; do
+            printf '%s\\n' "$arg"
+          done
+          printf 'END\\n'
+        } >> "$FAKE_XCODEBUILD_ARGS_LOG"
+      fi
+      if [ -n "$FAKE_XCODEBUILD_ENV_LOG" ]; then
+        printf '%s\\n' "$SWIFT_MK_RESULT_BUNDLE_DIR" >> "$FAKE_XCODEBUILD_ENV_LOG"
+      fi
+      printf 'fake xcodebuild scheme=%s\\n' "$scheme"
+      if [ -n "$FAKE_XCODEBUILD_FAIL_SCHEME" ] \\
+        && [ "$scheme" = "$FAKE_XCODEBUILD_FAIL_SCHEME" ]; then
+        exit "${FAKE_XCODEBUILD_FAIL_STATUS:-42}"
       fi
       exit 0
       """

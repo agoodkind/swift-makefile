@@ -50,52 +50,6 @@ extension Toolchain {
       request, actions: ["build"], environment: signingEnvironment())
   }
 
-  // MARK: Coverage build by authorization
-
-  /// Build-for-testing the scheme for the in-process dead-code coverage path,
-  /// authorized by a `DeadcodeCoverageAuthorization` rather than the make-anchored
-  /// `GateProof`. The gate mints the authorization only inside the running dead-code
-  /// gate, and its initializer is non-public, so a consumer cannot reach this path
-  /// without the gate running; the authorization's presence is the proof, so this
-  /// skips the `GateProof` ancestry check. `environment` carries the
-  /// `DeadcodeBuildConfig` signing-disabled xcconfig and the result-bundle
-  /// directory, which is why the coverage build needs an environment parameter the
-  /// make path supplies through the subprocess env.
-  @discardableResult
-  public static func buildForTesting(
-    _ request: Request,
-    authorization: DeadcodeCoverageAuthorization,
-    environment: [String: String]
-  ) -> Int32 {
-    _ = authorization
-    Output.debug("toolchain: coverage build-for-testing scheme=\(request.scheme)")
-    if let rejection = rejectionForSigningOverride(request) {
-      return rejection
-    }
-    return runXcodebuildForwarding(
-      request, actions: ["build-for-testing"], environment: environment)
-  }
-
-  /// Build-for-testing the in-process coverage build capturing its combined output
-  /// while streaming stderr live, so the dead-code gate's fail-hard path has the
-  /// transcript to save and the xcresult to diagnose when the coverage build fails.
-  /// The make path captures the same output through its subprocess pipe; this is the
-  /// captured variant the decoupled callback uses.
-  public static func buildForTestingCapturingOutput(
-    _ request: Request,
-    authorization: DeadcodeCoverageAuthorization,
-    environment: [String: String]
-  ) -> Shell.StreamingResult {
-    _ = authorization
-    Output.debug("toolchain: captured coverage build-for-testing scheme=\(request.scheme)")
-    if rejectionForSigningOverride(request) != nil {
-      return Shell.StreamingResult(
-        status: signingOverrideRejectionStatus, stdout: "", timedOut: false)
-    }
-    return runXcodebuildCapturing(
-      request, actions: ["build-for-testing"], environment: environment)
-  }
-
   // MARK: Static analysis
 
   /// Static-analyze the scheme with xcodebuild against the explicit container,

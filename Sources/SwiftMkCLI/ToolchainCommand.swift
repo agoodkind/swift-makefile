@@ -22,7 +22,8 @@ struct ToolchainCommand: ParsableCommand {
     abstract: "Drive the Xcode toolchain (tuist/xcodegen/xcodebuild) and SwiftPM.",
     subcommands: [
       ToolchainGenerate.self, ToolchainInstall.self, ToolchainBuild.self,
-      ToolchainBuildForTesting.self, ToolchainTest.self, ToolchainAnalyze.self,
+      ToolchainBuildForTesting.self, ToolchainTest.self,
+      ToolchainAnalyze.self,
       ToolchainVersion.self, ToolchainDownloadComponent.self,
       ToolchainSwiftPM.self, ToolchainRunTool.self,
     ]
@@ -38,6 +39,17 @@ private func resolveGenerator(_ raw: String) throws -> Toolchain.Generator {
 
 private func toolchainExit(_ status: Int32) throws {
   if status != 0 { throw ExitCode(status) }
+}
+
+private func parseBuildSettings(_ settings: [String]) throws -> [String: String] {
+  var extra: [String: String] = [:]
+  for pair in settings {
+    guard let equals = pair.firstIndex(of: "=") else {
+      throw ValidationError("build setting '\(pair)' must be KEY=value")
+    }
+    extra[String(pair[..<equals])] = String(pair[pair.index(after: equals)...])
+  }
+  return extra
 }
 
 // MARK: - ToolchainRequestOptions
@@ -74,13 +86,7 @@ struct ToolchainRequestOptions: ParsableArguments {
     if resolvedGenerator == .xcodegen, project == nil {
       throw ValidationError("xcodegen requires --project")
     }
-    var extra: [String: String] = [:]
-    for pair in settings {
-      guard let equals = pair.firstIndex(of: "=") else {
-        throw ValidationError("build setting '\(pair)' must be KEY=value")
-      }
-      extra[String(pair[..<equals])] = String(pair[pair.index(after: equals)...])
-    }
+    let extra = try parseBuildSettings(settings)
     let request = Toolchain.Request(
       generator: resolvedGenerator,
       scheme: scheme,

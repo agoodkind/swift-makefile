@@ -65,7 +65,12 @@ on:
         default: "1"
       timeout-minutes:
         type: number
-        default: 30
+        # 60 leaves headroom for a one-time cold compile-cache populate. The SwiftPM
+        # compile cache uses -explicit-module-build, whose cold build is slower than an
+        # uncached build; the populate run must finish once to save the rolling cache so
+        # later runs replay and drop well under this ceiling. This is a ceiling, not a
+        # target, so a normal build still finishes early.
+        default: 60
       # Self-hosted macOS pool support. When local-pool-capacity-url is set and
       # the pool reports available capacity, every gate runs on local-pool-label;
       # otherwise every gate falls back to inputs.runner. An empty URL routes

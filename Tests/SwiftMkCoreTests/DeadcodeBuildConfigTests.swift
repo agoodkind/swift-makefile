@@ -24,6 +24,14 @@ func deadcodeBuildConfigDisablesSigning() {
   #expect(text.contains("CODE_SIGNING_REQUIRED = NO"))
   #expect(text.contains("CODE_SIGN_IDENTITY = -"))
   #expect(text.contains("COMPILER_INDEX_STORE_ENABLE = YES"))
+  #expect(DeadcodeBuildConfig.baseContents.contains("COMPILATION_CACHE_ENABLE_CACHING = NO"))
+  #expect(text.contains("COMPILATION_CACHE_ENABLE_CACHING = NO"))
+  #expect(
+    DeadcodeBuildConfig.baseContents.contains(
+      "COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS = NO"))
+  #expect(text.contains("COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS = NO"))
+  #expect(DeadcodeBuildConfig.baseContents.contains("ONLY_ACTIVE_ARCH = YES"))
+  #expect(text.contains("ONLY_ACTIVE_ARCH = YES"))
 }
 
 @Test

@@ -8,3 +8,5 @@ Derived/
 DerivedData/
 *.xcodeproj
 *.xcworkspace
+.sdd-briefs/
+.superpowers/

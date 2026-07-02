@@ -59,17 +59,13 @@ enum DeadcodeScan {
   /// Xcode project the gate cannot scan, so `runDeadcode` fails loudly.
   ///
   /// The Xcode scan runs when the consumer configures an Xcode build
-  /// (`SWIFT_MK_XCODE_BUILD == "1"`, the make path) or when the in-process API
-  /// supplies a `coverage` callback, which is the decoupled path's signal that this
-  /// is an Xcode consumer. With no env flag and no callback it stays a SwiftPM scan.
+  /// (`SWIFT_MK_XCODE_BUILD == "1"`). With no env flag it stays a SwiftPM scan.
   /// Returns the index store the Xcode scan read when it ran cleanly, so the runner
   /// can hand it to the coverage-completeness check, or nil when no Xcode scan ran or
   /// it failed.
   @discardableResult
-  static func appendXcodeFindings(
-    rawPath: String, coverage: DeadcodeCoverageBuild? = nil
-  ) -> String? {
-    guard xcodeScanEnabled(Env.get("SWIFT_MK_XCODE_BUILD")) || coverage != nil else {
+  static func appendXcodeFindings(rawPath: String) -> String? {
+    guard xcodeScanEnabled(Env.get("SWIFT_MK_XCODE_BUILD")) else {
       Output.debug(
         "deadcode: SwiftPM build (SWIFT_MK_XCODE_BUILD unset), skipping Xcode scan; "
           + "periphery's package scan covers the package")
@@ -98,8 +94,7 @@ enum DeadcodeScan {
       return scanProject(
         path: reference.path,
         isWorkspace: reference.isWorkspace,
-        rawPath: rawPath,
-        coverage: coverage)
+        rawPath: rawPath)
     }
   }
 
@@ -195,12 +190,29 @@ enum DeadcodeScan {
   /// Returns the index store the scan read when it ran cleanly, so the runner can
   /// hand it to the coverage-completeness check, or nil on any failure or skip.
   private static func scanProject(
-    path: String, isWorkspace: Bool, rawPath: String, coverage: DeadcodeCoverageBuild? = nil
+    path: String, isWorkspace: Bool, rawPath: String
   ) -> String? {
-    let schemes = discoverSchemes(project: path, isWorkspace: isWorkspace)
     let packageTargets = packageTargetNames()
-    let scanSchemes = schemesToScan(schemes, packageTargets: packageTargets)
-    guard !scanSchemes.isEmpty else {
+    // One scheme set is the source of truth for the whole gate: the coverage build
+    // builds exactly these, and periphery scans exactly these, so the built index and
+    // the scanned schemes can never diverge. The set is derived from the project's
+    // schemes, filtered to the schemes `xcodebuild -list` reports and to targets that
+    // carry indexable app or framework code.
+    let listedSchemes = discoverSchemes(project: path, isWorkspace: isWorkspace)
+    let coverageSchemes: Set<String>
+    do {
+      coverageSchemes = try DeadcodeCoverageMatrix.coverageSchemeNames(
+        containerPath: path,
+        isWorkspace: isWorkspace,
+        packageTargetNames: packageTargets,
+        buildableSchemeNames: Set(listedSchemes))
+    } catch {
+      failHard(
+        rawPath: rawPath,
+        message: "lint-deadcode: could not enumerate coverage schemes from \(path): \(error)")
+      return nil
+    }
+    guard !coverageSchemes.isEmpty else {
       failHard(
         rawPath: rawPath,
         message: "lint-deadcode: no Xcode schemes to scan in \(path)")
@@ -212,7 +224,13 @@ enum DeadcodeScan {
     // dead-code-only `.make/deadcode-build.lock`, and is re-entrant so the coverage
     // build's own nested engine calls do not self-deadlock.
     return BuildLock.withLock { () -> String? in
-      guard let indexStore = ensureIndexStore(rawPath: rawPath, coverage: coverage) else {
+      guard
+        let indexStore = ensureIndexStore(
+          path: path,
+          isWorkspace: isWorkspace,
+          schemes: coverageSchemes,
+          rawPath: rawPath)
+      else {
         return nil
       }
       // A partial index is never scanned: periphery would read a missing
@@ -232,7 +250,7 @@ enum DeadcodeScan {
       }
       runPeriphery(
         project: path,
-        schemes: scanSchemes,
+        schemes: coverageSchemes.sorted(),
         excludeTargets: Array(packageTargets).sorted(),
         indexStore: indexStore,
         rawPath: rawPath)
@@ -240,77 +258,33 @@ enum DeadcodeScan {
     }
   }
 
-  /// The schemes to scan: every Xcode scheme whose name is not a Swift package
-  /// target, since the package scan owns the package targets.
-  static func schemesToScan(_ schemes: [String], packageTargets: Set<String>) -> [String] {
-    schemes.filter { !packageTargets.contains($0) }
-  }
-
-  /// The command that builds the targets to cover. Prefers `SWIFT_DEADCODE_BUILD_CMD`
-  /// for a repo whose `SWIFT_BUILD_CMD` needs a target argument or builds a single
-  /// platform, and falls back to `SWIFT_BUILD_CMD`.
-  static func coverageBuildCommand() -> String {
-    let deadcodeBuild = Env.get("SWIFT_DEADCODE_BUILD_CMD")
-    if !deadcodeBuild.isEmpty {
-      return deadcodeBuild
-    }
-    return Env.get("SWIFT_BUILD_CMD")
-  }
-
   /// Refresh and locate the build's index store, then wait for it to settle.
   /// The build always runs so the index reflects the current sources. Xcode
   /// writes the index store as background indexing finishes, which can lag the
   /// build command's exit, so the scan waits until the store stops growing to
-  /// avoid reading a partial store and reporting phantom unused symbols that
-  /// clear on a later run. A repo with an Xcode project and no coverage build
-  /// (no `SWIFT_DEADCODE_BUILD_CMD`/`SWIFT_BUILD_CMD` and no callback) cannot
-  /// produce one, which is a hard fail.
-  ///
-  /// Two coverage paths share the failure and locate handling. The make path shells
-  /// the consumer's `SWIFT_DEADCODE_BUILD_CMD` with the signing-disabled
-  /// `DeadcodeBuildConfig` environment. The in-process API path mints a scoped
-  /// `DeadcodeCoverageAuthorization` and runs the consumer's `coverage` callback with
-  /// the same environment, so a decoupled build with no make ancestor still produces
-  /// a complete index without a subprocess.
+  /// avoid reading a partial store and reporting phantom unused symbols that clear
+  /// on a later run.
   static func ensureIndexStore(
-    rawPath: String, coverage: DeadcodeCoverageBuild? = nil
+    path: String,
+    isWorkspace: Bool,
+    schemes: Set<String>,
+    rawPath: String
   ) -> String? {
     // Absolutize the derived-data root (PR #32) so a relative SWIFT_MK_DERIVED_DATA
     // does not resolve OBJROOT against each SwiftPM package's source root.
     let derivedData = DeadcodeBuildConfig.resolvedDerivedDataRoot(
       Env.get("SWIFT_MK_DERIVED_DATA"))
-    // Disable code signing for the coverage build only: it produces the index,
-    // not a signed product, and a signed build can fail on provisioning and leave
-    // a partial index. swift-mk owns this, so consumers need no configuration.
-    let environment = DeadcodeBuildConfig.buildEnvironment(derivedData: derivedData)
-    let outcome: (status: Int32, output: String)
-    if let coverage {
-      // Mint the scoped capability here and hand it plus the signing-disabled
-      // environment to the consumer's coverage callback.
-      Output.info("deadcode: building via the in-process coverage callback")
-      let capability = DeadcodeCoverageAuthorization()
-      let result = coverage(capability, environment)
-      outcome = (result.status, result.output)
-    } else {
-      let buildCommand = coverageBuildCommand()
-      guard !buildCommand.isEmpty else {
-        failHard(
-          rawPath: rawPath,
-          message:
-            "lint-deadcode: an Xcode project exists but SWIFT_BUILD_CMD is unset; "
-            + "set it so the index store is produced under SWIFT_MK_DERIVED_DATA")
-        return nil
-      }
-      Output.info("deadcode: building via SWIFT_BUILD_CMD to refresh the index store")
-      let result = Shell.runStreamingStderr(
-        "/bin/sh", ["-c", buildCommand], environment: environment)
-      outcome = (result.status, result.stdout)
-    }
-    if outcome.status != 0 {
+    Output.info("deadcode: building the coverage index")
+    let result = Toolchain.buildCoverage(
+      coverageBuildOptions(
+        path: path,
+        isWorkspace: isWorkspace,
+        schemes: schemes))
+    if result.status != 0 {
       diagnoseFailedCoverage(
         rawPath: rawPath,
-        status: outcome.status,
-        output: outcome.output,
+        status: result.status,
+        output: result.output,
         derivedData: derivedData)
       return nil
     }
@@ -493,30 +467,9 @@ extension DeadcodeScan {
   }
 
   private static func issues(inBundleDirectory directory: String) -> [XCResult.Issue] {
-    var isDirectory = ObjCBool(false)
-    guard FileManager.default.fileExists(atPath: directory, isDirectory: &isDirectory),
-      isDirectory.boolValue
-    else {
-      return []
-    }
-
-    let entries: [String]
-    do {
-      entries = try FileManager.default.contentsOfDirectory(atPath: directory)
-    } catch {
-      Output.error("deadcode: could not list \(directory): \(error)")
-      return []
-    }
-
-    let bundles =
-      entries
-      .filter { entry in
-        entry.hasSuffix(".xcresult")
-      }
-      .sorted()
+    let bundles = resultBundles(inBundleDirectory: directory)
     var issues: [XCResult.Issue] = []
-    for bundleName in bundles {
-      let bundle = (directory as NSString).appendingPathComponent(bundleName)
+    for bundle in bundles {
       let result = Shell.run(
         "xcrun",
         [
@@ -540,6 +493,32 @@ extension DeadcodeScan {
       issues.append(contentsOf: bundleIssues)
     }
     return issues
+  }
+
+  static func resultBundles(inBundleDirectory directory: String) -> [String] {
+    var isDirectory = ObjCBool(false)
+    guard FileManager.default.fileExists(atPath: directory, isDirectory: &isDirectory),
+      isDirectory.boolValue
+    else {
+      return []
+    }
+    guard let enumerator = FileManager.default.enumerator(atPath: directory) else {
+      Output.error("deadcode: could not list \(directory)")
+      return []
+    }
+    var bundles: [String] = []
+    for case let relativePath as String in enumerator {
+      let depth = relativePath.filter { character in character == "/" }.count
+      if depth > 1 {
+        enumerator.skipDescendants()
+        continue
+      }
+      if relativePath.hasSuffix(".xcresult") {
+        bundles.append((directory as NSString).appendingPathComponent(relativePath))
+        enumerator.skipDescendants()
+      }
+    }
+    return bundles.sorted()
   }
 
   private static func outputBuildIssue(_ issue: XCResult.Issue) {

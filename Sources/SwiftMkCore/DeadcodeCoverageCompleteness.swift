@@ -14,11 +14,11 @@ import Foundation
 ///
 /// The gate runs two scans: a SwiftPM package scan over the package targets, and an
 /// Xcode scan over a built index store. A consumer whose own Swift lives only in
-/// Xcode targets, with no coverage build configured, would have that code scanned by
-/// neither, which is a silent bypass. This compares the owned source set against the
-/// union of what the two scans covered, and fails the gate, naming the files, when any
-/// owned source is unscanned. The result is a pure set difference with no env knob, so
-/// a consumer cannot shrink what the gate checks.
+/// Xcode targets, with no Xcode scan, would have that code scanned by neither, which
+/// is a silent bypass. This compares the owned source set against the union of what
+/// the two scans covered, and fails the gate, naming the files, when any owned source
+/// is unscanned. The result is a pure set difference with no env knob, so a consumer
+/// cannot shrink what the gate checks.
 enum DeadcodeCoverageCompleteness {
   /// How many uncovered paths to print inline before deferring to the full log.
   private static let inlineLimit = 20
@@ -234,8 +234,8 @@ enum DeadcodeCoverageCompleteness {
     let fullList = logPath ?? "(log unavailable)"
     let remediation =
       "  Cover each file by adding it to a SwiftPM target, or configure the Xcode "
-      + "coverage build (set SWIFT_XCODE_SCHEME, and SWIFT_DEADCODE_BUILD_CMD if the "
-      + "build needs a target argument). Full list: \(fullList)"
+      + "coverage build by setting SWIFT_XCODE_SCHEME and the matching "
+      + "SWIFT_XCODE_WORKSPACE or SWIFT_XCODE_PROJECT. Full list: \(fullList)"
     return [header, body, remediation].joined(separator: "\n")
   }
 
