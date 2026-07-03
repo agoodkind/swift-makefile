@@ -25,3 +25,9 @@ GitHub `actions/cache` keeps only the first save under a key, and the compiling 
 ## Cross-runner reuse
 
 The compile bucket is content-addressed and restored by architecture-stable keys, so a pile built on one runner replays on another, pool or hosted. The SwiftPM compile cache is on by default, the SwiftPM peer of the Xcode cache, enabled by the engine on any toolchain that supports the flag (Swift 6.3+) and routed through the [`SwiftPM`](../../Sources/SwiftMkCore/SwiftPM.swift) chokepoint; a consumer sets nothing and the engine owns it with no opt-out.
+
+## The default branch warms the cache for pull requests
+
+GitHub scopes each cache to the branch that wrote it and to the repository default branch. A build on a pull request restores caches from its own branch and from the default branch, and nothing from a sibling branch. So a pull request restores a warm compile cache only when the default branch already holds one.
+
+The default branch holds a compile cache after a build runs on it. A consumer that builds on the default branch gives every later pull request a warm pile to restore. A consumer whose CI runs only on pull requests never fills the default branch, so each first pull-request build compiles cold. The consumer trigger for this is in [ci](../ci/overview.md).

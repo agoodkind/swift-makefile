@@ -10,6 +10,18 @@ A consumer calls [`_ci.yml`](../../.github/workflows/_ci.yml), which runs the re
 
 CI prefers a self-hosted pool and falls back to GitHub-hosted runners, so a pool outage never blocks a run. The pool routing is best-effort with a hosted floor that always exists.
 
+## Build on the default branch to warm pull requests
+
+A consumer builds on its default branch so pull requests inherit a warm compile cache. Add the push trigger to the consumer workflow:
+
+```yaml
+on:
+  push:
+    branches: [main]
+```
+
+The filter keeps the trigger on `main`, so a pull request's own branch pushes do not match it and the gates still run once per pull request. The first build on `main` compiles cold and fills the cache; later pull requests restore it. The [caching overview](../caching/overview.md) explains why the default branch must build.
+
 ## OSV policy is non-overridable
 
 The dependency audit uses the engine's OSV config through an `override` in [`swift.mk`](../../swift.mk), so a consumer cannot weaken the policy or its exception list. The single source of exceptions is the engine.
