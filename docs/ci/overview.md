@@ -12,15 +12,17 @@ CI prefers a self-hosted pool and falls back to GitHub-hosted runners, so a pool
 
 ## Build on the default branch to warm pull requests
 
-A consumer builds on its default branch so pull requests inherit a warm compile cache. Add the push trigger to the consumer workflow:
+A consumer builds on its default branch so pull requests inherit a warm compile cache. The consumer workflow keeps its pull-request trigger and adds a push trigger scoped to the default branch:
 
 ```yaml
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
 ```
 
-The filter keeps the trigger on `main`, so a pull request's own branch pushes do not match it and the gates still run once per pull request. The first build on `main` compiles cold and fills the cache; later pull requests restore it. The [caching overview](../caching/overview.md) explains why the default branch must build.
+The push trigger is filtered to the default branch, so a push to a pull request's own branch does not match it and adds no run. Pull-request runs are unchanged. The first build on the default branch compiles cold and fills the cache; later pull requests restore it. The [caching overview](../caching/overview.md) explains why the default branch must build.
 
 ## OSV policy is non-overridable
 

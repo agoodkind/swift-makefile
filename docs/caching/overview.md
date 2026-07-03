@@ -28,6 +28,6 @@ The compile bucket is content-addressed and restored by architecture-stable keys
 
 ## The default branch warms the cache for pull requests
 
-GitHub scopes each cache to the branch that wrote it and to the repository default branch. A build on a pull request restores caches from its own branch and from the default branch, and nothing from a sibling branch. So a pull request restores a warm compile cache only when the default branch already holds one.
+GitHub scopes each cache to the branch that wrote it. A build on a pull request restores caches from its own branch, from its base branch, and from the repository default branch, and nothing from an unrelated branch. A pull request that targets the default branch therefore restores a warm compile cache only when the default branch already holds one.
 
 The default branch holds a compile cache after a build runs on it. A consumer that builds on the default branch gives every later pull request a warm pile to restore. A consumer whose CI runs only on pull requests never fills the default branch, so each first pull-request build compiles cold. The consumer trigger for this is in [ci](../ci/overview.md).
