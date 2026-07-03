@@ -4,7 +4,7 @@ The engine owns the reusable CI workflows, so a consumer declares only its setup
 
 ## Reusable workflows
 
-A consumer calls [`_ci.yml`](../../.github/workflows/_ci.yml), which runs the required set: Build, Test, and the Quality gates (SwiftLint, Format, Complexity, Deadcode, Swiftcheck Extra, Audit), plus optional Extra Targets. The gate jobs run through [`_ci-gate.yml`](../../.github/workflows/_ci-gate.yml). A consumer declares setup inputs and an optional extra-targets list, nothing more.
+A consumer calls [`_ci.yml`](../../.github/workflows/_ci.yml), which runs the required set: Build, Test, and the Quality gates (SwiftLint, Format, Complexity, Deadcode, Swiftcheck Extra, Audit), plus optional Extra Targets. The gate jobs run through the [ci-gate composite action](../../.github/actions/ci-gate/action.yml). A consumer declares setup inputs and an optional extra-targets list, nothing more.
 
 ## Runners with a hosted floor
 
