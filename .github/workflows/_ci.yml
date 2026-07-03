@@ -164,6 +164,10 @@ jobs:
           ref: main
           path: .swift-makefile
           fetch-depth: 1
+          # The helper checkout only supplies scripts and make targets; API calls
+          # use GH_TOKEN, so drop the Actions token from the helper repo git
+          # config to match the main checkout and shrink the blast radius.
+          persist-credentials: false
 
       - name: Install brew packages
         if: inputs.brew-packages != ''
@@ -298,6 +302,10 @@ jobs:
           ref: main
           path: .swift-makefile
           fetch-depth: 1
+          # The helper checkout only supplies scripts and make targets; API calls
+          # use GH_TOKEN, so drop the Actions token from the helper repo git
+          # config to match the main checkout and shrink the blast radius.
+          persist-credentials: false
 
       - name: Run CI gate (swift-makefile)
         if: github.repository == 'agoodkind/swift-makefile'
@@ -378,6 +386,10 @@ jobs:
           ref: main
           path: .swift-makefile
           fetch-depth: 1
+          # The helper checkout only supplies scripts and make targets; API calls
+          # use GH_TOKEN, so drop the Actions token from the helper repo git
+          # config to match the main checkout and shrink the blast radius.
+          persist-credentials: false
 
       - name: Run CI gate (swift-makefile)
         if: github.repository == 'agoodkind/swift-makefile'
@@ -461,6 +473,10 @@ jobs:
           ref: main
           path: .swift-makefile
           fetch-depth: 1
+          # The helper checkout only supplies scripts and make targets; API calls
+          # use GH_TOKEN, so drop the Actions token from the helper repo git
+          # config to match the main checkout and shrink the blast radius.
+          persist-credentials: false
 
       - name: Run CI gate (swift-makefile)
         if: github.repository == 'agoodkind/swift-makefile'
