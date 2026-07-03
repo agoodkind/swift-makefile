@@ -20,4 +20,10 @@ jobs:
     uses: ./.github/workflows/_ci.yml
     with:
       extra-targets: '["smoke-fetch"]'
+      # Opt into the self-hosted M1 pool. plan-runners curls this capacity
+      # endpoint; when it reports available the gates run on the pool label and
+      # the broker drains them through its warm slots, otherwise they fall back
+      # to the hosted runner. The bearer token comes from the inherited
+      # LOCAL_POOL_CAPACITY_TOKEN secret.
+      local-pool-capacity-url: ${{ vars.BROKER_CAPACITY_URL }}
     secrets: inherit
