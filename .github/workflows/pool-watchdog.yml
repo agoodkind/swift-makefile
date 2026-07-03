@@ -30,9 +30,13 @@ env:
   # stranding case this watchdog resolves.
   POOL_LABEL: agk-local-macos-26
   # A pool job that has been queued longer than this many seconds is treated as
-  # stranded. The broker's own serving deadline is shorter, so this only fires
-  # when the broker could not act at all.
-  STUCK_THRESHOLD_SECONDS: "480"
+  # stranded. The broker's own serving deadline is 45 minutes, and it drains a
+  # fan-out of gates through a small pool a few at a time, so a healthy gate can
+  # sit queued for most of that window before it leases a slot. This threshold
+  # sits above the broker's 45-minute serving deadline so the broker's own
+  # truthful cancel always fires first; the watchdog only fires when the broker
+  # could not act at all, which is the broker being fully down or unreachable.
+  STUCK_THRESHOLD_SECONDS: "3300"
 
 jobs:
   cancel-stranded:
