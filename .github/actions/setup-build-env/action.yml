@@ -287,7 +287,11 @@ runs:
         xcodegen --version
 
     - name: Install Swift lint and analysis tools
-      if: ${{ inputs.install-lint-tools == 'true' && env.SWIFT_MK_POOL != '1' }}
+      # Runs on the pool too: the Cirrus golden ships Xcode but not the lint and
+      # analysis tools, so the Quality gates need them installed here. The
+      # command -v check makes it a no-op for tools a future pre-baked golden
+      # already carries, at which point this step is a fast skip on the pool.
+      if: ${{ inputs.install-lint-tools == 'true' }}
       shell: bash
       run: |
         set -euo pipefail
