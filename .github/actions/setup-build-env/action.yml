@@ -62,6 +62,9 @@ runs:
         DEPENDENCY_HASH: ${{ hashFiles('Package.swift', 'Package.resolved', 'Tuist/Package.swift', 'Tuist/Package.resolved', 'Tools/Package.swift', 'Tools/Package.resolved', 'swiftcheck/Package.swift', 'swiftcheck/Package.resolved', '.tool-versions', 'mise.toml', '.config/mise/conf.d/*.toml', 'project.yml', '**/*.xcworkspace/xcshareddata/swiftpm/Package.resolved', '**/*.xcodeproj/project.pbxproj') }}
       run: |
         set -euo pipefail
+        if [[ -z "${DEPENDENCY_HASH}" ]]; then
+          DEPENDENCY_HASH="no-deps"
+        fi
         printf 'value=%s\n' "${DEPENDENCY_HASH}" >> "${GITHUB_OUTPUT}"
 
     - name: Configure self-hosted pool cache
@@ -72,6 +75,10 @@ runs:
         POOL_CACHE_ROOT: /Volumes/My Shared Files/cache
       run: |
         set -euo pipefail
+        if [[ ! -d "/Volumes/My Shared Files/cache" ]]; then
+          echo "pool cache mount absent; skipping pool cache configuration"
+          exit 0
+        fi
 
         xcode_cache="${POOL_CACHE_ROOT}/swift-mk/cas"
         swiftpm_cache="${POOL_CACHE_ROOT}/swift-mk/swiftpm-cas"

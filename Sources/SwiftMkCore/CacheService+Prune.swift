@@ -25,6 +25,7 @@ public struct CachePruneResult: Equatable, Sendable {
 /// `--path` cannot delete unrelated directories.
 public enum CachePruneError: Error, Equatable, Sendable {
   case unsafePath(String)
+  case limitNotReached(path: String, currentBytes: UInt64, maxBytes: UInt64)
 }
 
 // MARK: - CacheService Prune
@@ -51,8 +52,8 @@ extension CacheService {
 
   public static func prune(maxBytes: UInt64, path: String? = nil) throws -> CachePruneResult {
     let prunePath = path ?? defaultSharedCacheRootPath()
-    try validatePrunePath(prunePath)
-    let root = URL(fileURLWithPath: prunePath, isDirectory: true)
+    let validatedPath = try validatePrunePath(prunePath)
+    let root = URL(fileURLWithPath: validatedPath, isDirectory: true)
     Output.debug("cache prune: inspecting \(root.path)")
     guard FileManager.default.fileExists(atPath: root.path) else {
       return CachePruneResult(
@@ -87,6 +88,13 @@ extension CacheService {
         }
       }
     }
+    guard currentBytes <= maxBytes else {
+      throw CachePruneError.limitNotReached(
+        path: root.path,
+        currentBytes: currentBytes,
+        maxBytes: maxBytes
+      )
+    }
     return CachePruneResult(
       path: root.path,
       maxBytes: maxBytes,
@@ -97,23 +105,25 @@ extension CacheService {
     )
   }
 
-  /// The fewest path components a prune root must have below filesystem root. A
-  /// cache dir like /Users/x/pool-cache clears the bar; "/" or "/Users" does
-  /// not, so a mistyped `--path` cannot evict unrelated data.
-  private static let minimumPrunePathComponents = 2
+  /// A valid prune root needs at least three path components below filesystem
+  /// root. A cache dir like /Users/x/pool-cache clears the bar; "/", "/Users",
+  /// or "/Users/x" does not, so a mistyped `--path` cannot evict unrelated data.
+  private static let minimumPrunePathComponents = 3
 
   /// Rejects an empty, root, or shallow prune path so a mistyped `--path` like
   /// "/" or "/Users" cannot evict unrelated data.
-  private static func validatePrunePath(_ path: String) throws {
+  private static func validatePrunePath(_ path: String) throws -> String {
     let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
     if trimmed.isEmpty {
       throw CachePruneError.unsafePath(path)
     }
-    let standardized = URL(fileURLWithPath: trimmed).standardizedFileURL.path
+    let expanded = NSString(string: trimmed).expandingTildeInPath
+    let standardized = URL(fileURLWithPath: expanded).standardizedFileURL.path
     let components = standardized.split(separator: "/", omittingEmptySubsequences: true)
     if standardized == "/" || components.count < minimumPrunePathComponents {
       throw CachePruneError.unsafePath(standardized)
     }
+    return standardized
   }
 
   private struct PruneEntry {

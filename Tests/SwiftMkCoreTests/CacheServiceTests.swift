@@ -88,10 +88,41 @@ func pruneRemovesLeastRecentlyUsedEntriesUntilUnderMaxBytes() throws {
 
 @Test
 func pruneRejectsUnsafePaths() {
-  for unsafe in ["", " ", "/", "/Users"] {
+  for unsafe in ["", " ", "/", "/Users", "/Users/runner"] {
     #expect(throws: CachePruneError.self) {
       _ = try CacheService.prune(maxBytes: 0, path: unsafe)
     }
+  }
+}
+
+@Test
+func pruneExpandsTildePathBeforeValidation() throws {
+  let home = FileManager.default.homeDirectoryForCurrentUser.path
+  let path = "~/swift-mk-prune-\(UUID().uuidString)"
+  let result = try CacheService.prune(maxBytes: 0, path: path)
+
+  #expect(result.path == "\(home)/\(path.dropFirst(2))")
+}
+
+@Test
+func pruneThrowsWhenDeletionFailuresLeaveCacheOverBudget() throws {
+  let root = try makeTemporaryCacheRoot()
+  defer {
+    try? FileManager.default.setAttributes(
+      [.posixPermissions: 0o700],
+      ofItemAtPath: root.path
+    )
+    removeTemporary(root.path)
+  }
+
+  let entry = root.appendingPathComponent("kept-entry", isDirectory: true)
+  try writeCacheEntry(entry, byteCount: 8, date: Date(timeIntervalSince1970: 100))
+  try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: root.path)
+
+  #expect(
+    throws: CachePruneError.limitNotReached(path: root.path, currentBytes: 8, maxBytes: 0)
+  ) {
+    _ = try CacheService.prune(maxBytes: 0, path: root.path)
   }
 }
 
