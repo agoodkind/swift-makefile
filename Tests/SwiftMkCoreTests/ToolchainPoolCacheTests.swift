@@ -49,10 +49,10 @@ enum ToolchainPoolCacheTests {
   private static func withSharedCacheEnv(
     module: String?, spm: String?, cas: String?, pool: String?, _ run: () -> Void
   ) {
-    let priorModule = ProcessInfo.processInfo.environment["SWIFT_MK_MODULE_CACHE"]
-    let priorSpm = ProcessInfo.processInfo.environment["SWIFT_MK_SPM_CACHE"]
-    let priorCas = ProcessInfo.processInfo.environment["SWIFT_MK_XCODE_CACHE_PATH"]
-    let priorPool = ProcessInfo.processInfo.environment["SWIFT_MK_POOL"]
+    let priorModule = currentEnv("SWIFT_MK_MODULE_CACHE")
+    let priorSpm = currentEnv("SWIFT_MK_SPM_CACHE")
+    let priorCas = currentEnv("SWIFT_MK_XCODE_CACHE_PATH")
+    let priorPool = currentEnv("SWIFT_MK_POOL")
     setOrUnset("SWIFT_MK_MODULE_CACHE", module)
     setOrUnset("SWIFT_MK_SPM_CACHE", spm)
     setOrUnset("SWIFT_MK_XCODE_CACHE_PATH", cas)
@@ -64,6 +64,14 @@ enum ToolchainPoolCacheTests {
       setOrUnset("SWIFT_MK_POOL", priorPool)
     }
     run()
+  }
+
+  // currentEnv reads the live process environment via getenv rather than the
+  // launch-time ProcessInfo snapshot, so a value an earlier test set with setenv
+  // is captured and restored correctly.
+  private static func currentEnv(_ name: String) -> String? {
+    guard let raw = getenv(name) else { return nil }
+    return String(cString: raw)
   }
 
   private static func setOrUnset(_ name: String, _ value: String?) {
