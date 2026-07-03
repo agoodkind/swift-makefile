@@ -75,8 +75,8 @@ runs:
         POOL_CACHE_ROOT: /Volumes/My Shared Files/cache
       run: |
         set -euo pipefail
-        if [[ ! -d "/Volumes/My Shared Files/cache" ]]; then
-          echo "pool cache mount absent; skipping pool cache configuration"
+        if [[ ! -d "${POOL_CACHE_ROOT}" ]]; then
+          echo "pool cache mount absent at ${POOL_CACHE_ROOT}; skipping pool cache configuration"
           exit 0
         fi
 

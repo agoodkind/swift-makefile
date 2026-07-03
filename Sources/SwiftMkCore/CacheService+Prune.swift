@@ -118,6 +118,13 @@ extension CacheService {
       throw CachePruneError.unsafePath(path)
     }
     let expanded = NSString(string: trimmed).expandingTildeInPath
+    // Reject relative paths outright. URL(fileURLWithPath:) would otherwise
+    // resolve a relative input like "build" against the current working
+    // directory, so a mistyped `--path` could delete an unrelated directory
+    // under wherever the command happens to run.
+    if !expanded.hasPrefix("/") {
+      throw CachePruneError.unsafePath(path)
+    }
     let standardized = URL(fileURLWithPath: expanded).standardizedFileURL.path
     let components = standardized.split(separator: "/", omittingEmptySubsequences: true)
     if standardized == "/" || components.count < minimumPrunePathComponents {
