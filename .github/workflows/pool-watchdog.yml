@@ -49,16 +49,24 @@ jobs:
 
           now_epoch="$(date -u +%s)"
 
-          # Only in-progress runs can hold a stuck-queued job; queued runs have not
-          # scheduled jobs yet, and completed runs cannot hang.
+          # Scan both in_progress and queued runs. A run whose only remaining job
+          # is waiting on the self-hosted pool label can itself sit in `queued`
+          # (nothing has started), so an in_progress-only scan would miss exactly
+          # the stranding case this watchdog exists to catch. Completed runs cannot
+          # hang, so they are excluded. Dedup in case a run changes state mid-scan.
           run_ids="$(
-            gh api --paginate \
-              "repos/${REPOSITORY}/actions/runs?status=in_progress&per_page=100" \
-              --jq '.workflow_runs[].id'
+            {
+              gh api --paginate \
+                "repos/${REPOSITORY}/actions/runs?status=in_progress&per_page=100" \
+                --jq '.workflow_runs[].id'
+              gh api --paginate \
+                "repos/${REPOSITORY}/actions/runs?status=queued&per_page=100" \
+                --jq '.workflow_runs[].id'
+            } | sort -u
           )"
 
           if [ -z "${run_ids}" ]; then
-            printf 'no in-progress runs\n'
+            printf 'no in-progress or queued runs\n'
             exit 0
           fi
 
