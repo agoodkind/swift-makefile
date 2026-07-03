@@ -13,6 +13,14 @@ on:
     - cron: "*/5 * * * *"
   workflow_dispatch:
 
+# One watchdog at a time. A long queue or a manual dispatch overlapping a
+# scheduled run would otherwise duplicate the API scan and cancel calls; the
+# newest run wins and supersedes any in-flight one, and the next 5-minute tick
+# re-checks anything a superseded run had not yet reached.
+concurrency:
+  group: pool-watchdog
+  cancel-in-progress: true
+
 permissions:
   actions: write
   contents: read
