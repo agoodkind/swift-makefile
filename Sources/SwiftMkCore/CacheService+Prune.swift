@@ -24,8 +24,8 @@ public struct CachePruneResult: Equatable, Sendable {
 /// Refuses to prune a path that is empty, root, or too shallow, so a mistyped
 /// `--path` cannot delete unrelated directories.
 public enum CachePruneError: Error, Equatable, Sendable {
-  case unsafePath(String)
   case limitNotReached(path: String, currentBytes: UInt64, maxBytes: UInt64)
+  case unsafePath(String)
 }
 
 // MARK: - CacheService Prune

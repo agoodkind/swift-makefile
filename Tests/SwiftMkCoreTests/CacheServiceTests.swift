@@ -108,10 +108,16 @@ func pruneExpandsTildePathBeforeValidation() throws {
 func pruneThrowsWhenDeletionFailuresLeaveCacheOverBudget() throws {
   let root = try makeTemporaryCacheRoot()
   defer {
-    try? FileManager.default.setAttributes(
-      [.posixPermissions: 0o700],
-      ofItemAtPath: root.path
-    )
+    // Best-effort restore of writable permissions so the temporary root can be
+    // removed; a failure here is not the assertion under test.
+    do {
+      try FileManager.default.setAttributes(
+        [.posixPermissions: 0o700],
+        ofItemAtPath: root.path
+      )
+    } catch {
+      // Ignore: cleanup is best-effort and removeTemporary handles the rest.
+    }
     removeTemporary(root.path)
   }
 
