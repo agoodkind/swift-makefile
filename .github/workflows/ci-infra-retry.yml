@@ -1,5 +1,11 @@
 name: CI infra retry
 
+# Backstop for pool-routed CI. When the self-hosted pool is fully down, gates
+# queued on the pool label are cancelled (by the pool-watchdog) rather than
+# failed. This reruns such a run once, and on the rerun plan-runners routes to
+# hosted because the pool is unavailable. A run with any real job failure is
+# never retried.
+
 on:
   workflow_run:
     workflows: ["CI"]
@@ -11,28 +17,37 @@ permissions:
 
 jobs:
   rerun-cancelled:
-    name: Rerun cancelled CI jobs
-    if: (github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'cancelled') && github.event.workflow_run.run_attempt == 1
+    name: Rerun an infra-cancelled CI run
+    # Only cancelled runs, and only the first attempt, so a rerun can never loop.
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'cancelled' &&
+          github.event.workflow_run.run_attempt == 1 }}
     runs-on: ubuntu-latest
     steps:
-      - name: Rerun only infra-cancelled jobs
+      - name: Rerun only when the sole non-success outcome is a cancellation
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.event.workflow_run.id }}
           REPOSITORY: ${{ github.repository }}
+          # The user who cancelled, when GitHub attributes one. A person cancelling
+          # a run is an intentional stop, so it is left alone; infra and watchdog
+          # cancellations are what this backstop reruns.
+          CANCELLED_BY: ${{ github.event.workflow_run.triggering_actor.login }}
+          EVENT: ${{ github.event.workflow_run.event }}
         run: |
           set -euo pipefail
 
-          failure_found=false
+          # A real failure (do NOT retry) is any job that ended in a state other
+          # than success, skipped, or cancelled: failure, timed_out,
+          # action_required, stale, neutral, and so on. Only a run whose sole
+          # non-success outcome is 'cancelled' is treated as an infra cancel.
+          real_failure=false
           cancelled_found=false
           while IFS= read -r conclusion; do
             case "${conclusion}" in
-              failure)
-                failure_found=true
-                ;;
-              cancelled)
-                cancelled_found=true
-                ;;
+              success | skipped | null | "") ;;
+              cancelled) cancelled_found=true ;;
+              *) real_failure=true ;;
             esac
           done < <(
             gh api --paginate \
@@ -40,16 +55,18 @@ jobs:
               --jq '.jobs[].conclusion'
           )
 
-          if [[ "${failure_found}" == "true" ]]; then
-            printf 'CI run %s has a failed job; not retrying a real failure.\n' "${RUN_ID}"
+          if [[ "${real_failure}" == "true" ]]; then
+            printf 'CI run %s has a real job failure; not retrying.\n' "${RUN_ID}"
+            exit 0
+          fi
+          if [[ "${cancelled_found}" != "true" ]]; then
+            printf 'CI run %s had no cancelled jobs; nothing to retry.\n' "${RUN_ID}"
             exit 0
           fi
 
-          if [[ "${cancelled_found}" == "true" ]]; then
-            gh api \
-              -X POST \
-              "repos/${REPOSITORY}/actions/runs/${RUN_ID}/rerun-failed-jobs"
-            printf 'CI run %s had cancelled jobs only; requested one failed-job rerun.\n' "${RUN_ID}"
-          else
-            printf 'CI run %s had no failed or cancelled jobs; no retry needed.\n' "${RUN_ID}"
-          fi
+          # rerun-failed-jobs targets failed jobs and can be a no-op when a run has
+          # only cancelled jobs, so the full rerun endpoint is used to guarantee
+          # the run re-executes. On the rerun plan-runners sees the pool
+          # unavailable and routes every gate to hosted.
+          gh api -X POST "repos/${REPOSITORY}/actions/runs/${RUN_ID}/rerun"
+          printf 'CI run %s was cancelled with no real failure; requested a full rerun.\n' "${RUN_ID}"
