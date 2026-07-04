@@ -165,6 +165,12 @@ name: CI
 on:
   push: { branches: [main] }
   pull_request:
+permissions:
+  contents: read
+  # actions: read lets the shared Quality aggregator read this run's jobs to
+  # resolve each lint's pool-or-hosted result. A reusable job cannot exceed the
+  # caller's grant, so this must be granted here or the Quality gate fails startup.
+  actions: read
 jobs:
   ci:
     uses: agoodkind/swift-makefile/.github/workflows/_ci.yml@main
