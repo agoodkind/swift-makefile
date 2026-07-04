@@ -12,6 +12,10 @@ concurrency:
 
 permissions:
   contents: read
+  # The reusable Quality aggregator reads this run's jobs to resolve each lint's
+  # pool-or-hosted outcome. A reusable job cannot request a scope the caller does
+  # not grant, so grant actions:read here.
+  actions: read
 
 jobs:
   # The caller job id is the middle segment of every reusable-workflow status
