@@ -233,3 +233,5 @@ Set `SWIFT_MK_DEV_DIR=$HOME/Sites/swift-makefile` (or your own checkout path) to
 
 - `make update-consumers-dry-run` prints the selected repos and planned actions.
 - `make update-consumers` copies `bootstrap.mk`, runs `make update-swift-mk`, runs `make help`, and optionally runs the validation target in each selected repo.
+
+<!-- phase0 skip-detector live probe: docs-only change, expect CI to skip build/test/lint -->
