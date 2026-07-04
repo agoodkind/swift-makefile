@@ -81,6 +81,15 @@ func classifyUsesTheGraphAndLintSetToDecideRelevance() {
   }
 }
 
+@Test
+func supportedEventsAreOnlyPushAndPullRequest() {
+  #expect(CiChanged.isSupportedEvent("push"))
+  #expect(CiChanged.isSupportedEvent("pull_request"))
+  #expect(!CiChanged.isSupportedEvent(""))
+  #expect(!CiChanged.isSupportedEvent("workflow_dispatch"))
+  #expect(!CiChanged.isSupportedEvent("schedule"))
+}
+
 private func graphCase(_ name: String, _ paths: [String], _ run: Bool) -> ClassifyCase {
   ClassifyCase(name: name, paths: paths, expected: run)
 }

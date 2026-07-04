@@ -137,12 +137,19 @@ public enum CiChanged {
     return .base(mergeBase)
   }
 
+  /// The events the detector classifies. A push carries the pushed range, and a pull
+  /// request carries its own branch head, so both give a well-defined diff. Any other
+  /// event has no reliable base, so the detector fails safe to a full run.
+  static func isSupportedEvent(_ eventName: String) -> Bool {
+    eventName == "push" || eventName == "pull_request"
+  }
+
   private static func decide() -> Decision {
     let eventName = Env.get("SWIFT_MK_EVENT_NAME")
     let head = Env.get("SWIFT_MK_DIFF_HEAD", "HEAD")
-    guard eventName == "push" else {
+    guard isSupportedEvent(eventName) else {
       let event = eventName.isEmpty ? "(unset)" : eventName
-      return Decision(changed: true, reason: "non-push event: \(event)")
+      return Decision(changed: true, reason: "unsupported event: \(event)")
     }
 
     let defaultBranch = Env.get("SWIFT_MK_DEFAULT_BRANCH")
