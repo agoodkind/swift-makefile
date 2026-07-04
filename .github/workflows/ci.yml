@@ -20,4 +20,7 @@ jobs:
     uses: ./.github/workflows/_ci.yml
     with:
       extra-targets: '["smoke-fetch"]'
+      # Try the M1 self-hosted pool first; plan-runners falls back to hosted when
+      # the pool is unavailable. The bearer token rides secrets: inherit.
+      local-pool-capacity-url: ${{ vars.BROKER_CAPACITY_URL }}
     secrets: inherit
