@@ -116,7 +116,8 @@ func pruneThrowsWhenDeletionFailuresLeaveCacheOverBudget() throws {
         ofItemAtPath: root.path
       )
     } catch {
-      // Ignore: cleanup is best-effort and removeTemporary handles the rest.
+      // Best-effort cleanup: log and continue, since removeTemporary handles the rest.
+      Output.debug("cache test cleanup: restoring writable permissions failed: \(error)")
     }
     removeTemporary(root.path)
   }
