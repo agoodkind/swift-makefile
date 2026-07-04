@@ -3,8 +3,8 @@ name: CI infra retry
 # Backstop for pool-routed CI. When the self-hosted pool is fully down, gates
 # queued on the pool label are cancelled (by the pool-watchdog) rather than
 # failed. This reruns such a run once, and on the rerun plan-runners routes to
-# hosted because the pool is unavailable. A run with any real job failure is
-# never retried.
+# hosted because the pool is unavailable. A run with any real job failure, or a
+# run superseded by a newer push, is never rerun.
 
 on:
   workflow_run:
@@ -24,18 +24,31 @@ jobs:
           github.event.workflow_run.run_attempt == 1 }}
     runs-on: ubuntu-latest
     steps:
-      - name: Rerun only when the sole non-success outcome is a cancellation
+      - name: Rerun only when the sole non-success outcome is an infra cancel
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.event.workflow_run.id }}
+          WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
           REPOSITORY: ${{ github.repository }}
-          # The user who cancelled, when GitHub attributes one. A person cancelling
-          # a run is an intentional stop, so it is left alone; infra and watchdog
-          # cancellations are what this backstop reruns.
-          CANCELLED_BY: ${{ github.event.workflow_run.triggering_actor.login }}
-          EVENT: ${{ github.event.workflow_run.event }}
         run: |
           set -euo pipefail
+
+          # A newer run of the same workflow on the same branch means this run was
+          # cancelled by ci.yml's cancel-in-progress (a superseding push), not by
+          # the pool watchdog. Rerunning a superseded commit wastes runners, so
+          # skip it. Run ids are monotonic, so a larger id is a newer run.
+          newest_id="$(
+            gh api --paginate \
+              "repos/${REPOSITORY}/actions/workflows/${WORKFLOW_ID}/runs?branch=${HEAD_BRANCH}&per_page=100" \
+              --jq '.workflow_runs[].id' \
+              | sort -n | tail -n 1
+          )"
+          if [[ -n "${newest_id}" && "${newest_id}" -gt "${RUN_ID}" ]]; then
+            printf 'CI run %s was superseded by newer run %s; not retrying.\n' \
+              "${RUN_ID}" "${newest_id}"
+            exit 0
+          fi
 
           # A real failure (do NOT retry) is any job that ended in a state other
           # than success, skipped, or cancelled: failure, timed_out,
@@ -69,4 +82,4 @@ jobs:
           # the run re-executes. On the rerun plan-runners sees the pool
           # unavailable and routes every gate to hosted.
           gh api -X POST "repos/${REPOSITORY}/actions/runs/${RUN_ID}/rerun"
-          printf 'CI run %s was cancelled with no real failure; requested a full rerun.\n' "${RUN_ID}"
+          printf 'CI run %s was infra-cancelled with no real failure; requested a full rerun.\n' "${RUN_ID}"
