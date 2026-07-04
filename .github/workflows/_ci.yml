@@ -126,13 +126,15 @@ env:
 jobs:
   quality:
     name: Quality / ${{ matrix.name }}
-    needs: changes
+    needs: [changes, plan-runners]
     if: ${{ !cancelled() }}
     # On an index-confirmed skip (run == 'false') the job runs on ubuntu, so a
     # docs-only push never occupies a macOS pool slot. Every step is guarded to
     # skip on that same value, so the job runs no work and the named check still
-    # reports green. Any other value keeps the macOS runner (fail-safe to full CI).
-    runs-on: ${{ needs.changes.outputs.run == 'false' && 'ubuntu-latest' || inputs.runner }}
+    # reports green. Any other value routes to the self-hosted pool label
+    # plan-runners picked (the M1 pool when it has capacity, else inputs.runner),
+    # so the Quality gates run on the pool alongside Build and Test.
+    runs-on: ${{ needs.changes.outputs.run == 'false' && 'ubuntu-latest' || needs.plan-runners.outputs.build_label }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
