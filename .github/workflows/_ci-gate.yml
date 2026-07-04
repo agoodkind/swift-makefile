@@ -1,7 +1,8 @@
-# Reusable heavy-gate body for the Swift CI. One job runs the Build, Test, or
-# Extra Targets gate selected by `gate`. _ci.yml calls this once per pool attempt
-# and once per hosted fallback, so the guarded setup/sign/make sequence lives
-# here instead of being duplicated across six jobs.
+# Reusable heavy-gate body for the Swift CI. One job runs the Build, Test, Extra
+# Targets, or a Quality lint gate selected by `gate`. _ci.yml calls this once per
+# pool attempt and once per hosted fallback, so the guarded setup/sign/make
+# sequence lives here instead of being duplicated across every gate's jobs. This is
+# the single gate body: no gate special-cases its runner or its setup.
 #
 # Composability: owned actions (setup-build-env and the signing actions) are
 # referenced at this workflow's job level with the github.repository guard
@@ -15,7 +16,8 @@ name: CI gate
 on:
   workflow_call:
     inputs:
-      # build | test | extra-targets
+      # build | test | extra-targets | a Quality lint target (lint-swiftlint,
+      # lint-format, lint-complexity, lint-deadcode, swiftcheck-extra, audit)
       gate:
         type: string
         required: true
@@ -110,8 +112,9 @@ jobs:
         run: |
           case "${GATE}" in
             build | test | extra-targets) ;;
+            lint-swiftlint | lint-format | lint-complexity | lint-deadcode | swiftcheck-extra | audit) ;;
             *)
-              printf 'unknown gate %s; expected build, test, or extra-targets\n' "${GATE}" >&2
+              printf 'unknown gate %s; expected build, test, extra-targets, or a Quality lint target\n' "${GATE}" >&2
               exit 1
               ;;
           esac
@@ -269,3 +272,25 @@ jobs:
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
           EXTRA_TARGETS_SHELL: ${{ steps.resolve.outputs.targets_shell }}
         run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-extra-targets
+
+      # Quality lint gates share the same shared preflight/build-tooling guard the
+      # old build-check workflow ran, then run their gate-specific target. Quality
+      # needs no signing, so it uses run-make-with-team (team id only, inert when
+      # empty), matching how the standalone Quality jobs ran before.
+      - name: Run shared quality guard
+        if: ${{ inputs.run != 'false' && contains(fromJSON('["lint-swiftlint","lint-format","lint-complexity","lint-deadcode","swiftcheck-extra","audit"]'), inputs.gate) }}
+        shell: bash
+        env:
+          MAKE_TARGET: quality-guard
+          MAKE_ARGS: ${{ inputs.make-args }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-team
+
+      - name: Run quality gate
+        if: ${{ inputs.run != 'false' && contains(fromJSON('["lint-swiftlint","lint-format","lint-complexity","lint-deadcode","swiftcheck-extra","audit"]'), inputs.gate) }}
+        shell: bash
+        env:
+          MAKE_TARGET: ${{ inputs.gate }}
+          MAKE_ARGS: ${{ inputs.make-args }}
+          TEAM_ID: ${{ inputs.apple-team-id }}
+        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-team
