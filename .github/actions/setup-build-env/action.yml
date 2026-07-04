@@ -80,15 +80,18 @@ runs:
           exit 0
         fi
 
-        xcode_cache="${POOL_CACHE_ROOT}/swift-mk/cas"
-        swiftpm_cache="${POOL_CACHE_ROOT}/swift-mk/swiftpm-cas"
+        # Share only the concurrency-safe, read-mostly caches across the pool VMs.
+        # The write-heavy compilation-cache (CAS) stores must NOT live on the shared
+        # mount: the pool runs several persistent VMs building concurrently, and
+        # concurrent writers to one CAS store corrupt it (the build aborts with
+        # "CASID missing from Object Store"). Leaving SWIFT_MK_XCODE_CACHE_PATH and
+        # SWIFT_MK_SWIFTPM_CACHE_PATH unset keeps each VM's CAS at its VM-local
+        # default, where VM reuse still keeps it warm across the gates that VM serves.
         module_cache="${POOL_CACHE_ROOT}/swift-mk/module-cache"
         spm_cache="${POOL_CACHE_ROOT}/spm/${DEPENDENCY_HASH}/SourcePackages"
-        mkdir -p "${xcode_cache}" "${swiftpm_cache}" "${module_cache}" "${spm_cache}"
+        mkdir -p "${module_cache}" "${spm_cache}"
         {
             printf 'SWIFT_MK_POOL=1\n'
-            printf 'SWIFT_MK_XCODE_CACHE_PATH=%s\n' "${xcode_cache}"
-            printf 'SWIFT_MK_SWIFTPM_CACHE_PATH=%s\n' "${swiftpm_cache}"
             printf 'SWIFT_MK_MODULE_CACHE=%s\n' "${module_cache}"
             printf 'SWIFT_MK_SPM_CACHE=%s\n' "${spm_cache}"
         } >> "${GITHUB_ENV}"
