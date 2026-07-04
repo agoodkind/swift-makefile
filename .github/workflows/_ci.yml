@@ -127,7 +127,11 @@ jobs:
   quality:
     name: Quality / ${{ matrix.name }}
     needs: [changes, plan-runners]
-    if: ${{ !cancelled() }}
+    # !cancelled() keeps Quality running when changes fails (an empty run means
+    # full CI), and requiring plan-runners success keeps runs-on well-defined the
+    # same way build-pool/test-pool do: a plan-runners failure would otherwise
+    # leave build_label empty and make runs-on invalid.
+    if: ${{ !cancelled() && needs.plan-runners.result == 'success' }}
     # On an index-confirmed skip (run == 'false') the job runs on ubuntu, so a
     # docs-only push never occupies a macOS pool slot. Every step is guarded to
     # skip on that same value, so the job runs no work and the named check still
