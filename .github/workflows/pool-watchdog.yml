@@ -31,8 +31,10 @@ env:
   POOL_LABEL: agk-local-macos-26
   # A pool job that has been queued longer than this many seconds is treated as
   # stranded. The broker's own serving deadline is shorter, so this only fires
-  # when the broker could not act at all.
-  STUCK_THRESHOLD_SECONDS: "480"
+  # when the broker could not act at all. A warm pool runner picks a job up in
+  # seconds, so a job still queued on the pool label this long means no runner
+  # took it, and it should fail over to hosted quickly.
+  STUCK_THRESHOLD_SECONDS: "120"
 
 jobs:
   cancel-stranded:
