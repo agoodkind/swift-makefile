@@ -145,23 +145,33 @@ jobs:
         include:
           - name: SwiftLint
             target: lint-swiftlint
+            signal: lint
           - name: Format
             target: lint-format
+            signal: lint
           - name: Complexity
             target: lint-complexity
+            signal: lint
           - name: Deadcode
             target: lint-deadcode
+            signal: build
           - name: Swiftcheck Extra
             target: swiftcheck-extra
+            signal: lint
           - name: Audit
             target: audit
+            signal: build
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: ${{ matrix.target }}
-      # Route to ubuntu on an index-confirmed skip so a docs-only push does not
-      # occupy a macOS pool slot (see the Build job note).
-      runner: ${{ needs.changes.outputs.run == 'false' && 'ubuntu-latest' || needs.plan-runners.outputs.quality_label }}
-      run: ${{ needs.changes.outputs.run }}
+      # Route to ubuntu on a per-gate skip so a change that does not feed this
+      # gate family occupies no macOS pool slot (see the Build job note). A lint
+      # leg keys on run_lint; Deadcode and Audit key on run_build. The condition
+      # is written as an explicit `!= 'false'` boolean per family, not the
+      # `cond && A || B` idiom, so it does not depend on the string 'false' being
+      # truthy and it still fails safe to run when a signal is empty.
+      runner: ${{ ((matrix.signal == 'lint' && needs.changes.outputs.run_lint != 'false') || (matrix.signal != 'lint' && needs.changes.outputs.run_build != 'false')) && needs.plan-runners.outputs.quality_label || 'ubuntu-latest' }}
+      run: ${{ ((matrix.signal == 'lint' && needs.changes.outputs.run_lint != 'false') || (matrix.signal != 'lint' && needs.changes.outputs.run_build != 'false')) && 'true' || 'false' }}
       xcode-version: ${{ inputs.xcode-version }}
       cache-profile: ${{ inputs.cache-profile }}
       cache-version: ${{ inputs.cache-version }}
@@ -345,6 +355,8 @@ jobs:
       contents: read
     outputs:
       run: ${{ steps.detect.outputs.run }}
+      run_build: ${{ steps.detect.outputs.run_build }}
+      run_lint: ${{ steps.detect.outputs.run_lint }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -424,8 +436,8 @@ jobs:
       gate: build
       # Route to ubuntu on an index-confirmed skip so a docs-only push does not
       # occupy a macOS pool slot (see the Quality job note).
-      runner: ${{ needs.changes.outputs.run == 'false' && 'ubuntu-latest' || needs.plan-runners.outputs.build_label }}
-      run: ${{ needs.changes.outputs.run }}
+      runner: ${{ needs.changes.outputs.run_build == 'false' && 'ubuntu-latest' || needs.plan-runners.outputs.build_label }}
+      run: ${{ needs.changes.outputs.run_build }}
       xcode-version: ${{ inputs.xcode-version }}
       cache-profile: ${{ inputs.cache-profile }}
       cache-version: ${{ inputs.cache-version }}
@@ -506,8 +518,8 @@ jobs:
       gate: test
       # Route to ubuntu on an index-confirmed skip so a docs-only push does not
       # occupy a macOS pool slot (see the Quality job note).
-      runner: ${{ needs.changes.outputs.run == 'false' && 'ubuntu-latest' || needs.plan-runners.outputs.test_label }}
-      run: ${{ needs.changes.outputs.run }}
+      runner: ${{ needs.changes.outputs.run_build == 'false' && 'ubuntu-latest' || needs.plan-runners.outputs.test_label }}
+      run: ${{ needs.changes.outputs.run_build }}
       xcode-version: ${{ inputs.xcode-version }}
       cache-profile: ${{ inputs.cache-profile }}
       cache-version: ${{ inputs.cache-version }}
