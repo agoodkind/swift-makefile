@@ -322,8 +322,16 @@ jobs:
             # query string stays valid instead of producing a double '?'.
             sep='?'
             case "${CAPACITY_URL}" in *\?*) sep='&' ;; esac
-            response=$(curl -sf --max-time 5 \
-              -H "Authorization: Bearer ${CAPACITY_TOKEN}" \
+            # Only send an Authorization header when a token is configured. The
+            # default public /capacity needs no token, and an empty "Bearer "
+            # can be rejected by a proxy in front of the endpoint, which would
+            # defeat the tokenless auto-routing. The array expansion is safe
+            # under set -u even when empty.
+            auth=()
+            if [[ -n "${CAPACITY_TOKEN}" ]]; then
+              auth+=(-H "Authorization: Bearer ${CAPACITY_TOKEN}")
+            fi
+            response=$(curl -sf --max-time 5 ${auth[@]+"${auth[@]}"} \
               "${CAPACITY_URL}${sep}repo=${REPO}&run_id=${RUN_ID}" 2>/dev/null || printf '')
             available=$(printf '%s' "${response}" | jq -r '.available // false' 2>/dev/null || printf 'false')
             if [[ "${available}" == "true" ]]; then
