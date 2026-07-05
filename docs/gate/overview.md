@@ -13,7 +13,7 @@ Both paths run `Lint.runHardBuildCheck` over [`LintSourceSet`](../../Sources/Swi
 
 ## Build chokepoints
 
-Every build the engine drives goes through one of two chokepoints, so the gate, the lock, and the cache apply uniformly. [`Toolchain`](../../Sources/SwiftMkCore/Toolchain.swift) drives xcodebuild, and [`SwiftPM`](../../Sources/SwiftMkCore/SwiftPM.swift) drives the `swift` command-line tool as a subprocess. The engine links no swift-package-manager library; [NoLibSwiftPMImportTests](../../Tests/SwiftMkCoreTests/NoLibSwiftPMImportTests.swift) enforces that. See [build chokepoints](../build-chokepoints.md) for the compile-cache stores.
+Every build the engine drives goes through one of two chokepoints, so the gate, the lock, and the cache apply uniformly. [`Toolchain`](../../Sources/SwiftMkCore/Toolchain.swift) drives xcodebuild, and [`SwiftPM`](../../Sources/SwiftMkCore/SwiftPM.swift) drives the `swift` command-line tool as a subprocess. The engine links no swift-package-manager library; [NoLibSwiftPMImportTests](../../Tests/SwiftMkCoreTests/NoLibSwiftPMImportTests.swift) enforces that. See [build](../build/overview.md) for the routing contract and the cache flags.
 
 ## No direct toolchain in consumer files
 
