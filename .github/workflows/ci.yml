@@ -12,6 +12,10 @@ concurrency:
 
 permissions:
   contents: read
+  # The reusable Quality aggregator reads this run's jobs to resolve each lint's
+  # pool-or-hosted outcome. A reusable job cannot request a scope the caller does
+  # not grant, so grant actions:read here.
+  actions: read
 
 jobs:
   # The caller job id is the middle segment of every reusable-workflow status
@@ -20,4 +24,7 @@ jobs:
     uses: ./.github/workflows/_ci.yml
     with:
       extra-targets: '["smoke-fetch"]'
+      # Try the M1 self-hosted pool first; plan-runners falls back to hosted when
+      # the pool is unavailable. The bearer token rides secrets: inherit.
+      local-pool-capacity-url: ${{ vars.BROKER_CAPACITY_URL }}
     secrets: inherit

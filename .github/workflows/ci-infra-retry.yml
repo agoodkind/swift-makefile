@@ -1,0 +1,85 @@
+name: CI infra retry
+
+# Backstop for pool-routed CI. When the self-hosted pool is fully down, gates
+# queued on the pool label are cancelled (by the pool-watchdog) rather than
+# failed. This reruns such a run once, and on the rerun plan-runners routes to
+# hosted because the pool is unavailable. A run with any real job failure, or a
+# run superseded by a newer push, is never rerun.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  rerun-cancelled:
+    name: Rerun an infra-cancelled CI run
+    # Only cancelled runs, and only the first attempt, so a rerun can never loop.
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'cancelled' &&
+          github.event.workflow_run.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rerun only when the sole non-success outcome is an infra cancel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # A newer run of the same workflow on the same branch means this run was
+          # cancelled by ci.yml's cancel-in-progress (a superseding push), not by
+          # the pool watchdog. Rerunning a superseded commit wastes runners, so
+          # skip it. Run ids are monotonic, so a larger id is a newer run.
+          newest_id="$(
+            gh api --paginate \
+              "repos/${REPOSITORY}/actions/workflows/${WORKFLOW_ID}/runs?branch=${HEAD_BRANCH}&per_page=100" \
+              --jq '.workflow_runs[].id' \
+              | sort -n | tail -n 1
+          )"
+          if [[ -n "${newest_id}" && "${newest_id}" -gt "${RUN_ID}" ]]; then
+            printf 'CI run %s was superseded by newer run %s; not retrying.\n' \
+              "${RUN_ID}" "${newest_id}"
+            exit 0
+          fi
+
+          # A real failure (do NOT retry) is any job that ended in a state other
+          # than success, skipped, or cancelled: failure, timed_out,
+          # action_required, stale, neutral, and so on. Only a run whose sole
+          # non-success outcome is 'cancelled' is treated as an infra cancel.
+          real_failure=false
+          cancelled_found=false
+          while IFS= read -r conclusion; do
+            case "${conclusion}" in
+              success | skipped | null | "") ;;
+              cancelled) cancelled_found=true ;;
+              *) real_failure=true ;;
+            esac
+          done < <(
+            gh api --paginate \
+              "repos/${REPOSITORY}/actions/runs/${RUN_ID}/jobs" \
+              --jq '.jobs[].conclusion'
+          )
+
+          if [[ "${real_failure}" == "true" ]]; then
+            printf 'CI run %s has a real job failure; not retrying.\n' "${RUN_ID}"
+            exit 0
+          fi
+          if [[ "${cancelled_found}" != "true" ]]; then
+            printf 'CI run %s had no cancelled jobs; nothing to retry.\n' "${RUN_ID}"
+            exit 0
+          fi
+
+          # rerun-failed-jobs targets failed jobs and can be a no-op when a run has
+          # only cancelled jobs, so the full rerun endpoint is used to guarantee
+          # the run re-executes. On the rerun plan-runners sees the pool
+          # unavailable and routes every gate to hosted.
+          gh api -X POST "repos/${REPOSITORY}/actions/runs/${RUN_ID}/rerun"
+          printf 'CI run %s was infra-cancelled with no real failure; requested a full rerun.\n' "${RUN_ID}"

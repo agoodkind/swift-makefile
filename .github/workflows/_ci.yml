@@ -124,20 +124,21 @@ env:
   HOMEBREW_NO_REQUIRE_TAP_TRUST: "1"
 
 jobs:
-  quality:
-    name: Quality / ${{ matrix.name }}
-    needs: changes
-    if: ${{ !cancelled() }}
-    # On an index-confirmed skip (run == 'false') the job runs on ubuntu, so a
-    # docs-only push never occupies a macOS pool slot. Every step is guarded to
-    # skip on that same value, so the job runs no work and the named check still
-    # reports green. Any other value keeps the macOS runner (fail-safe to full CI).
-    runs-on: ${{ needs.changes.outputs.run == 'false' && 'ubuntu-latest' || inputs.runner }}
-    timeout-minutes: ${{ inputs.timeout-minutes }}
-    permissions:
-      contents: read
-    env:
-      SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+  # ── Quality ────────────────────────────────────────────────────────────────
+  # quality-pool: first attempt on the planned runner (pool or hosted), one leg
+  # per lint, run after Build so the compiling lints (Deadcode, Swiftcheck Extra)
+  # restore Build's fresh compile/index pile and replay instead of cold-building.
+  # quality-hosted: hosted-only fallback that reruns when a pool leg fails or is
+  # cancelled (a pool runner that disconnects mid-job ends as cancelled).
+  # quality: per-lint aggregator; each `Quality / <name>` is the required check.
+  quality-pool:
+    name: Quality pool / ${{ matrix.name }}
+    needs: [plan-runners, changes, build]
+    # !cancelled() keeps the source-only lints running even when Build failed, and
+    # requiring plan-runners success keeps the runner label well-defined the same
+    # way build-pool/test-pool do. needs build so the compiling lints reuse Build's
+    # fresh pile: build first, then Quality replays it.
+    if: ${{ !cancelled() && needs.plan-runners.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -154,75 +155,108 @@ jobs:
             target: swiftcheck-extra
           - name: Audit
             target: audit
+    uses: ./.github/workflows/_ci-gate.yml
+    with:
+      gate: ${{ matrix.target }}
+      # Route to ubuntu on an index-confirmed skip so a docs-only push does not
+      # occupy a macOS pool slot (see the Build job note).
+      runner: ${{ needs.changes.outputs.run == 'false' && 'ubuntu-latest' || needs.plan-runners.outputs.quality_label }}
+      run: ${{ needs.changes.outputs.run }}
+      xcode-version: ${{ inputs.xcode-version }}
+      cache-profile: ${{ inputs.cache-profile }}
+      cache-version: ${{ inputs.cache-version }}
+      extra-cache-paths: ${{ inputs.extra-cache-paths }}
+      brew-packages: ${{ inputs.brew-packages }}
+      setup-target: ${{ inputs.setup-target }}
+      make-args: ${{ inputs.make-args }}
+      apple-team-id: ${{ inputs.apple-team-id }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      fetch-depth: ${{ inputs.fetch-depth }}
+    secrets: inherit
+
+  quality-hosted:
+    name: Quality hosted / ${{ matrix.name }}
+    needs: [plan-runners, quality-pool]
+    # See build-hosted: always() + on_pool + a failed pool attempt. quality-pool's
+    # result is the whole-matrix aggregate, so any failed or cancelled pool leg
+    # reruns the full hosted matrix; the aggregator then resolves each lint per leg.
+    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && (needs.quality-pool.result == 'failure' || needs.quality-pool.result == 'cancelled') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: SwiftLint
+            target: lint-swiftlint
+          - name: Format
+            target: lint-format
+          - name: Complexity
+            target: lint-complexity
+          - name: Deadcode
+            target: lint-deadcode
+          - name: Swiftcheck Extra
+            target: swiftcheck-extra
+          - name: Audit
+            target: audit
+    uses: ./.github/workflows/_ci-gate.yml
+    with:
+      gate: ${{ matrix.target }}
+      runner: ${{ inputs.runner }}
+      xcode-version: ${{ inputs.xcode-version }}
+      cache-profile: ${{ inputs.cache-profile }}
+      cache-version: ${{ inputs.cache-version }}
+      extra-cache-paths: ${{ inputs.extra-cache-paths }}
+      brew-packages: ${{ inputs.brew-packages }}
+      setup-target: ${{ inputs.setup-target }}
+      make-args: ${{ inputs.make-args }}
+      apple-team-id: ${{ inputs.apple-team-id }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      fetch-depth: ${{ inputs.fetch-depth }}
+    secrets: inherit
+
+  quality:
+    name: Quality / ${{ matrix.name }}
+    if: ${{ always() }}
+    needs: [quality-pool, quality-hosted]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # actions: read lets the resolve step read this run's jobs. It stays within the
+    # caller's grant: ci.yml grants contents+actions read, so this reusable job does
+    # not escalate (requesting a scope beyond the caller fails workflow startup).
+    permissions:
+      contents: read
+      actions: read
+    # A vector matrix, not include-only: an include-only matrix on this aggregator
+    # (a job that needs the two matrix-reusable jobs) fails workflow startup even
+    # though actionlint accepts it, so the lint set is a plain list.
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [SwiftLint, Format, Complexity, Deadcode, "Swiftcheck Extra", Audit]
     steps:
-      - uses: actions/checkout@v7
-        if: ${{ needs.changes.outputs.run != 'false' }}
-        with:
-          fetch-depth: ${{ inputs.fetch-depth }}
-
-      - name: Checkout swift-makefile helpers
-        if: ${{ needs.changes.outputs.run != 'false' && github.repository != 'agoodkind/swift-makefile' }}
-        uses: actions/checkout@v7
-        with:
-          repository: agoodkind/swift-makefile
-          # The caller's github.sha names the consumer repo commit, not a
-          # commit in swift-makefile, so the helper checkout follows the
-          # same `@main` contract the reusable workflow already advertises.
-          ref: main
-          path: .swift-makefile
-          fetch-depth: 1
-
-      - name: Install brew packages
-        if: ${{ needs.changes.outputs.run != 'false' && inputs.brew-packages != '' }}
+      - name: Resolve this lint's pool-or-hosted result
         env:
-          BREW_PACKAGES: ${{ inputs.brew-packages }}
-        run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/install-brew-packages/install-brew-packages.sh"
-
-      - name: Setup Swift build env
-        if: ${{ needs.changes.outputs.run != 'false' && github.repository == 'agoodkind/swift-makefile' }}
-        uses: ./.github/actions/setup-build-env
-        with:
-          xcode-version: ${{ inputs.xcode-version }}
-          github-token: ${{ github.token }}
-          cache-profile: ${{ inputs.cache-profile }}
-          cache-version: ${{ inputs.cache-version }}
-          extra-cache-paths: ${{ inputs.extra-cache-paths }}
-          gate: ${{ matrix.target }}
-
-      - name: Setup Swift build env
-        if: ${{ needs.changes.outputs.run != 'false' && github.repository != 'agoodkind/swift-makefile' }}
-        uses: agoodkind/swift-makefile/.github/actions/setup-build-env@main
-        with:
-          xcode-version: ${{ inputs.xcode-version }}
-          github-token: ${{ github.token }}
-          cache-profile: ${{ inputs.cache-profile }}
-          cache-version: ${{ inputs.cache-version }}
-          extra-cache-paths: ${{ inputs.extra-cache-paths }}
-          gate: ${{ matrix.target }}
-
-      - name: Run setup target
-        if: ${{ needs.changes.outputs.run != 'false' && inputs.setup-target != '' }}
-        env:
-          MAKE_TARGET: ${{ inputs.setup-target }}
-          MAKE_ARGS: ${{ inputs.make-args }}
-          TEAM_ID: ${{ inputs.apple-team-id }}
-        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-team
-
-      - name: Run shared quality guard
-        if: ${{ needs.changes.outputs.run != 'false' }}
-        env:
-          MAKE_TARGET: quality-guard
-          MAKE_ARGS: ${{ inputs.make-args }}
-          TEAM_ID: ${{ inputs.apple-team-id }}
-        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-team
-
-      - name: Run ${{ matrix.name }}
-        if: ${{ needs.changes.outputs.run != 'false' }}
-        env:
-          MAKE_TARGET: ${{ matrix.target }}
-          MAKE_ARGS: ${{ inputs.make-args }}
-          TEAM_ID: ${{ inputs.apple-team-id }}
-        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-team
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          REPOSITORY: ${{ github.repository }}
+          LINT_NAME: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          # A matrix aggregator cannot read needs.quality-pool.result per leg (that
+          # value is the whole-matrix aggregate), so read this lint's own pool and
+          # hosted job conclusions from the run's jobs. The jobs API names a job
+          # "<caller-job> / Quality pool / <name> / <gate>" (the caller prefix, e.g.
+          # "swift /", differs per consumer, and the reusable gate appends the gate
+          # job), so match the "Quality pool / <name> /" substring, not a prefix.
+          # per_page=100 fetches every job in one page (far fewer than 100 jobs).
+          jobs_json=$(gh api "repos/${REPOSITORY}/actions/runs/${RUN_ID}/jobs?per_page=100")
+          pool=$(printf '%s' "${jobs_json}" | jq -r --arg p "Quality pool / ${LINT_NAME} /" '[.jobs[] | select(.name | contains($p)) | .conclusion] | first // "missing"')
+          hosted=$(printf '%s' "${jobs_json}" | jq -r --arg p "Quality hosted / ${LINT_NAME} /" '[.jobs[] | select(.name | contains($p)) | .conclusion] | first // "missing"')
+          printf 'Quality / %s: pool=%s hosted=%s\n' "${LINT_NAME}" "${pool}" "${hosted}"
+          if [ "${pool}" = "success" ] || [ "${hosted}" = "success" ]; then
+            exit 0
+          fi
+          printf 'Quality / %s failed (pool=%s, hosted=%s)\n' "${LINT_NAME}" "${pool}" "${hosted}" >&2
+          exit 1
 
   # ── Runner planning ────────────────────────────────────────────────────────
   # Runs on ubuntu-latest (fast, cheap) and decides which runner label each
@@ -239,6 +273,7 @@ jobs:
     outputs:
       build_label: ${{ steps.pick.outputs.build_label }}
       test_label: ${{ steps.pick.outputs.test_label }}
+      quality_label: ${{ steps.pick.outputs.quality_label }}
       extra_targets_label: ${{ steps.pick.outputs.extra_targets_label }}
       # on_pool: the gates were routed to the self-hosted pool, so a hosted
       # fallback is meaningful. extra_targets_enabled: the run configured any
@@ -296,6 +331,7 @@ jobs:
           {
             printf 'build_label=%s\n' "${label}"
             printf 'test_label=%s\n' "${label}"
+            printf 'quality_label=%s\n' "${label}"
             printf 'extra_targets_label=%s\n' "${label}"
             printf 'on_pool=%s\n' "${on_pool}"
           } >> "${GITHUB_OUTPUT}"
