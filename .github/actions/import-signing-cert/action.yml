@@ -20,6 +20,15 @@ outputs:
 runs:
   using: composite
   steps:
+    # The self-hosted pool reuses a VM across jobs, so a signing_temp keychain
+    # left by a previous job makes apple-actions/import-codesign-certs fail its
+    # `security create-keychain signing_temp.keychain` with exit 48 (keychain
+    # already exists). Delete any stale one first so the import is idempotent
+    # across reused VMs. Hosted runners get a fresh VM, so this is a no-op there.
+    - name: Remove any stale signing keychain from a prior pool job
+      shell: bash
+      run: security delete-keychain signing_temp.keychain 2>/dev/null || true
+
     - uses: apple-actions/import-codesign-certs@v3
       with:
         p12-file-base64: ${{ inputs.p12-base64 }}
