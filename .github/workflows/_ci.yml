@@ -76,14 +76,17 @@ on:
         # later runs replay and drop well under this ceiling. This is a ceiling, not a
         # target, so a normal build still finishes early.
         default: 60
-      # Self-hosted macOS pool support. When local-pool-capacity-url is set and
-      # the pool reports available capacity, Build, Test, and Extra Targets run
-      # on local-pool-label; otherwise they fall back to inputs.runner. Quality
-      # always runs on inputs.runner. An empty URL routes everything to hosted
-      # through the same plan-runners path; there is no separate no-op branch.
+      # Self-hosted macOS pool support. When local-pool-capacity-url points at a
+      # broker that reports available capacity, the heavy jobs (Build, Test,
+      # Quality, Extra Targets) run on local-pool-label; otherwise they fall back
+      # to inputs.runner through the same plan-runners path, so there is no
+      # separate no-op branch. The URL defaults to the shared broker, so any
+      # consumer calling this workflow auto-routes to the pool with no config;
+      # the broker's /capacity endpoint is public, and overflow past the pool
+      # falls back to hosted. Set this to an empty string to force hosted.
       local-pool-capacity-url:
         type: string
-        default: ""
+        default: "https://darwin-gh-broker.silver-flare.com/capacity"
       # Runner label for the self-hosted pool. Ignored when the pool is
       # unavailable or local-pool-capacity-url is empty.
       local-pool-label:
