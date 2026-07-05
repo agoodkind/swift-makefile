@@ -18,6 +18,10 @@ jobs:
   release:
     uses: ./.github/workflows/_release.yml
     with:
-      notarize: false
-      attest: false
+      # Notarize and staple the signed swift-mk dmg; a dmg is the CLI-friendly
+      # format that can carry a stapled ticket. Match only the dmg so the
+      # unsigned source tarball is skipped.
+      notarize-pattern: "*.dmg"
+      signing-identity-name: "Developer ID Application: Alex Goodkind (H3BMXM4W7H)"
+      apple-team-id: H3BMXM4W7H
     secrets: inherit
