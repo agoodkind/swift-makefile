@@ -2,6 +2,7 @@
 # against the root render package and the swiftcheck analyzer package.
 
 SWIFT_MK := swift.mk
+SWIFT_MK_CLI_PRODUCT := swift-mk
 
 ROOT_ARGS := \
 	SWIFT_MK_DEV_DIR='$(CURDIR)' \
@@ -47,7 +48,7 @@ CHECK_SWIFT_MK := $(MAKE) -C swiftcheck -f ../$(SWIFT_MK) $(CHECK_ARGS)
 	swiftcheck-extra-baseline swiftcheck-extra-baseline-prune-fixed swiftcheck-extra-baseline-remove-fixed swiftcheck-extra-baseline-accept-new \
 	baseline baseline-prune-fixed baseline-remove-fixed baseline-accept-new baseline-add-new \
 	update-swift-mk swift-mk-sync smoke-fetch update-consumers update-consumers-dry-run help xcode-file-header \
-	release-meta release-build release-publish
+	release-meta release-build release-publish sign-smoke
 
 build: xcode-file-header
 	$(ROOT_SWIFT_MK) build
@@ -193,6 +194,31 @@ update-swift-mk swift-mk-sync:
 
 smoke-fetch:
 	$(ROOT_SWIFT_MK) smoke-fetch
+
+sign-smoke:
+	@set -e; \
+	if ! command -v security >/dev/null 2>&1; then \
+		echo "sign-smoke: security command not found; skipping Developer ID signing"; \
+		exit 0; \
+	fi; \
+	identity_sha1="$$(security find-identity -v -p codesigning 2>/dev/null | awk '/"Developer ID Application: / { print $$2; exit }')"; \
+	if [ -z "$$identity_sha1" ]; then \
+		echo "sign-smoke: no Developer ID Application identity found; skipping signing"; \
+		exit 0; \
+	fi; \
+	echo "sign-smoke: building $(SWIFT_MK_CLI_PRODUCT) release binary"; \
+	swift build -c release --product "$(SWIFT_MK_CLI_PRODUCT)"; \
+	bin_dir="$$(swift build -c release --product "$(SWIFT_MK_CLI_PRODUCT)" --show-bin-path)"; \
+	binary_path="$$bin_dir/$(SWIFT_MK_CLI_PRODUCT)"; \
+	if [ ! -x "$$binary_path" ]; then \
+		echo "sign-smoke: built binary not found at $$binary_path" >&2; \
+		exit 1; \
+	fi; \
+	echo "sign-smoke: signing $$binary_path with Developer ID identity $$identity_sha1"; \
+	echo "sign-smoke: signing via a separate 'swift run swift-mk' (current source, not the target binary)"; \
+	SWIFT_MK_SIGN_IDENTITY="$$identity_sha1" swift run swift-mk codesign-run --mode binary "$$binary_path"; \
+	codesign -v --strict "$$binary_path"; \
+	echo "sign-smoke: verified $$binary_path"
 
 update-consumers:
 	$(ROOT_SWIFT_MK) update-consumers

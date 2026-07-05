@@ -23,7 +23,10 @@ jobs:
   swift:
     uses: ./.github/workflows/_ci.yml
     with:
-      extra-targets: '["smoke-fetch"]'
+      import-signing-cert: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+      signing-identity-name: "Developer ID Application: Alex Goodkind (H3BMXM4W7H)"
+      apple-team-id: H3BMXM4W7H
+      extra-targets: '["smoke-fetch", "sign-smoke"]'
       # Try the M1 self-hosted pool first; plan-runners falls back to hosted when
       # the pool is unavailable. The bearer token rides secrets: inherit.
       local-pool-capacity-url: ${{ vars.BROKER_CAPACITY_URL }}
