@@ -24,8 +24,24 @@ Each subsystem has a present-tense overview under `docs/<area>/overview.md` that
 - `swift-release.mk` defines shared release wrapper targets from consumer-provided commands.
 - `xcconfig.mk` renders `*.template` files into `Derived/Generated/$(TARGET_NAME)/` for Tuist projects that treat one or more xcconfig files as the source of truth. The consumer Makefile `-include`s its xcconfig files, lists the keys it wants exposed (`XCCONFIG_EXPORTED_VARS`), points at its templates dir (`XCCONFIG_TEMPLATES_DIR`), and lists target names (`XCCONFIG_GENERATOR_TARGETS`). The `xcconfig-generate-config` target renders once per target; `xcconfig-generate-project` chains that into `tuist generate --no-open` so the glob inside `Project.swift` finds the generated files. Templates use `[[KEY]]` substitutions. See `swift-mk render-batch --help` for the underlying renderer.
 - `swift-app.mk` defines shared macOS app packaging for an app that ships as a signed `.app` inside a `.dmg` and updates through Sparkle. A consumer loads it with `SWIFT_MK_MODULES := swift-build.mk swift-app.mk`, sets `SWIFT_APP_NAME` plus a few `SWIFT_APP_*` overrides, and gets `app`, `dmg`, `release-assets`, `prepare-sparkle-updates`, and `sparkle-appcast`. `swift-build.mk` still owns `build`; `swift-app.mk` owns everything after the build. The build line stays the consumer's `SWIFT_BUILD_CMD`. See the header of `swift-app.mk` for the full variable surface.
-- `scripts/` holds only the bash bootstrap, fetch, build, and distribution layer that runs before the binary exists: `swift-mk-fetch-one.sh`, `swift-mk-build.sh`, `swift-mk-sync.sh`, `swift-mk-fleet-update.sh`, and `install-hooks.sh`.
+- `scripts/` holds only the bash bootstrap, fetch, build, and distribution layer that runs before the binary exists: `swift-mk-fetch-one.sh`, `swift-mk-build.sh`, `swift-mk-sync.sh`, `swift-mk-fleet-update.sh`, `install-hooks.sh`, and `release-build.sh` (the release dmg build hook).
 - `swiftcheck/` contains the shared SwiftSyntax analyzer package.
+
+## Install
+
+`swift-mk` builds from source by default at `.make/swift-mk`. To install a signed, notarized release binary on an Apple Silicon mac, run:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/agoodkind/swift-makefile/main/install.sh | bash
+```
+
+To pin a release tag or change the install directory without a local checkout, pass flags through `bash -s --`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/agoodkind/swift-makefile/main/install.sh | bash -s -- --version <TAG> --bin-dir <DIR>
+```
+
+`swift-mk version` reports the installed release tag. `swift-mk update check` reports whether a newer release exists; `swift-mk update apply` verifies the new release's Developer ID signature and staple, then replaces the running binary in place. The `update` command is generic: point it at any consumer's dmg release with `--repo`, `--asset`, and `--target`.
 
 ## Public targets
 
