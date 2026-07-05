@@ -236,8 +236,50 @@ public enum BuildToolingAudit {
       guard let commandWord = commandWord(in: segment) else {
         return false
       }
-      return bareTools.contains(commandWord)
+      if bareTools.contains(commandWord) {
+        return true
+      }
+      return segmentInvokesSwiftBuild(segment, commandWord: commandWord)
     }
+  }
+
+  /// Whether a recipe command segment runs `swift build`/`run`/`test`, the compiling
+  /// subcommands that must route through `$(SWIFT_MK_BIN)` instead of a bare `swift`.
+  /// `swift package ...` and `swift <file>.swift` are allowed: the former is metadata
+  /// or clean, the latter runs a standalone script. A `swift build` in a make variable
+  /// assignment (`SWIFT_BUILD_CMD := swift build`) is not reached here, since
+  /// `lineInvokesToolchain` only inspects tab-indented recipe lines, so the consumer's
+  /// configured build command stays clean.
+  private static func segmentInvokesSwiftBuild(_ segment: Substring, commandWord: String)
+    -> Bool
+  {
+    guard commandWord == "swift" else {
+      return false
+    }
+    guard let subcommand = argumentWord(in: segment, after: commandWord) else {
+      return false
+    }
+    return subcommand == "build" || subcommand == "run" || subcommand == "test"
+  }
+
+  /// The first token after `commandWord` in a command segment, quotes stripped and
+  /// leading assignment prefixes skipped, or nil when the command has no argument.
+  private static func argumentWord(in segment: Substring, after commandWord: String) -> String? {
+    var sawCommand = false
+    for rawToken in segment.split(whereSeparator: { $0 == " " || $0 == "\t" }) {
+      let token = stripSurroundingQuotes(String(rawToken))
+      if !sawCommand {
+        if isAssignmentPrefix(token) {
+          continue
+        }
+        if token == commandWord {
+          sawCommand = true
+        }
+        continue
+      }
+      return token
+    }
+    return nil
   }
 
   private static func commandSegments(in line: String) -> [Substring] {
