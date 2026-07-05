@@ -117,3 +117,5 @@ nesting:
     warning: 3
 
 reporter: xcode
+
+# per-gate skip live probe: lint-only change, expect lint gates run, build/test/deadcode/audit skip
