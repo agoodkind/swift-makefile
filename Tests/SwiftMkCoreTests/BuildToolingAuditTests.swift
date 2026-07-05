@@ -64,6 +64,16 @@ func auditFlagsRecipeSwiftBuildRunTest() {
 }
 
 @Test
+func auditFlagsRecipeWithMakePrefix() {
+  // GNU make recipe prefixes (@ silent, - ignore-errors, + always-run) attach to the
+  // command word, so a prefixed recipe still spawns the tool and must be flagged.
+  #expect(BuildToolingAudit.lineInvokesToolchain("\t@swift build"))
+  #expect(BuildToolingAudit.lineInvokesToolchain("\t-swift test"))
+  #expect(BuildToolingAudit.lineInvokesToolchain("\t+@swift run tool"))
+  #expect(BuildToolingAudit.lineInvokesToolchain("\t@xcodebuild -scheme App build"))
+}
+
+@Test
 func auditAllowsSwiftPackageScriptAndVariableBuild() {
   // swift package (metadata/clean) and a script argument are not compiling
   // subcommands. A `swift build` in a make variable assignment is not a recipe

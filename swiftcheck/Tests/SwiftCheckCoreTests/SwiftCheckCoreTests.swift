@@ -89,6 +89,8 @@ private let allowedSwiftPackageFixture =
   "func clean() { run(\"swift\", [\"package\", \"clean\"]) }\n"
 private let allowedSwiftScriptFixture =
   "func script() { run(\"swift\", [\"Tools/Build.swift\"]) }\n"
+private let allowedComputedSubcommandFixture =
+  "func go(subcommand: String) { run(\"swift\", [subcommand, \"build\"]) }\n"
 
 @Test
 func scanFlagsUnroutedSwiftBuildRunTest() throws {
@@ -119,6 +121,20 @@ func scanFlagsUnroutedSwiftBuildInFlatArray() throws {
 
   #expect(violations.count == 1)
   #expect(violations.first?.rule == .unroutedBuildTooling)
+}
+
+@Test
+func scanAllowsComputedFirstSubcommand() throws {
+  // The first array element is computed, so the subcommand is unknown at scan time.
+  // The rule reads only the first element and does not skip ahead to the later "build"
+  // literal, so a dynamic subcommand is not flagged on the strength of its argument.
+  let temporaryDirectory = try createTemporaryDirectory()
+  let filePath = temporaryDirectory.appendingPathComponent("Computed.swift").path
+  try allowedComputedSubcommandFixture.write(toFile: filePath, atomically: true, encoding: .utf8)
+
+  let violations = try scan(paths: [filePath], enabledRules: [.unroutedBuildTooling])
+
+  #expect(violations.isEmpty)
 }
 
 @Test

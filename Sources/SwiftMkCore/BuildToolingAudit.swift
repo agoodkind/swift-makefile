@@ -269,10 +269,13 @@ public enum BuildToolingAudit {
     for rawToken in segment.split(whereSeparator: { $0 == " " || $0 == "\t" }) {
       let token = stripSurroundingQuotes(String(rawToken))
       if !sawCommand {
-        if isAssignmentPrefix(token) {
+        // Match the command word after removing any recipe prefix, so `@swift` matches
+        // the already-normalized `swift`. The returned argument keeps its raw form.
+        let normalized = stripRecipePrefix(token)
+        if normalized.isEmpty || isAssignmentPrefix(normalized) {
           continue
         }
-        if token == commandWord {
+        if normalized == commandWord {
           sawCommand = true
         }
         continue
@@ -321,13 +324,25 @@ public enum BuildToolingAudit {
 
   private static func commandWord(in segment: Substring) -> String? {
     for rawToken in segment.split(whereSeparator: { $0 == " " || $0 == "\t" }) {
-      let token = stripSurroundingQuotes(String(rawToken))
-      if isAssignmentPrefix(token) {
+      let token = stripRecipePrefix(stripSurroundingQuotes(String(rawToken)))
+      if token.isEmpty || isAssignmentPrefix(token) {
         continue
       }
       return token
     }
     return nil
+  }
+
+  /// A command token with any leading GNU make recipe prefixes removed, so a
+  /// silenced or error-ignoring recipe such as `@swift`, `-swift`, or `+@swift`
+  /// still resolves to `swift`. The prefixes are `@` (silent), `-` (ignore errors),
+  /// and `+` (always run). A token that is only prefixes becomes empty and is skipped.
+  private static func stripRecipePrefix(_ word: String) -> String {
+    var result = Substring(word)
+    while let first = result.first, first == "@" || first == "-" || first == "+" {
+      result = result.dropFirst()
+    }
+    return String(result)
   }
 
   private static func stripSurroundingQuotes(_ word: String) -> String {

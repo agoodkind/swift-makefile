@@ -152,12 +152,14 @@ func swiftSubcommand(after node: StringLiteralExprSyntax) -> String? {
     }
     let next = arguments[index + 1].expression
     if let array = next.as(ArrayExprSyntax.self) {
-      for arrayElement in array.elements {
-        if let literalElement = arrayElement.expression.as(StringLiteralExprSyntax.self) {
-          return stringLiteralContent(literalElement)
-        }
+      // The subcommand is the first array element only. A computed first element
+      // (`[resolvedSubcommand, "build"]`) yields nil rather than skipping ahead to a
+      // later literal, so an argument to a dynamic subcommand is never read as one.
+      guard let firstElement = array.elements.first?.expression.as(StringLiteralExprSyntax.self)
+      else {
+        return nil
       }
-      return nil
+      return stringLiteralContent(firstElement)
     }
     return next.as(StringLiteralExprSyntax.self).map(stringLiteralContent)
   }
