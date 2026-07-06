@@ -21,6 +21,7 @@ let package = Package(
     .executable(name: "swift-mk", targets: ["SwiftMkCLI"]),
     .library(name: "SwiftMkCore", targets: ["SwiftMkCore"]),
     .library(name: "SwiftMkRenderCore", targets: ["SwiftMkRenderCore"]),
+    .library(name: "SwiftMkUpdate", targets: ["SwiftMkUpdate"]),
   ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
@@ -52,6 +53,9 @@ let package = Package(
       dependencies: ["SwiftMkRenderCore"]
     ),
     .target(
+      name: "SwiftMkUpdate"
+    ),
+    .target(
       name: "SwiftMkCore",
       dependencies: [
         "SwiftMkRenderCore",
@@ -78,12 +82,17 @@ let package = Package(
       name: "SwiftMkCLI",
       dependencies: [
         "SwiftMkCore",
+        "SwiftMkUpdate",
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
       ]
     ),
     .testTarget(
       name: "SwiftMkCoreTests",
       dependencies: ["SwiftMkCore"]
+    ),
+    .testTarget(
+      name: "SwiftMkUpdateTests",
+      dependencies: ["SwiftMkUpdate"]
     ),
   ]
 )

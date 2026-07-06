@@ -18,7 +18,9 @@ struct SwiftMk: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "swift-mk",
     abstract: "swift-makefile tooling: lint, baseline, gate, and notices.",
+    version: ReleaseVersion.current,
     subcommands: [
+      VersionCommand.self, UpdateCommand.self,
       LintCommand.self, LintTools.self, LintSwiftlint.self, LintFormat.self,
       LintComplexity.self, LintDeadcode.self, LintFiles.self, LintDiff.self,
       QualityGuard.self,
