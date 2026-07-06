@@ -1,0 +1,131 @@
+# Reusable runner planner. Decides which runner label each heavy gate should
+# use: the self-hosted M1 pool when its broker reports capacity, else the hosted
+# fallback. Both _ci.yml and _release.yml call this so the pool-or-hosted routing
+# lives in one place. Runs on ubuntu-latest (fast, cheap). Fork PRs short-circuit
+# to hosted before any network call. When local-pool-capacity-url is empty or the
+# capacity endpoint says the pool is busy, every gate falls back to inputs.runner
+# automatically; there is no separate no-op branch for the empty-URL case.
+name: Plan runners
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        default: macos-latest
+      # When this points at a broker that reports available capacity, gates run
+      # on local-pool-label; otherwise they fall back to inputs.runner. The URL
+      # defaults to the shared broker, whose /capacity endpoint is public, so any
+      # caller auto-routes to the pool with no config. Set this to an empty string
+      # to force hosted.
+      local-pool-capacity-url:
+        type: string
+        default: "https://darwin-gh-broker.silver-flare.com/capacity"
+      # Runner label for the self-hosted pool. Ignored when the pool is
+      # unavailable or local-pool-capacity-url is empty.
+      local-pool-label:
+        type: string
+        default: agk-local-macos-26
+    secrets:
+      # Bearer token for the pool's guarded /capacity endpoint. When set (with a
+      # non-empty local-pool-capacity-url) the check authenticates; absent or
+      # wrong, the broker returns 401 and the gate falls back to hosted, so CI is
+      # never blocked.
+      LOCAL_POOL_CAPACITY_TOKEN:
+        required: false
+    outputs:
+      build_label:
+        description: Runner label for the Build gate (pool or hosted).
+        value: ${{ jobs.plan.outputs.build_label }}
+      test_label:
+        description: Runner label for the Test gate.
+        value: ${{ jobs.plan.outputs.test_label }}
+      quality_label:
+        description: Runner label for the Quality gates.
+        value: ${{ jobs.plan.outputs.quality_label }}
+      extra_targets_label:
+        description: Runner label for the Extra Targets gate.
+        value: ${{ jobs.plan.outputs.extra_targets_label }}
+      on_pool:
+        # True when the gates were routed to the self-hosted pool, so a hosted
+        # fallback is meaningful.
+        description: Whether the chosen label is the self-hosted pool.
+        value: ${{ jobs.plan.outputs.on_pool }}
+
+jobs:
+  plan:
+    name: Plan runners
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      build_label: ${{ steps.pick.outputs.build_label }}
+      test_label: ${{ steps.pick.outputs.test_label }}
+      quality_label: ${{ steps.pick.outputs.quality_label }}
+      extra_targets_label: ${{ steps.pick.outputs.extra_targets_label }}
+      on_pool: ${{ steps.pick.outputs.on_pool }}
+    steps:
+      - name: Pick runner labels
+        id: pick
+        env:
+          CAPACITY_URL: ${{ inputs.local-pool-capacity-url }}
+          CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
+          POOL_LABEL: ${{ inputs.local-pool-label }}
+          HOSTED_LABEL: ${{ inputs.runner }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          # Evaluates to "true" for fork PRs; everything else is trusted.
+          IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${IS_FORK_PR}" == "true" ]]; then
+            # Untrusted event: never curl the internal capacity endpoint.
+            label="${HOSTED_LABEL}"
+          elif [[ -z "${CAPACITY_URL}" ]]; then
+            # No pool configured: route directly to hosted.
+            label="${HOSTED_LABEL}"
+          else
+            # Curl the capacity endpoint; any error (timeout, non-200, malformed
+            # body) falls through to hosted so the pool never blocks a gate.
+            # Pick the query separator so a capacity URL that already carries a
+            # query string stays valid instead of producing a double '?'.
+            sep='?'
+            case "${CAPACITY_URL}" in *\?*) sep='&' ;; esac
+            # Only send an Authorization header when a token is configured. The
+            # default public /capacity needs no token, and an empty "Bearer "
+            # can be rejected by a proxy in front of the endpoint, which would
+            # defeat the tokenless auto-routing. The quoted array expansion keeps
+            # the whole "Authorization: Bearer <token>" header as one argv entry
+            # (no word splitting), and an empty array expands to nothing under
+            # set -u on the runner's bash.
+            auth=()
+            if [[ -n "${CAPACITY_TOKEN}" ]]; then
+              auth+=(-H "Authorization: Bearer ${CAPACITY_TOKEN}")
+            fi
+            response=$(curl -sf --max-time 5 "${auth[@]}" \
+              "${CAPACITY_URL}${sep}repo=${REPO}&run_id=${RUN_ID}" 2>/dev/null || printf '')
+            available=$(printf '%s' "${response}" | jq -r '.available // false' 2>/dev/null || printf 'false')
+            if [[ "${available}" == "true" ]]; then
+              label="${POOL_LABEL}"
+            else
+              label="${HOSTED_LABEL}"
+            fi
+          fi
+
+          # on_pool is true only when a pool label was actually chosen, so the
+          # hosted fallback never re-runs a gate that already ran on hosted.
+          if [[ "${label}" != "${HOSTED_LABEL}" ]]; then
+            on_pool=true
+          else
+            on_pool=false
+          fi
+
+          {
+            printf 'build_label=%s\n' "${label}"
+            printf 'test_label=%s\n' "${label}"
+            printf 'quality_label=%s\n' "${label}"
+            printf 'extra_targets_label=%s\n' "${label}"
+            printf 'on_pool=%s\n' "${on_pool}"
+          } >> "${GITHUB_OUTPUT}"

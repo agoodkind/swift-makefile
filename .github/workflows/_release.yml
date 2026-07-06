@@ -14,6 +14,19 @@ on:
       publish-runner:
         type: string
         default: ubuntu-latest
+      # Self-hosted macOS pool routing, shared with _ci.yml through the reusable
+      # _plan-runners.yml. When the broker reports capacity the macOS jobs (build,
+      # notarize) run on local-pool-label; otherwise they fall back to inputs.runner.
+      # When the broker cannot serve, plan-runners routes to hosted before any job
+      # starts; a mid-run pool outage strands the job and the pool-watchdog cancels
+      # it, so a cancelled release is re-run manually rather than automatically.
+      # Set the URL to an empty string to force hosted.
+      local-pool-capacity-url:
+        type: string
+        default: "https://darwin-gh-broker.silver-flare.com/capacity"
+      local-pool-label:
+        type: string
+        default: agk-local-macos-26
       xcode-version:
         type: string
         default: latest-stable
@@ -80,6 +93,11 @@ on:
         required: false
       APPLE_NOTARY_ISSUER_ID:
         required: false
+      # Bearer token for the pool's guarded /capacity endpoint, passed through to
+      # _plan-runners.yml. Absent, the capacity check runs tokenless against the
+      # public endpoint.
+      LOCAL_POOL_CAPACITY_TOKEN:
+        required: false
 
 concurrency:
   group: release
@@ -91,6 +109,18 @@ env:
   GH_TOKEN: ${{ github.token }}
 
 jobs:
+  # Decide pool-or-hosted for the macOS jobs, reusing the same capacity check the
+  # CI gates use, so release is infra-agnostic.
+  plan-runners:
+    uses: ./.github/workflows/_plan-runners.yml
+    with:
+      runner: ${{ inputs.runner }}
+      local-pool-capacity-url: ${{ inputs.local-pool-capacity-url }}
+      local-pool-label: ${{ inputs.local-pool-label }}
+    # Pass only the capacity token the planner uses, not the Apple signing/notary secrets.
+    secrets:
+      LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
+
   meta:
     runs-on: ubuntu-latest
     outputs:
@@ -106,8 +136,8 @@ jobs:
         run: make release-meta
 
   build:
-    needs: meta
-    runs-on: ${{ inputs.runner }}
+    needs: [meta, plan-runners]
+    runs-on: ${{ needs.plan-runners.outputs.build_label }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
@@ -213,8 +243,8 @@ jobs:
           if-no-files-found: error
 
   notarize:
-    needs: [meta, build]
-    runs-on: ${{ inputs.runner }}
+    needs: [meta, build, plan-runners]
+    runs-on: ${{ needs.plan-runners.outputs.build_label }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
