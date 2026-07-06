@@ -46,7 +46,7 @@ public enum ReleasePackageError: Error, Equatable, CustomStringConvertible {
     case let .commandFailed(command, status):
       return "\(command) failed with status \(status)"
     case .unsafeTag(let tag):
-      return "RELEASE_TAG has unsafe characters (want [A-Za-z0-9._-]): \(tag)"
+      return "release tag has unsafe characters (want [A-Za-z0-9._-]): \(tag)"
     case let .versionStampFailed(file, tag):
       return "failed to stamp version \(tag) into \(file)"
     }
@@ -117,12 +117,17 @@ public enum ReleasePackage {
   }
 
   public static func stampVersion(tag: String, versionFile: String) throws {
+    // Validate here too, not only in run(), so a public caller cannot write an
+    // unchecked tag into the version source.
+    try validateTag(tag)
     let contents = try String(contentsOfFile: versionFile, encoding: .utf8)
     let replacement = "static let current = \"\(tag)\""
     let stamped = contents.replacingOccurrences(of: versionNeedle, with: replacement)
     try stamped.write(toFile: versionFile, atomically: true, encoding: .utf8)
     let reread = try String(contentsOfFile: versionFile, encoding: .utf8)
-    guard reread.contains(replacement), contents != stamped else {
+    // Idempotent: succeed when the target stamp is present, whether this call
+    // wrote it or a prior run already did; fail only when it did not take.
+    guard reread.contains(replacement) else {
       throw ReleasePackageError.versionStampFailed(versionFile, tag)
     }
   }
@@ -181,8 +186,9 @@ public enum ReleasePackage {
 
   private static func signingIdentityIsAvailable(signingEnginePath: String?) -> Bool {
     guard let signingEnginePath, !signingEnginePath.isEmpty else {
-      Output.logError(
-        "release-build: full swift-mk signing engine not available; shipping unsigned artifacts")
+      // No signing engine was passed. This is the expected path for an unsigned
+      // local or secretless run, so state it plainly rather than as an error.
+      Output.info("release-build: no signing engine provided; packaging unsigned artifacts")
       return false
     }
     guard FileManager.default.isExecutableFile(atPath: signingEnginePath) else {

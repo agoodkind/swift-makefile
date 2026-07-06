@@ -35,8 +35,12 @@ if [[ ! "$tag" =~ ^[A-Za-z0-9._-]+$ ]]; then
     exit 1
 fi
 asset="swift-mk_darwin_arm64.dmg"
-engine_root="${SWIFT_MK_ROOT:-$PWD}"
-engine_repo="${SWIFT_MK_BUILD_REPO:-$PWD}"
+# Anchor the engine build to the current checkout ($PWD) rather than inheriting
+# SWIFT_MK_ROOT / SWIFT_MK_BUILD_REPO from the environment, so a caller that has
+# those set for another swift-mk workflow cannot make this release package a
+# different source tree than the repo it runs in.
+engine_root="$PWD"
+engine_repo="$PWD"
 
 mkdir -p "$dist"
 
