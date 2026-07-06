@@ -72,6 +72,104 @@ func scanAllowsBuildToolNameAsData() throws {
   #expect(violations.isEmpty)
 }
 
+// MARK: - swift build/run/test fixtures
+
+// A `swift` spawn whose following argument is a compiling subcommand must route
+// through the engine SwiftPM chokepoint. Fixtures hold the call inside a file-scope
+// string so the test file itself does not trip the rule.
+private let unroutedSwiftBuildFixture =
+  "func build() { run(\"swift\", [\"build\", \"-c\", \"release\"]) }\n"
+private let unroutedSwiftTestFixture =
+  "func test() { run(\"swift\", [\"test\"]) }\n"
+private let unroutedSwiftRunFixture =
+  "func run() { shell(\"swift\", [\"run\", \"tool\"]) }\n"
+private let unroutedSwiftBuildFlatArrayFixture =
+  "func go() { spawn([\"swift\", \"build\", \"--product\", \"x\"]) }\n"
+private let allowedSwiftPackageFixture =
+  "func clean() { run(\"swift\", [\"package\", \"clean\"]) }\n"
+private let allowedSwiftScriptFixture =
+  "func script() { run(\"swift\", [\"Tools/Build.swift\"]) }\n"
+private let allowedComputedSubcommandFixture =
+  "func go(subcommand: String) { run(\"swift\", [subcommand, \"build\"]) }\n"
+private let allowedInterpolatedExecutableFixture =
+  "func go(x: String) { run(\"sw\\(x)ift\", [\"build\"]) }\n"
+private let allowedInterpolatedSubcommandFixture =
+  "func go(x: String) { run(\"swift\", [\"bui\\(x)ld\"]) }\n"
+
+@Test
+func scanFlagsUnroutedSwiftBuildRunTest() throws {
+  for fixture in [
+    unroutedSwiftBuildFixture, unroutedSwiftTestFixture, unroutedSwiftRunFixture,
+  ] {
+    let temporaryDirectory = try createTemporaryDirectory()
+    let filePath = temporaryDirectory.appendingPathComponent("Spawn.swift").path
+    try fixture.write(toFile: filePath, atomically: true, encoding: .utf8)
+
+    let violations = try scan(paths: [filePath], enabledRules: [.unroutedBuildTooling])
+
+    #expect(violations.count == 1)
+    #expect(violations.first?.rule == .unroutedBuildTooling)
+  }
+}
+
+@Test
+func scanFlagsUnroutedSwiftBuildInFlatArray() throws {
+  // An array literal passed directly to a call is an invocation, so the
+  // executable-then-subcommand pair `["swift", "build", ...]` is flagged.
+  let temporaryDirectory = try createTemporaryDirectory()
+  let filePath = temporaryDirectory.appendingPathComponent("Spawn.swift").path
+  try unroutedSwiftBuildFlatArrayFixture.write(
+    toFile: filePath, atomically: true, encoding: .utf8)
+
+  let violations = try scan(paths: [filePath], enabledRules: [.unroutedBuildTooling])
+
+  #expect(violations.count == 1)
+  #expect(violations.first?.rule == .unroutedBuildTooling)
+}
+
+@Test
+func scanAllowsComputedFirstSubcommand() throws {
+  // The first array element is computed, so the subcommand is unknown at scan time.
+  // The rule reads only the first element and does not skip ahead to the later "build"
+  // literal, so a dynamic subcommand is not flagged on the strength of its argument.
+  let temporaryDirectory = try createTemporaryDirectory()
+  let filePath = temporaryDirectory.appendingPathComponent("Computed.swift").path
+  try allowedComputedSubcommandFixture.write(toFile: filePath, atomically: true, encoding: .utf8)
+
+  let violations = try scan(paths: [filePath], enabledRules: [.unroutedBuildTooling])
+
+  #expect(violations.isEmpty)
+}
+
+@Test
+func scanAllowsInterpolatedExecutableAndSubcommand() throws {
+  // An interpolated executable or subcommand literal has no static value, so its
+  // concatenated plain segments ("swift", "build") must not be read as the banned
+  // literal and flagged.
+  for fixture in [allowedInterpolatedExecutableFixture, allowedInterpolatedSubcommandFixture] {
+    let temporaryDirectory = try createTemporaryDirectory()
+    let filePath = temporaryDirectory.appendingPathComponent("Interpolated.swift").path
+    try fixture.write(toFile: filePath, atomically: true, encoding: .utf8)
+
+    let violations = try scan(paths: [filePath], enabledRules: [.unroutedBuildTooling])
+
+    #expect(violations.isEmpty)
+  }
+}
+
+@Test
+func scanAllowsSwiftPackageAndScript() throws {
+  for fixture in [allowedSwiftPackageFixture, allowedSwiftScriptFixture] {
+    let temporaryDirectory = try createTemporaryDirectory()
+    let filePath = temporaryDirectory.appendingPathComponent("Allowed.swift").path
+    try fixture.write(toFile: filePath, atomically: true, encoding: .utf8)
+
+    let violations = try scan(paths: [filePath], enabledRules: [.unroutedBuildTooling])
+
+    #expect(violations.isEmpty)
+  }
+}
+
 // MARK: - Fragile package path fixtures
 
 // Fixtures hold the `.package(path: ...)` call inside a file-scope string, so the call
