@@ -323,9 +323,16 @@ public enum BuildToolingAudit {
   }
 
   private static func commandWord(in segment: Substring) -> String? {
+    var skippedEnvWrapper = false
     for rawToken in segment.split(whereSeparator: { $0 == " " || $0 == "\t" }) {
       let token = stripRecipePrefix(stripSurroundingQuotes(String(rawToken)))
       if token.isEmpty || isAssignmentPrefix(token) {
+        continue
+      }
+      // `env [VAR=val ...] cmd` runs cmd, so treat a leading `env` as a transparent
+      // wrapper: `env FOO=1 swift build` resolves to `swift`, not `env`, and is flagged.
+      if !skippedEnvWrapper, token == "env" {
+        skippedEnvWrapper = true
         continue
       }
       return token

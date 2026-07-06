@@ -74,6 +74,17 @@ func auditFlagsRecipeWithMakePrefix() {
 }
 
 @Test
+func auditFlagsEnvWrappedRecipe() {
+  // `env [VAR=val ...] cmd` runs cmd, so an env-wrapped compiler or toolchain spawn
+  // must still be flagged rather than resolving to the `env` command word.
+  #expect(BuildToolingAudit.lineInvokesToolchain("\tenv FOO=1 swift build"))
+  #expect(BuildToolingAudit.lineInvokesToolchain("\tenv swift test"))
+  #expect(BuildToolingAudit.lineInvokesToolchain("\tenv FOO=1 xcodebuild -scheme App build"))
+  // A non-toolchain command wrapped in env stays clean.
+  #expect(!BuildToolingAudit.lineInvokesToolchain("\tenv FOO=1 make submodule"))
+}
+
+@Test
 func auditAllowsSwiftPackageScriptAndVariableBuild() {
   // swift package (metadata/clean) and a script argument are not compiling
   // subcommands. A `swift build` in a make variable assignment is not a recipe
