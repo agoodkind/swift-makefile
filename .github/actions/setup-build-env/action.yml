@@ -55,6 +55,19 @@ runs:
       with:
         xcode-version: ${{ inputs.xcode-version }}
 
+    - name: Authenticate github.com git clones
+      shell: bash
+      env:
+        TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+
+        if [ -n "${TOKEN}" ]; then
+            # SwiftPM clones dependencies out-of-tree, which bypasses actions/checkout's
+            # repo-local auth. Global auth avoids GitHub's unauthenticated 403 rate limit.
+            git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
+        fi
+
     # The cache plan (keys plus the cacheable path list) lives in the swift-mk
     # engine (`swift-mk cache plan`), so CI and local share one cache model. The
     # engine must be built before it can emit the plan that warms the build, so a
