@@ -12,6 +12,7 @@ Each subsystem has a present-tense overview under `docs/<area>/overview.md` that
 - [Dead-code gate](docs/deadcode/overview.md) covers the two scans, the engine-derived coverage build and its owned settings, the shared prebuild seam, the index-completeness check, and the coverage-completeness check.
 - [Signing](docs/signing/overview.md) covers the single-source-of-truth xcconfig override, inferred style, and post-build signing and notarization.
 - [Caching](docs/caching/overview.md) covers the engine-owned cache plan and the compile-cache stores.
+- [Consumer fetch](docs/fetch/overview.md) covers the fetched `.make` package, the `SWIFT_MK_SCRIPT_FILES` manifest, and the completeness invariant that keeps a consumer's `swift-mk` build buildable.
 - [CI](docs/ci/overview.md) covers the reusable workflows, the required gate set, the skip detector, runner fallback, and the non-overridable OSV policy.
 
 ## Files
