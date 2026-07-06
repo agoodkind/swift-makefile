@@ -284,7 +284,9 @@ jobs:
       runner: ${{ inputs.runner }}
       local-pool-capacity-url: ${{ inputs.local-pool-capacity-url }}
       local-pool-label: ${{ inputs.local-pool-label }}
-    secrets: inherit
+    # Pass only the capacity token the planner uses, not every CI secret.
+    secrets:
+      LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
 
   changes:
     name: Changes

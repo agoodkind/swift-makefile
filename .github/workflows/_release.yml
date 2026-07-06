@@ -116,7 +116,9 @@ jobs:
       runner: ${{ inputs.runner }}
       local-pool-capacity-url: ${{ inputs.local-pool-capacity-url }}
       local-pool-label: ${{ inputs.local-pool-label }}
-    secrets: inherit
+    # Pass only the capacity token the planner uses, not the Apple signing/notary secrets.
+    secrets:
+      LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
 
   meta:
     runs-on: ubuntu-latest
