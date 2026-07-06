@@ -20,35 +20,52 @@ outputs:
 runs:
   using: composite
   steps:
-    # The self-hosted pool reuses a VM across jobs, so a signing_temp keychain
-    # left by a previous job makes apple-actions/import-codesign-certs fail its
-    # `security create-keychain signing_temp.keychain` with exit 48 (keychain
-    # already exists). Delete any stale one first so the import is idempotent
-    # across reused VMs. Hosted runners get a fresh VM, so this is a no-op there.
-    - name: Remove any stale signing keychain from a prior pool job
+    # Each runner process on a reused VM gets its own keychain name. Deleting
+    # this runner's prior keychain keeps sequential reuse idempotent without
+    # touching another active runner's signing keychain.
+    - name: Resolve signing keychain name
+      id: keychain
       shell: bash
-      run: security delete-keychain signing_temp.keychain 2>/dev/null || true
+      run: |
+        set -euo pipefail
+
+        runner_name="${RUNNER_NAME:-runner}"
+        runner_slug="$(printf '%s' "$runner_name" | tr -c 'A-Za-z0-9_.' '_' | cut -c 1-80)"
+        runner_hash="$(printf '%s' "$runner_name" | shasum -a 256 | awk '{ print substr($1, 1, 12) }')"
+        keychain_name="swift_mk_signing_${runner_slug}_${runner_hash}"
+        printf 'name=%s\n' "$keychain_name" >> "$GITHUB_OUTPUT"
+
+    - name: Remove stale signing keychain for this runner
+      shell: bash
+      env:
+        KEYCHAIN_NAME: ${{ steps.keychain.outputs.name }}
+      run: security delete-keychain "${KEYCHAIN_NAME}.keychain" 2>/dev/null || true
 
     - uses: apple-actions/import-codesign-certs@v3
       with:
         p12-file-base64: ${{ inputs.p12-base64 }}
         p12-password: ${{ inputs.p12-password }}
+        keychain: ${{ steps.keychain.outputs.name }}
 
     - name: Resolve identity SHA-1
       id: resolve
       shell: bash
       env:
         IDENTITY_NAME: ${{ inputs.identity-name }}
+        KEYCHAIN_NAME: ${{ steps.keychain.outputs.name }}
       run: |
         set -euo pipefail
 
         identity_sha1="$(
-            security find-identity -v -p codesigning \
-                | awk -v identity="\"$IDENTITY_NAME\"" 'index($0, identity) { print $2; exit }'
+            security find-identity -v -p codesigning "${KEYCHAIN_NAME}.keychain" \
+                | awk -v identity="$IDENTITY_NAME" '
+                    BEGIN { quoted = sprintf("%c%s%c", 34, identity, 34) }
+                    index($0, quoted) { print $2; exit }
+                '
         )"
 
         if [[ -z "$identity_sha1" ]]; then
-            echo "Developer ID Application identity '$IDENTITY_NAME' not found in keychain" >&2
+            echo "Developer ID Application identity '$IDENTITY_NAME' not found in ${KEYCHAIN_NAME}.keychain" >&2
             exit 1
         fi
 

@@ -16,6 +16,20 @@ import Testing
 enum CodesignTests {}
 
 @Test
+func importSigningCertActionUsesRunnerKeyedKeychainName() throws {
+  let action = try importSigningCertActionText()
+
+  #expect(action.contains("id: keychain"))
+  #expect(action.contains("RUNNER_NAME:-runner"))
+  #expect(action.contains("swift_mk_signing_"))
+  #expect(action.contains("keychain: ${{ steps.keychain.outputs.name }}"))
+  #expect(action.contains(#"security delete-keychain "${KEYCHAIN_NAME}.keychain""#))
+  #expect(action.contains(#"security find-identity -v -p codesigning "${KEYCHAIN_NAME}.keychain""#))
+  #expect(!action.contains("signing_temp.keychain"))
+  #expect(!action.contains("keychain: signing_temp"))
+}
+
+@Test
 func binaryModeSignsWithRuntimeAndIdentifier() {
   let arguments = Codesign.arguments(
     path: "/tmp/lmd",
@@ -129,4 +143,17 @@ func runFailsWithoutIdentity() {
     identifier: nil,
     localXcconfigPaths: [])
   #expect(outcome == false)
+}
+
+private func importSigningCertActionText() throws -> String {
+  let actionURL = codesignTestsRepositoryRoot()
+    .appendingPathComponent(".github/actions/import-signing-cert/action.yml")
+  return try String(contentsOf: actionURL, encoding: .utf8)
+}
+
+private func codesignTestsRepositoryRoot() -> URL {
+  URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
 }
