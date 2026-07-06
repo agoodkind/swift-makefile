@@ -193,7 +193,7 @@ jobs:
     # See build-hosted: always() + on_pool + a failed pool attempt. quality-pool's
     # result is the whole-matrix aggregate, so any failed or cancelled pool leg
     # reruns the full hosted matrix; the aggregator then resolves each lint per leg.
-    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && (needs.quality-pool.result == 'failure' || needs.quality-pool.result == 'cancelled') }}
+    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && needs.quality-pool.result != 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -371,7 +371,7 @@ jobs:
     name: Changes (hosted fallback)
     needs: [plan-runners, changes-pool]
     # See build-hosted: always() + on_pool + a failed pool attempt.
-    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && (needs.changes-pool.result == 'failure' || needs.changes-pool.result == 'cancelled') }}
+    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && needs.changes-pool.result != 'success' }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
@@ -525,8 +525,12 @@ jobs:
     name: Build (hosted fallback)
     needs: [plan-runners, build-pool]
     # always() defeats GitHub's implicit skip so the fallback runs when the pool
-    # attempt fails; on_pool gates it to pool-routed runs.
-    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && (needs.build-pool.result == 'failure' || needs.build-pool.result == 'cancelled') }}
+    # attempt did not succeed; on_pool gates it to pool-routed runs. The check is
+    # `!= 'success'` (not failure/cancelled only) because a sibling pool job the
+    # watchdog cancels (for example changes-pool) puts the run into a cancelling
+    # state, which makes this single-job pool attempt end as `skipped` rather than
+    # `cancelled`; the fallback must still rescue that case.
+    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && needs.build-pool.result != 'success' }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: build
@@ -607,7 +611,7 @@ jobs:
     name: Test (hosted fallback)
     needs: [plan-runners, test-pool]
     # See the build-hosted note: always() + on_pool + a failed pool attempt.
-    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && (needs.test-pool.result == 'failure' || needs.test-pool.result == 'cancelled') }}
+    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && needs.test-pool.result != 'success' }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: test
@@ -694,7 +698,7 @@ jobs:
     # See the build-hosted note. This runs only when the caller configured extra
     # targets, expressed inline below since the reusable planner carries no such
     # output.
-    if: ${{ always() && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') && needs.plan-runners.outputs.on_pool == 'true' && (needs.extra-targets-pool.result == 'failure' || needs.extra-targets-pool.result == 'cancelled') }}
+    if: ${{ always() && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') && needs.plan-runners.outputs.on_pool == 'true' && needs.extra-targets-pool.result != 'success' }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: extra-targets
