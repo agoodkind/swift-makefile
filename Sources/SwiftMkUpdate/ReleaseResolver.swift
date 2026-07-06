@@ -204,7 +204,11 @@ public enum ReleaseResolver {
 
   private static func encodedPathComponent(_ value: String, context: String) throws -> String {
     var allowed = CharacterSet.urlPathAllowed
-    allowed.remove(charactersIn: "/?#")
+    // Remove `%` too: urlPathAllowed keeps it, so a pre-escaped input like `%2F`
+    // would pass through and the server would read it as a path separator,
+    // breaking the single-component assumption for releases/tags/<tag>. Escaping
+    // `%` to `%25` keeps the value one path component.
+    allowed.remove(charactersIn: "/?#%")
     guard let encoded = value.addingPercentEncoding(withAllowedCharacters: allowed),
       !encoded.isEmpty
     else {
