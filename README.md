@@ -31,7 +31,7 @@ Each subsystem has a present-tense overview under `docs/<area>/overview.md` that
 
 ## Install
 
-`swift-mk` builds from source by default at `.make/swift-mk`. To install a signed, notarized release binary on an Apple Silicon mac, run:
+`swift-mk` builds from source by default at `.make/swift-mk`, which is how you run the lint, build, and dead-code gates. A host that only needs to self-update and prune caches (for example a CI pool runner) can install the prebuilt maintenance binary instead: a lean, index-free build that provides `version`, `update`, and `cache prune`. Install the signed, notarized build on an Apple Silicon mac with:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/agoodkind/swift-makefile/main/install.sh | bash
@@ -43,7 +43,7 @@ To pin a release tag or change the install directory without a local checkout, p
 curl -fsSL https://raw.githubusercontent.com/agoodkind/swift-makefile/main/install.sh | bash -s -- --version <TAG> --bin-dir <DIR>
 ```
 
-`swift-mk version` reports the installed release tag. `swift-mk update check` reports whether a newer release exists; `swift-mk update apply` verifies the new release's Developer ID signature and staple, then replaces the running binary in place. The `update` command is generic: point it at any consumer's dmg release with `--repo`, `--asset`, and `--target`.
+`swift-mk version` reports the installed release tag. `swift-mk update check` reports whether a newer release exists; `swift-mk update apply` verifies the new release's Developer ID signature and staple, then replaces the running binary in place. `swift-mk cache prune --path <dir> --max-bytes <n>` evicts least-recently-used entries from a cache directory to keep it under a byte cap. The `update` command is generic: point it at any consumer's dmg release with `--repo`, `--asset`, and `--target`.
 
 ## Public targets
 
