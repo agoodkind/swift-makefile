@@ -147,6 +147,8 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkUpdate/UpdateScheduler.swift \
 	Sources/SwiftMkUpdate/UpdateState.swift \
 	Sources/SwiftMkUpdate/Updater.swift \
+	Sources/SwiftMkMaintCore/CachePrunePlanner.swift \
+	Sources/SwiftMkMaintCore/CachePruner.swift \
 	Sources/SwiftMkCore/Findings.swift \
 	Sources/SwiftMkCore/BaselineKey.swift \
 	Sources/SwiftMkCore/BaselineRecord.swift \
@@ -280,6 +282,8 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkUpdateTests/SwiftMkUpdateSupport.swift \
 	Tests/SwiftMkUpdateTests/SwiftMkUpdateTargetPathTests.swift \
 	Tests/SwiftMkUpdateTests/SwiftMkUpdateTests.swift \
+	Tests/SwiftMkMaintCoreTests/CachePrunePlannerTests.swift \
+	Tests/SwiftMkMaintCoreTests/CachePrunerTests.swift \
 	notices.txt \
 	templates/xcode/IDETemplateMacros.plist.template
 
