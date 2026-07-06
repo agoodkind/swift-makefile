@@ -17,9 +17,10 @@ on:
       # Self-hosted macOS pool routing, shared with _ci.yml through the reusable
       # _plan-runners.yml. When the broker reports capacity the macOS jobs (build,
       # notarize) run on local-pool-label; otherwise they fall back to inputs.runner.
-      # A pool outage strands the job, which the pool-watchdog cancels and
-      # ci-infra-retry reruns on hosted. Set the URL to an empty string to force
-      # hosted.
+      # When the broker cannot serve, plan-runners routes to hosted before any job
+      # starts; a mid-run pool outage strands the job and the pool-watchdog cancels
+      # it, so a cancelled release is re-run manually rather than automatically.
+      # Set the URL to an empty string to force hosted.
       local-pool-capacity-url:
         type: string
         default: "https://darwin-gh-broker.silver-flare.com/capacity"

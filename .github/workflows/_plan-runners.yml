@@ -96,13 +96,15 @@ jobs:
             # Only send an Authorization header when a token is configured. The
             # default public /capacity needs no token, and an empty "Bearer "
             # can be rejected by a proxy in front of the endpoint, which would
-            # defeat the tokenless auto-routing. The array expansion is safe
-            # under set -u even when empty.
+            # defeat the tokenless auto-routing. The quoted array expansion keeps
+            # the whole "Authorization: Bearer <token>" header as one argv entry
+            # (no word splitting), and an empty array expands to nothing under
+            # set -u on the runner's bash.
             auth=()
             if [[ -n "${CAPACITY_TOKEN}" ]]; then
               auth+=(-H "Authorization: Bearer ${CAPACITY_TOKEN}")
             fi
-            response=$(curl -sf --max-time 5 ${auth[@]+"${auth[@]}"} \
+            response=$(curl -sf --max-time 5 "${auth[@]}" \
               "${CAPACITY_URL}${sep}repo=${REPO}&run_id=${RUN_ID}" 2>/dev/null || printf '')
             available=$(printf '%s' "${response}" | jq -r '.available // false' 2>/dev/null || printf 'false')
             if [[ "${available}" == "true" ]]; then

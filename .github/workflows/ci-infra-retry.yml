@@ -1,14 +1,14 @@
 name: CI infra retry
 
-# Backstop for pool-routed CI and Release runs. When the self-hosted pool is
-# fully down, jobs queued on the pool label are cancelled (by the pool-watchdog)
-# rather than failed. This reruns such a run once, and on the rerun plan-runners
-# routes to hosted because the pool is unavailable. A run with any real job
-# failure, or a run superseded by a newer push, is never rerun.
+# Backstop for pool-routed CI. When the self-hosted pool is fully down, gates
+# queued on the pool label are cancelled (by the pool-watchdog) rather than
+# failed. This reruns such a run once, and on the rerun plan-runners routes to
+# hosted because the pool is unavailable. A run with any real job failure, or a
+# run superseded by a newer push, is never rerun.
 
 on:
   workflow_run:
-    workflows: ["CI", "Release"]
+    workflows: ["CI"]
     types: [completed]
 
 permissions:
@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   rerun-cancelled:
-    name: Rerun an infra-cancelled run
+    name: Rerun an infra-cancelled CI run
     # Only cancelled runs, and only the first attempt, so a rerun can never loop.
     if: >-
       ${{ github.event.workflow_run.conclusion == 'cancelled' &&
@@ -45,7 +45,7 @@ jobs:
               | sort -n | tail -n 1
           )"
           if [[ -n "${newest_id}" && "${newest_id}" -gt "${RUN_ID}" ]]; then
-            printf 'run %s was superseded by newer run %s; not retrying.\n' \
+            printf 'CI run %s was superseded by newer run %s; not retrying.\n' \
               "${RUN_ID}" "${newest_id}"
             exit 0
           fi
@@ -69,11 +69,11 @@ jobs:
           )
 
           if [[ "${real_failure}" == "true" ]]; then
-            printf 'run %s has a real job failure; not retrying.\n' "${RUN_ID}"
+            printf 'CI run %s has a real job failure; not retrying.\n' "${RUN_ID}"
             exit 0
           fi
           if [[ "${cancelled_found}" != "true" ]]; then
-            printf 'run %s had no cancelled jobs; nothing to retry.\n' "${RUN_ID}"
+            printf 'CI run %s had no cancelled jobs; nothing to retry.\n' "${RUN_ID}"
             exit 0
           fi
 
@@ -82,4 +82,4 @@ jobs:
           # the run re-executes. On the rerun plan-runners sees the pool
           # unavailable and routes every gate to hosted.
           gh api -X POST "repos/${REPOSITORY}/actions/runs/${RUN_ID}/rerun"
-          printf 'run %s was infra-cancelled with no real failure; requested a full rerun.\n' "${RUN_ID}"
+          printf 'CI run %s was infra-cancelled with no real failure; requested a full rerun.\n' "${RUN_ID}"
