@@ -35,10 +35,15 @@ if [[ ! "$tag" =~ ^[A-Za-z0-9._-]+$ ]]; then
     exit 1
 fi
 asset="swift-mk_darwin_arm64.dmg"
-# Anchor the engine build to the current checkout ($PWD) rather than inheriting
-# SWIFT_MK_ROOT / SWIFT_MK_BUILD_REPO from the environment, so a caller that has
-# those set for another swift-mk workflow cannot make this release package a
-# different source tree than the repo it runs in.
+# Anchor the engine SOURCE tree to the current checkout ($PWD) rather than
+# inheriting SWIFT_MK_ROOT / SWIFT_MK_BUILD_REPO from the environment, so a caller
+# that has those set for another swift-mk workflow cannot build this release
+# package from a different source tree than the repo it runs in. SWIFT_MK_BIN is
+# left as the caller set it on purpose: in CI it is the cached toolchain engine
+# built from this same checkout (its cache key pins the Sources hash), so reusing
+# it keeps the engine build to once per push. swift-mk-build.sh's resolve step
+# still rebuilds from the anchored $PWD sources whenever they are newer than that
+# cached binary, so a stale engine is not reused.
 engine_root="$PWD"
 engine_repo="$PWD"
 

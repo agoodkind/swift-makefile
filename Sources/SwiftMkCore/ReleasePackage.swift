@@ -34,6 +34,7 @@ public struct ReleasePackagePlan: Equatable, Sendable {
 // MARK: - ReleasePackageError
 
 public enum ReleasePackageError: Error, Equatable, CustomStringConvertible {
+  case binPathUnresolved(String)
   case builtBinaryMissing(String)
   case commandFailed(String, Int32)
   case unsafeTag(String)
@@ -41,6 +42,8 @@ public enum ReleasePackageError: Error, Equatable, CustomStringConvertible {
 
   public var description: String {
     switch self {
+    case .binPathUnresolved(let command):
+      return "\(command) returned no build path"
     case .builtBinaryMissing(let path):
       return "built binary not found at \(path)"
     case let .commandFailed(command, status):
@@ -148,12 +151,20 @@ public enum ReleasePackage {
         buildStatus)
     }
     Output.debug("release-build: resolving build product path for \(plan.builtProductName)")
-    let binPath = Shell.run("swift", plan.buildArguments + ["--show-bin-path"])
+    let showBinPathArgs = plan.buildArguments + ["--show-bin-path"]
+    let binPath = Shell.run("swift", showBinPathArgs)
+    let showBinPathCommand = "swift \(showBinPathArgs.joined(separator: " "))"
     if binPath.status != 0 {
       Output.emitStandardError(binPath.combined)
-      throw ReleasePackageError.commandFailed("swift --show-bin-path", binPath.status)
+      throw ReleasePackageError.commandFailed(showBinPathCommand, binPath.status)
     }
     let binDir = lastNonemptyLine(binPath.stdout)
+    // A zero exit with no path line cannot locate the product, so surface the
+    // resolution failure directly rather than a misleading builtBinaryMissing
+    // against a relative path.
+    guard !binDir.isEmpty else {
+      throw ReleasePackageError.binPathUnresolved(showBinPathCommand)
+    }
     let built = (binDir as NSString).appendingPathComponent(plan.builtProductName)
     guard FileManager.default.isExecutableFile(atPath: built) else {
       throw ReleasePackageError.builtBinaryMissing(built)
