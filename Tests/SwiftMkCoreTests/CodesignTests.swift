@@ -257,6 +257,27 @@ func swiftBuildMakefilePassesKeychainToSigningPreludeAndCodesignRun() throws {
   #expect(rootMakefile.contains("export SWIFT_MK_SIGN_KEYCHAIN"))
 }
 
+@Test
+func swiftBuildMakefileRendersKeychainSpacingForSigningCommands() throws {
+  let keychain = "/Users/runner/Library/Keychains/signing keychain.keychain-db"
+  let renderedWithKeychain = try renderSwiftBuildMakefileCommands(codeSignKeychain: keychain)
+  let expectedPreludeKeychainBoundary = #"SWIFT_MK_SIGN_KEYCHAIN="" "/tmp/swift-mk""#
+  let expectedPostBuildKeychainBoundary =
+    #"--bundles-in Products/Bundles --keychain "\#(keychain)" Products/App"#
+
+  #expect(renderedWithKeychain.prelude.contains(expectedPreludeKeychainBoundary))
+  #expect(renderedWithKeychain.postBuildSign.contains(expectedPostBuildKeychainBoundary))
+
+  let renderedWithoutKeychain = try renderSwiftBuildMakefileCommands(codeSignKeychain: "")
+
+  #expect(!renderedWithoutKeychain.prelude.contains("CODE_SIGN_KEYCHAIN="))
+  #expect(!renderedWithoutKeychain.postBuildSign.contains("--keychain"))
+  #expect(
+    renderedWithoutKeychain.postBuildSign.contains(
+      #"--bundles-in Products/Bundles Products/App"#
+    ))
+}
+
 private func importSigningCertActionText() throws -> String {
   let actionURL = codesignTestsRepositoryRoot()
     .appendingPathComponent(".github/actions/import-signing-cert/action.yml")
@@ -292,6 +313,57 @@ private func swiftMakefileText() throws -> String {
   let makefileURL = codesignTestsRepositoryRoot()
     .appendingPathComponent("swift.mk")
   return try String(contentsOf: makefileURL, encoding: .utf8)
+}
+
+private func renderSwiftBuildMakefileCommands(codeSignKeychain: String) throws -> (
+  prelude: String,
+  postBuildSign: String
+) {
+  let temporaryDirectory = FileManager.default.temporaryDirectory
+    .appendingPathComponent("swift-mk-render-\(UUID().uuidString)", isDirectory: true)
+  try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+  defer {
+    do {
+      try FileManager.default.removeItem(at: temporaryDirectory)
+    } catch {
+      Output.warning("cleanup failed: \(error.localizedDescription)")
+    }
+  }
+
+  let makefileURL = temporaryDirectory.appendingPathComponent("Makefile")
+  let repositoryRoot = codesignTestsRepositoryRoot().path
+  let makefile = """
+    include \(repositoryRoot)/swift-build.mk
+
+    .PHONY: print-signing
+    print-signing:
+    \t@printf 'PRELUDE=%s\\n' '$(SWIFT_MK_SIGNING_PRELUDE)'
+    \t@printf 'POST_BUILD_SIGN=%s\\n' '$(SWIFT_MK_POST_BUILD_SIGN_CMD)'
+    """
+  try makefile.write(to: makefileURL, atomically: true, encoding: .utf8)
+
+  var arguments = [
+    "-f", makefileURL.path,
+    "print-signing",
+    "SWIFT_MK_BIN=/tmp/swift-mk",
+    "CODE_SIGN_IDENTITY=Developer ID Application: Example",
+    "SWIFT_MK_SIGN_BUNDLES_DIR=Products/Bundles",
+    "SWIFT_MK_SIGN_PRODUCTS=Products/App",
+  ]
+  if !codeSignKeychain.isEmpty {
+    arguments.append("CODE_SIGN_KEYCHAIN=\(codeSignKeychain)")
+  }
+
+  let result = Shell.run("make", arguments)
+  #expect(result.status == 0, Comment(rawValue: result.combined))
+
+  let lines = result.stdout.split(separator: "\n", omittingEmptySubsequences: false).map(
+    String.init)
+  let prelude = lines.first { $0.hasPrefix("PRELUDE=") }?.dropFirst("PRELUDE=".count)
+  let postBuildSign = lines.first { $0.hasPrefix("POST_BUILD_SIGN=") }?
+    .dropFirst("POST_BUILD_SIGN=".count)
+
+  return (String(prelude ?? ""), String(postBuildSign ?? ""))
 }
 
 private func codesignTestsRepositoryRoot() -> URL {
