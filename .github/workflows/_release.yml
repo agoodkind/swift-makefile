@@ -381,8 +381,13 @@ jobs:
             --repo "${RELEASE_REPO}"
             --tag "${RELEASE_TAG}"
             --asset "${RELEASE_ASSET}"
-            --team-id "${RELEASE_TEAM_ID}"
           )
+          # Only pass a team id when the caller set one. An empty value would
+          # override the CLI default and fail the team check under signature
+          # verification.
+          if [[ -n "${RELEASE_TEAM_ID}" ]]; then
+            verify_args+=(--team-id "${RELEASE_TEAM_ID}")
+          fi
           if [[ "${REQUIRE_SIGNATURE}" = "true" ]]; then
             verify_args+=(--require-signature)
           else
