@@ -19,31 +19,36 @@ import Testing
 /// which breaks their build; this test catches the omission before it ships.
 @Suite(.serialized)
 enum ManifestCompletenessTests {
-  @Test
-  static func everySwiftMkCoreSourceIsInTheFetchManifest() throws {
-    let loaded = try loadManifest()
-    let missing = try filesMissingFromManifest(
-      directory: "Sources/SwiftMkCore", root: loaded.root, manifest: loaded.manifest)
-    #expect(
-      missing.isEmpty,
-      """
-      these Sources/SwiftMkCore files are absent from SWIFT_MK_SCRIPT_FILES in \
-      swift.mk, so they would not be fetched into consumers:
-      \(missing.joined(separator: "\n"))
-      """)
-  }
+  /// Every engine module's sources, not one hand-picked directory. A consumer fetches
+  /// `Package.swift` plus the sources listed in the manifest into `.make`, then builds
+  /// `swift-mk` from `.make`. SwiftPM validates every declared target's source directory
+  /// at manifest load, so one source left out of the manifest makes the consumer's
+  /// `.make` package a declared target with no sources, and the consumer's cold-cache
+  /// build fails. Covering every fetched tree, not just `SwiftMkCore`, is what stops a
+  /// newly added module (the `SwiftMkUpdate` case) from shipping unfetched.
+  static let fetchedSourceDirectories = [
+    "Sources",
+    "Tests",
+    "swiftcheck/Sources",
+    "swiftcheck/Tests",
+  ]
 
   @Test
-  static func everyEngineTestIsInTheFetchManifest() throws {
+  static func everyEngineSourceIsInTheFetchManifest() throws {
     let loaded = try loadManifest()
-    let missing = try filesMissingFromManifest(
-      directory: "Tests/SwiftMkCoreTests", root: loaded.root, manifest: loaded.manifest)
+    var missing: [String] = []
+    for directory in fetchedSourceDirectories {
+      missing.append(
+        contentsOf: try filesMissingFromManifest(
+          directory: directory, root: loaded.root, manifest: loaded.manifest))
+    }
     #expect(
       missing.isEmpty,
       """
-      these Tests/SwiftMkCoreTests files are absent from SWIFT_MK_SCRIPT_FILES in \
-      swift.mk:
-      \(missing.joined(separator: "\n"))
+      these engine .swift sources are absent from SWIFT_MK_SCRIPT_FILES in swift.mk, so \
+      they would not be fetched into a consumer's .make, and the consumer's swift-mk \
+      build would fail at manifest load:
+      \(missing.sorted().joined(separator: "\n"))
       """)
   }
 
