@@ -18,6 +18,14 @@ jobs:
   release:
     uses: ./.github/workflows/_release.yml
     with:
+      # Dogfood the signing gate swift-mk owns: import the Developer ID cert and
+      # sign the swift-mk CLI its release-build produces, so the source of truth
+      # exercises the exact signing path consumers use (and the reused-VM
+      # keychain path) instead of consumers discovering signing regressions.
+      signing-identity-name: "Developer ID Application: Alex Goodkind (H3BMXM4W7H)"
+      apple-team-id: H3BMXM4W7H
+      # A bare CLI binary is not stapleable, so notarization stays off; this
+      # dogfoods signing, not notarization.
       notarize: false
       attest: false
     secrets: inherit

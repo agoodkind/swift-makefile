@@ -6,7 +6,7 @@ SWIFT_MK := swift.mk
 ROOT_ARGS := \
 	SWIFT_MK_DEV_DIR='$(CURDIR)' \
 	SWIFT_MK_MODULES='swift-build.mk swift-release.mk' \
-	SWIFT_MK_RELEASE_BUILD_CMD='git archive --format tar.gz --output dist/swift-makefile-$$$$RELEASE_TAG.tar.gz HEAD' \
+	SWIFT_MK_RELEASE_BUILD_CMD='$(MAKE) release-cli' \
 	SWIFT_BUILD_CMD='swift build --product swift-mk-render' \
 	SWIFT_TEST_CMD='swift test' \
 	SWIFT_CLEAN_CMD='swift package clean' \
@@ -47,7 +47,7 @@ CHECK_SWIFT_MK := $(MAKE) -C swiftcheck -f ../$(SWIFT_MK) $(CHECK_ARGS)
 	swiftcheck-extra-baseline swiftcheck-extra-baseline-prune-fixed swiftcheck-extra-baseline-remove-fixed swiftcheck-extra-baseline-accept-new \
 	baseline baseline-prune-fixed baseline-remove-fixed baseline-accept-new baseline-add-new \
 	update-swift-mk swift-mk-sync smoke-fetch update-consumers update-consumers-dry-run help xcode-file-header \
-	release-meta release-build release-publish
+	release-meta release-build release-publish release-cli
 
 build: xcode-file-header
 	$(ROOT_SWIFT_MK) build
@@ -209,6 +209,35 @@ xcode-file-header:
 
 release-meta release-build release-publish:
 	$(ROOT_SWIFT_MK) $@
+
+# swift-makefile's own release artifact: the signed swift-mk CLI, staged
+# alongside the source tarball. Wired as SWIFT_MK_RELEASE_BUILD_CMD, so
+# _release.yml's build job runs it after import-signing-cert. This reuses the
+# same signing channel every consumer uses: the identity arrives as
+# CODE_SIGN_IDENTITY, and the installed swift-mk toolchain signs through its own
+# codesign-run (never a raw codesign), so the source of truth dogfoods the
+# signing gate it owns. Signing no-ops when CODE_SIGN_IDENTITY is empty, so a
+# fork or secretless run still ships the tarball.
+release-cli:
+	@set -e; \
+	dist_dir="$${SWIFT_MK_DIST_DIR:-dist}"; \
+	tag="$${RELEASE_TAG:-$$(git rev-parse --short HEAD)}"; \
+	mkdir -p "$$dist_dir"; \
+	git archive --format tar.gz --output "$$dist_dir/swift-makefile-$$tag.tar.gz" HEAD; \
+	swift build -c release --product swift-mk; \
+	bin_dir="$$(swift build -c release --product swift-mk --show-bin-path)"; \
+	binary="$$bin_dir/swift-mk"; \
+	if [ ! -x "$$binary" ]; then echo "release-cli: built binary missing at $$binary" >&2; exit 1; fi; \
+	if [ -n "$${CODE_SIGN_IDENTITY:-}" ]; then \
+		signer="$${SWIFT_MK_BIN:-$$HOME/.swift-mk-ci-toolchain/swift-mk}"; \
+		if [ ! -x "$$signer" ]; then echo "release-cli: no swift-mk toolchain at $$signer to sign with" >&2; exit 1; fi; \
+		SWIFT_MK_SIGN_IDENTITY="$${CODE_SIGN_IDENTITY}" "$$signer" codesign-run --mode binary "$$binary"; \
+	else \
+		echo "release-cli: no CODE_SIGN_IDENTITY set; shipping the CLI unsigned"; \
+	fi; \
+	zip_dir="$$(cd "$$dist_dir" && pwd)"; \
+	( cd "$$bin_dir" && zip -q "$$zip_dir/swift-mk-$$tag.zip" swift-mk ); \
+	echo "release-cli: staged $$dist_dir/swift-mk-$$tag.zip"
 
 help:
 	$(ROOT_SWIFT_MK) help
