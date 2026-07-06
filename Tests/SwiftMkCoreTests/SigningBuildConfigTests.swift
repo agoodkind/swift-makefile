@@ -63,7 +63,7 @@ func signingBuildConfigWritesOtherCodeSignFlagsForKeychain() throws {
       style: "",
       keychain: keychain))
   #expect(text.contains("CODE_SIGN_IDENTITY = \(identity)"))
-  #expect(text.contains("OTHER_CODE_SIGN_FLAGS = $(inherited) --keychain \(keychain)"))
+  #expect(text.contains("OTHER_CODE_SIGN_FLAGS = $(inherited) --keychain \"\(keychain)\""))
 }
 
 @Test

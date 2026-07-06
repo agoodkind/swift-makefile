@@ -81,7 +81,7 @@ public enum SigningBuildConfig {
     let teamLine = trimmedTeam.isEmpty ? "" : "DEVELOPMENT_TEAM = \(trimmedTeam)\n"
     let keychainLine =
       trimmedKeychain.isEmpty
-      ? "" : "OTHER_CODE_SIGN_FLAGS = $(inherited) --keychain \(trimmedKeychain)\n"
+      ? "" : "OTHER_CODE_SIGN_FLAGS = $(inherited) --keychain \"\(trimmedKeychain)\"\n"
     // Ad-hoc PR checks: allow signing but never require a provisioned identity,
     // so a target whose project marks signing required still builds.
     let adHocLines =
