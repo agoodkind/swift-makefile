@@ -43,11 +43,11 @@ public enum ReleasePackageError: Error, Equatable, CustomStringConvertible {
     switch self {
     case .builtBinaryMissing(let path):
       return "built binary not found at \(path)"
-    case .commandFailed(let command, let status):
+    case let .commandFailed(command, status):
       return "\(command) failed with status \(status)"
     case .unsafeTag(let tag):
       return "RELEASE_TAG has unsafe characters (want [A-Za-z0-9._-]): \(tag)"
-    case .versionStampFailed(let file, let tag):
+    case let .versionStampFailed(file, tag):
       return "failed to stamp version \(tag) into \(file)"
     }
   }
@@ -135,12 +135,14 @@ public enum ReleasePackage {
   }
 
   private static func buildProduct(_ plan: ReleasePackagePlan) throws -> String {
+    Output.debug("release-build: running swift build for \(plan.builtProductName)")
     let buildStatus = Shell.runForwardingOutput("swift", plan.buildArguments)
     if buildStatus != 0 {
       throw ReleasePackageError.commandFailed(
         "swift \(plan.buildArguments.joined(separator: " "))",
         buildStatus)
     }
+    Output.debug("release-build: resolving build product path for \(plan.builtProductName)")
     let binPath = Shell.run("swift", plan.buildArguments + ["--show-bin-path"])
     if binPath.status != 0 {
       Output.emitStandardError(binPath.combined)
@@ -155,6 +157,7 @@ public enum ReleasePackage {
   }
 
   private static func stageProduct(built: String, plan: ReleasePackagePlan) throws {
+    Output.debug("release-build: staging \(built) into \(plan.stageDir)")
     cleanupPath(plan.stageDir, label: "stage")
     try FileManager.default.createDirectory(
       atPath: plan.stageDir,
@@ -188,6 +191,7 @@ public enum ReleasePackage {
           + "shipping unsigned artifacts")
       return false
     }
+    Output.debug("release-build: resolving signing identity")
     let result = Shell.run(signingEnginePath, ["signing-identity"])
     if result.status != 0 {
       Output.emitStandardError(result.combined)
@@ -230,7 +234,6 @@ public enum ReleasePackage {
   private static func lastNonemptyLine(_ text: String) -> String {
     text.components(separatedBy: .newlines)
       .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-      .filter { !$0.isEmpty }
-      .last ?? ""
+      .last { !$0.isEmpty } ?? ""
   }
 }

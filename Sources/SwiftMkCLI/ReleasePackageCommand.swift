@@ -9,9 +9,9 @@
 import ArgumentParser
 import SwiftMkCore
 
-// MARK: - ReleasePackageMaintCommand
+// MARK: - ReleasePackageCommand
 
-struct ReleasePackageMaintCommand: ParsableCommand {
+struct ReleasePackageCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "release-package-maint",
     abstract: "Build and package the lean maintenance swift-mk release binary."

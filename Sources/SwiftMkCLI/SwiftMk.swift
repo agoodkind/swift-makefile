@@ -32,7 +32,7 @@ struct SwiftMk: ParsableCommand {
       GateProofCommand.self,
       SigningXcconfig.self, SigningPreflight.self, SigningIdentity.self, VerifySigning.self,
       CodesignRun.self,
-      ReleasePackageMaintCommand.self,
+      ReleasePackageCommand.self,
       NotarizeCommand.self,
       TraceCommand.self, ToolchainCommand.self, BuildToolingAuditCommand.self,
       CacheCommand.self, CiChangedCommand.self,
