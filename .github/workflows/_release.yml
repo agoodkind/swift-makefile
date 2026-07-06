@@ -178,6 +178,11 @@ jobs:
           APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          # Route caller-provided make inputs through env so they are shell data,
+          # not template text expanded into the script (avoids code injection via
+          # build-target or make-args).
+          BUILD_TARGET: ${{ inputs.build-target }}
+          MAKE_ARGS: ${{ inputs.make-args }}
         run: |
           sign_args=()
           if [ -n "${CERT_SHA1:-}" ]; then
@@ -190,7 +195,7 @@ jobs:
             sign_args+=("DEVELOPMENT_TEAM=$TEAM_ID")
           fi
           # shellcheck disable=SC2086
-          make ${{ inputs.build-target }} ${{ inputs.make-args }} "${sign_args[@]}"
+          make $BUILD_TARGET $MAKE_ARGS "${sign_args[@]}"
 
       - name: Generate SBOM
         if: inputs.sbom-subject-path != ''
