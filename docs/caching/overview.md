@@ -16,7 +16,7 @@ The cache subsystem speeds builds across runs and across worktrees, and the engi
 
 ## Compile-cache stores live outside DerivedData
 
-The compilation cache stores sit under `~/Library/Caches/swift-mk`, outside DerivedData, so the dead-code coverage build's `rm -rf` of DerivedData cannot destroy them. The two stores and the SwiftPM compile cache are described in [build chokepoints](../build-chokepoints.md), and the cache plan and paths in [caching](../caching.md).
+The compilation cache stores sit under `~/Library/Caches/swift-mk`, outside DerivedData, so the dead-code coverage build's `rm -rf` of DerivedData cannot destroy them. The [build](../build/overview.md) chokepoints apply the compile-cache flags, and the cache plan and paths are in [caching](../caching.md).
 
 ## The compile bucket rolls per writer
 

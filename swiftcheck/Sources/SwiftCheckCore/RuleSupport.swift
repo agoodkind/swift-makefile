@@ -97,6 +97,75 @@ func buildToolNeedlePresent(in literal: String) -> Bool {
   return trimmed == "tuist" || trimmed == "xcodegen" || trimmed == "xcodebuild"
 }
 
+/// Whether a string literal is exactly `"swift"` (trimmed), the executable name a
+/// process spawn uses to run the Swift command-line tool. Paired at the call site
+/// with a check that the following argument is a banned subcommand, this flags
+/// spawning `swift build`/`run`/`test` outside the engine chokepoint while leaving a
+/// mere mention of the word alone.
+func swiftExecutableNeedlePresent(in literal: String) -> Bool {
+  literal.trimmingCharacters(in: .whitespacesAndNewlines) == "swift"
+}
+
+/// Whether a `swift` subcommand is one that compiles and so must route through the
+/// engine `SwiftPM` chokepoint (for the `BuildLock`, the compile cache, and the gate
+/// proof). `build`, `run`, and `test` compile; `package` is a metadata or clean
+/// operation and a `<file>.swift` argument runs a standalone script, so both are
+/// allowed. The check is exact-trimmed so prose is not matched.
+func swiftBuildSubcommandBanned(in argument: String) -> Bool {
+  let trimmed = argument.trimmingCharacters(in: .whitespacesAndNewlines)
+  return trimmed == "build" || trimmed == "run" || trimmed == "test"
+}
+
+/// The subcommand a `"swift"` executable literal is invoked with, or nil when it
+/// cannot be read as a literal. Handles the two spawn shapes: an array-literal
+/// argument that follows the executable (`run("swift", ["build", ...])`, so the next
+/// call argument's first string element), and a flat array literal that holds both
+/// (`["swift", "build", ...]`, so the next array element). A computed argument vector
+/// (`run("swift", swiftBuildArguments(...))`) yields nil, so a dynamically built spawn
+/// is not matched here; the consumer migration removes those.
+func swiftSubcommand(after node: StringLiteralExprSyntax) -> String? {
+  // Shape `["swift", "build", ...]`: the executable is an array element, so the
+  // subcommand is the next element in the same array.
+  if let element = node.parent?.as(ArrayElementSyntax.self),
+    let list = element.parent?.as(ArrayElementListSyntax.self)
+  {
+    let elements = Array(list)
+    guard let index = elements.firstIndex(where: { $0.id == element.id }),
+      index + 1 < elements.count,
+      let next = elements[index + 1].expression.as(StringLiteralExprSyntax.self)
+    else {
+      return nil
+    }
+    return plainStringLiteralContent(next)
+  }
+  // Shape `call("swift", ["build", ...])`: the executable is a call argument, so the
+  // subcommand is the first string element of the next argument's array, or the next
+  // argument itself when it is a scalar string literal.
+  if let argument = node.parent?.as(LabeledExprSyntax.self),
+    let list = argument.parent?.as(LabeledExprListSyntax.self)
+  {
+    let arguments = Array(list)
+    guard let index = arguments.firstIndex(where: { $0.id == argument.id }),
+      index + 1 < arguments.count
+    else {
+      return nil
+    }
+    let next = arguments[index + 1].expression
+    if let array = next.as(ArrayExprSyntax.self) {
+      // The subcommand is the first array element only. A computed first element
+      // (`[resolvedSubcommand, "build"]`) yields nil rather than skipping ahead to a
+      // later literal, so an argument to a dynamic subcommand is never read as one.
+      guard let firstElement = array.elements.first?.expression.as(StringLiteralExprSyntax.self)
+      else {
+        return nil
+      }
+      return plainStringLiteralContent(firstElement)
+    }
+    return next.as(StringLiteralExprSyntax.self).flatMap(plainStringLiteralContent)
+  }
+  return nil
+}
+
 /// The concatenated content of a string literal's plain text segments, ignoring any
 /// interpolation. Shared by the rules that inspect a literal's value.
 func stringLiteralContent(_ node: StringLiteralExprSyntax) -> String {
@@ -107,6 +176,17 @@ func stringLiteralContent(_ node: StringLiteralExprSyntax) -> String {
     }
   }
   return literal
+}
+
+/// The content of a string literal that has no interpolation, or nil when the literal
+/// interpolates. An interpolated literal such as `"sw\(x)ift"` has no single static
+/// value, so a rule that matches an exact executable name or subcommand must not treat
+/// its concatenated plain segments (`"swift"`) as that value and flag it.
+func plainStringLiteralContent(_ node: StringLiteralExprSyntax) -> String? {
+  for segment in node.segments where segment.as(ExpressionSegmentSyntax.self) != nil {
+    return nil
+  }
+  return stringLiteralContent(node)
 }
 
 func location(for position: AbsolutePosition, converter: SourceLocationConverter) -> (

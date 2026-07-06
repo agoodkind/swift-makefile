@@ -8,7 +8,8 @@ Provided AS IS under the MIT License with no warranty. See [LICENSE](LICENSE).
 
 Each subsystem has a present-tense overview under `docs/<area>/overview.md` that links to the source and test holding each detail, so the docs track the code.
 
-- [Build gate](docs/gate/overview.md) covers the gate proof, the in-process receipt, the build chokepoints, and the per-worktree build lock.
+- [Build](docs/build/overview.md) covers the two chokepoints, the CLI-not-library rationale, the per-worktree build lock, and the routing enforcement.
+- [Build gate](docs/gate/overview.md) covers the gate proof, the in-process receipt, and the direct-toolchain audit.
 - [Dead-code gate](docs/deadcode/overview.md) covers the two scans, the engine-derived coverage build and its owned settings, the shared prebuild seam, the index-completeness check, and the coverage-completeness check.
 - [Signing](docs/signing/overview.md) covers the single-source-of-truth xcconfig override, inferred style, and post-build signing and notarization.
 - [Caching](docs/caching/overview.md) covers the engine-owned cache plan and the compile-cache stores.
@@ -143,7 +144,7 @@ The multi-rule `swiftlint` gate supports scoping to one rule. Set `RULE=<rule_id
 
 ## Build architecture
 
-The engine runs every build through one of two chokepoints, so the gate, the build lock, and the shared cache flags apply in one place. `Toolchain` is the one site that runs `xcodebuild`. `SwiftPM` is the one site that runs `swift build`, `swift test`, and `swift run`. [docs/build-chokepoints.md](docs/build-chokepoints.md) covers the chokepoints, the authorization gate, and the per-worktree build lock.
+The engine runs every build through one of two chokepoints, so the gate, the build lock, and the shared cache flags apply in one place. `Toolchain` is the one site that runs `xcodebuild`. `SwiftPM` is the one site that runs `swift build`, `swift test`, and `swift run`. [docs/build/overview.md](docs/build/overview.md) covers the chokepoints, the CLI-not-library rationale, the per-worktree build lock, and the routing enforcement.
 
 ## Build caching
 

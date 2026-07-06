@@ -13,7 +13,7 @@ ROOT_ARGS := \
 	SWIFT_FORMAT_TARGETS='Package.swift Sources Tests' \
 	SWIFTLINT_TARGETS='Package.swift Sources Tests' \
 	PERIPHERY_ARGS='scan --config .periphery.yml --exclude-tests' \
-	SWIFTCHECK_EXTRA_EXCLUDE_PATHS='Sources/SwiftMkCore/Toolchain.swift,Sources/SwiftMkCore/Toolchain\+Generate\.swift,Sources/SwiftMkCore/BuildToolingAudit.swift,Tests/SwiftMkCoreTests/ToolchainTests.swift,Tests/SwiftMkCoreTests/BuildToolingAuditTests.swift' \
+	SWIFTCHECK_EXTRA_EXCLUDE_PATHS='Sources/SwiftMkCore/Toolchain.swift,Sources/SwiftMkCore/Toolchain\+Generate\.swift,Sources/SwiftMkCore/BuildToolingAudit.swift,Sources/SwiftMkCore/SwiftPM.swift,Tests/SwiftMkCoreTests/ToolchainTests.swift,Tests/SwiftMkCoreTests/BuildToolingAuditTests.swift,Tests/SwiftMkCoreTests/SwiftPMTests.swift' \
 	SWIFTCHECK_EXTRA_BUILD_REPO='$(CURDIR)/swiftcheck'
 
 CHECK_ARGS := \

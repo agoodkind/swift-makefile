@@ -3,6 +3,8 @@
 .swiftpm/
 Package.resolved
 build/
+# Track the docs build area; the broad build/ rule above is for compiler output.
+!docs/build/
 Products/
 Derived/
 DerivedData/
