@@ -63,6 +63,9 @@ runs:
         set -euo pipefail
 
         if [ -n "${TOKEN}" ]; then
+            # Mask the token first so a later git error that echoes the rewritten
+            # URL cannot disclose it in the run log.
+            echo "::add-mask::${TOKEN}"
             # SwiftPM clones dependencies out-of-tree, which bypasses actions/checkout's
             # repo-local auth. Global auth avoids GitHub's unauthenticated 403 rate limit.
             git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
