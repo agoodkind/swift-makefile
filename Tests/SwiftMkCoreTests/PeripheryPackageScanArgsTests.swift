@@ -78,10 +78,13 @@ enum PeripheryPackageScanArgsTests {
     cachePath: String,
     _ run: () -> Void
   ) {
-    let priorArgs = ProcessInfo.processInfo.environment["PERIPHERY_ARGS"]
-    let priorEnabled = ProcessInfo.processInfo.environment["SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED"]
-    let priorPath = ProcessInfo.processInfo.environment["SWIFT_MK_SWIFTPM_CACHE_PATH"]
-    let priorCacheArgs = ProcessInfo.processInfo.environment["SWIFT_MK_SWIFTPM_CACHE_ARGS"]
+    // Read the live process environment with getenv, not ProcessInfo.environment: the latter
+    // is a snapshot taken at process start and does not see in-process setenv/unsetenv, so
+    // restoring from it can leak stale values across tests. Matches SwiftPMTests.
+    let priorArgs = getenv("PERIPHERY_ARGS").map { String(cString: $0) }
+    let priorEnabled = getenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED").map { String(cString: $0) }
+    let priorPath = getenv("SWIFT_MK_SWIFTPM_CACHE_PATH").map { String(cString: $0) }
+    let priorCacheArgs = getenv("SWIFT_MK_SWIFTPM_CACHE_ARGS").map { String(cString: $0) }
     setenv("PERIPHERY_ARGS", peripheryArgs, 1)
     setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", compileCacheEnabled, 1)
     setenv("SWIFT_MK_SWIFTPM_CACHE_PATH", cachePath, 1)
