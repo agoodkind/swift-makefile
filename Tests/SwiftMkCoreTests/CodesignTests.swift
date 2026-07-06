@@ -233,6 +233,20 @@ func workflowsPassActionKeychainOutputBesideIdentity() throws {
 }
 
 @Test
+func releaseWorkflowKeepsSigningMakeArgumentsWhole() throws {
+  let release = try workflowText(named: "_release.yml")
+
+  #expect(release.contains("sign_args=()"))
+  #expect(
+    release.contains(
+      #"sign_args+=("CODE_SIGN_IDENTITY=$CERT_SHA1" "DMG_SIGN_IDENTITY=$CERT_SHA1")"#))
+  #expect(release.contains(#"sign_args+=("CODE_SIGN_KEYCHAIN=$CODE_SIGN_KEYCHAIN")"#))
+  #expect(release.contains(#"sign_args+=("DEVELOPMENT_TEAM=$TEAM_ID")"#))
+  #expect(release.contains(#""${sign_args[@]}""#))
+  #expect(!release.contains("make ${{ inputs.build-target }} ${{ inputs.make-args }} $sign_args"))
+}
+
+@Test
 func swiftBuildMakefilePassesKeychainToSigningPreludeAndCodesignRun() throws {
   let makefile = try swiftBuildMakefileText()
   let rootMakefile = try swiftMakefileText()
