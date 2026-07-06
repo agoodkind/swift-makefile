@@ -3,7 +3,7 @@
 //  SwiftMkCore
 //
 //  Created by Alexander Goodkind <alex@goodkind.io> on 2026-06-10.
-//  Copyright © 2026, all rights reserved.
+//  Copyright (c) 2026, all rights reserved.
 //
 //  The one codesign channel. Consumers never invoke codesign themselves: this
 //  command resolves the identity the same way the build-time override does and
@@ -32,7 +32,8 @@ public enum Codesign {
     path: String,
     mode: Mode,
     identity: String,
-    identifier: String?
+    identifier: String?,
+    keychain: String? = nil
   ) -> [String] {
     var arguments = ["--force", "--timestamp", "--sign", identity]
     switch mode {
@@ -47,6 +48,10 @@ public enum Codesign {
     case .dmg:
       break
     }
+    let trimmedKeychain = keychain?.trimmingCharacters(in: .whitespaces) ?? ""
+    if !trimmedKeychain.isEmpty {
+      arguments += ["--keychain", trimmedKeychain]
+    }
     arguments.append(path)
     return arguments
   }
@@ -56,6 +61,17 @@ public enum Codesign {
   static func resolveIdentity(localXcconfigPaths: [String]) -> String {
     let inputs = SigningBuildConfig.resolvedInputs(localXcconfigPaths: localXcconfigPaths)
     return inputs.identity.trimmingCharacters(in: .whitespaces)
+  }
+
+  /// Resolve the optional keychain path from an explicit CLI value first, then the
+  /// same signing inputs used for build-time signing.
+  static func resolveKeychain(explicit: String?, localXcconfigPaths: [String]) -> String {
+    let explicitKeychain = explicit?.trimmingCharacters(in: .whitespaces) ?? ""
+    if !explicitKeychain.isEmpty {
+      return explicitKeychain
+    }
+    let inputs = SigningBuildConfig.resolvedInputs(localXcconfigPaths: localXcconfigPaths)
+    return inputs.keychain.trimmingCharacters(in: .whitespaces)
   }
 
   /// The codesign identifier for one artifact. An explicit identifier wins for
@@ -101,9 +117,13 @@ public enum Codesign {
     identifier: String?,
     identifierPrefix: String? = nil,
     bundlesDirectory: String? = nil,
+    keychain: String? = nil,
     localXcconfigPaths: [String] = ["Config/local.xcconfig"]
   ) -> Bool {
     let identity = resolveIdentity(localXcconfigPaths: localXcconfigPaths)
+    let resolvedKeychain = resolveKeychain(
+      explicit: keychain,
+      localXcconfigPaths: localXcconfigPaths)
     guard !identity.isEmpty else {
       Output.error(
         "codesign-run: no signing identity resolves "
@@ -128,7 +148,12 @@ public enum Codesign {
         forPath: path, explicit: identifier, prefix: identifierPrefix)
       let sign = Shell.run(
         "codesign",
-        arguments(path: path, mode: mode, identity: identity, identifier: pathIdentifier))
+        arguments(
+          path: path,
+          mode: mode,
+          identity: identity,
+          identifier: pathIdentifier,
+          keychain: resolvedKeychain))
       guard sign.status == 0 else {
         Output.error("codesign-run: signing failed for \(path)")
         Output.emitStandardError(sign.combined)

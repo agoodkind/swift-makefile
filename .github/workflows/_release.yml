@@ -167,6 +167,7 @@ jobs:
       - name: Build release artifacts
         env:
           CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
+          CODE_SIGN_KEYCHAIN: ${{ steps.cert.outputs.keychain }}
           TEAM_ID: ${{ inputs.apple-team-id }}
           PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile.outputs.profile-specifier }}
           RELEASE_TAG: ${{ needs.meta.outputs.tag }}
@@ -181,6 +182,7 @@ jobs:
           if [ -n "${CERT_SHA1:-}" ]; then
             sign_args="CODE_SIGN_IDENTITY=$CERT_SHA1 DMG_SIGN_IDENTITY=$CERT_SHA1"
           fi
+          if [ -n "${CODE_SIGN_KEYCHAIN:-}" ]; then sign_args="$sign_args CODE_SIGN_KEYCHAIN=$CODE_SIGN_KEYCHAIN"; fi
           if [ -n "${TEAM_ID:-}" ]; then sign_args="$sign_args DEVELOPMENT_TEAM=$TEAM_ID"; fi
           # shellcheck disable=SC2086
           make ${{ inputs.build-target }} ${{ inputs.make-args }} $sign_args

@@ -3,7 +3,7 @@
 //  SwiftMkCoreTests
 //
 //  Created by Alexander Goodkind <alex@goodkind.io> on 2026-06-10.
-//  Copyright © 2026, all rights reserved.
+//  Copyright (c) 2026, all rights reserved.
 //
 
 import Foundation
@@ -30,6 +30,17 @@ func importSigningCertActionUsesRunnerKeyedKeychainName() throws {
 }
 
 @Test
+func importSigningCertActionOutputsExplicitKeychainPath() throws {
+  let action = try importSigningCertActionText()
+
+  #expect(action.contains("  keychain:"))
+  #expect(action.contains("value: ${{ steps.keychain.outputs.path }}"))
+  #expect(
+    action.contains(#"keychain_path="${HOME}/Library/Keychains/${keychain_name}.keychain-db""#))
+  #expect(action.contains(#"printf 'path=%s\n' "$keychain_path" >> "$GITHUB_OUTPUT""#))
+}
+
+@Test
 func binaryModeSignsWithRuntimeAndIdentifier() {
   let arguments = Codesign.arguments(
     path: "/tmp/lmd",
@@ -52,6 +63,22 @@ func binaryModeOmitsEmptyIdentifier() {
     identifier: nil)
   #expect(
     arguments == ["--force", "--timestamp", "--sign", "X", "--options", "runtime", "/tmp/lmd"])
+}
+
+@Test
+func binaryModeAddsKeychainWhenSet() {
+  let keychain = "/Users/runner/Library/Keychains/swift_mk_signing_runner.keychain-db"
+  let arguments = Codesign.arguments(
+    path: "/tmp/lmd",
+    mode: .binary,
+    identity: "X",
+    identifier: nil,
+    keychain: keychain)
+  #expect(
+    arguments == [
+      "--force", "--timestamp", "--sign", "X", "--options", "runtime",
+      "--keychain", keychain, "/tmp/lmd",
+    ])
 }
 
 @Test
@@ -128,6 +155,69 @@ func discoverBundlesIsEmptyForMissingDirectory() {
 }
 
 @Test
+func codesignKeychainResolutionPrefersExplicitThenSwiftMkThenCodeSignEnvironment() {
+  let previousSwiftMkKeychain = ProcessInfo.processInfo.environment["SWIFT_MK_SIGN_KEYCHAIN"]
+  let previousCodeSignKeychain = ProcessInfo.processInfo.environment["CODE_SIGN_KEYCHAIN"]
+  unsetenv("SWIFT_MK_SIGN_KEYCHAIN")
+  unsetenv("CODE_SIGN_KEYCHAIN")
+  defer {
+    restoreEnvironmentValue(previousSwiftMkKeychain, forKey: "SWIFT_MK_SIGN_KEYCHAIN")
+    restoreEnvironmentValue(previousCodeSignKeychain, forKey: "CODE_SIGN_KEYCHAIN")
+  }
+
+  setenv("CODE_SIGN_KEYCHAIN", "/tmp/code.keychain-db", 1)
+  #expect(
+    Codesign.resolveKeychain(explicit: nil, localXcconfigPaths: []) == "/tmp/code.keychain-db")
+
+  setenv("SWIFT_MK_SIGN_KEYCHAIN", "/tmp/swift.keychain-db", 1)
+  #expect(
+    Codesign.resolveKeychain(explicit: nil, localXcconfigPaths: []) == "/tmp/swift.keychain-db")
+  #expect(
+    Codesign.resolveKeychain(explicit: "/tmp/explicit.keychain-db", localXcconfigPaths: [])
+      == "/tmp/explicit.keychain-db")
+}
+
+@Test
+func codesignRunSourceThreadsKeychainOption() throws {
+  let source = try codesignRunText()
+
+  #expect(source.contains("var keychain: String?"))
+  #expect(source.contains("keychain: keychain"))
+}
+
+@Test
+func workflowHelperThreadsCodeSignKeychain() throws {
+  let source = try workflowHelperText()
+
+  #expect(source.contains(#"let codeSignKeychain = environment.optional("CODE_SIGN_KEYCHAIN")"#))
+  #expect(source.contains(#"CODE_SIGN_KEYCHAIN=\(codeSignKeychain)"#))
+}
+
+@Test
+func workflowsPassActionKeychainOutputBesideIdentity() throws {
+  let ciGate = try workflowText(named: "_ci-gate.yml")
+  let release = try workflowText(named: "_release.yml")
+
+  #expect(
+    ciGate.contains(
+      "CODE_SIGN_KEYCHAIN: ${{ steps.cert-local.outputs.keychain || steps.cert-remote.outputs.keychain }}"
+    ))
+  #expect(release.contains("CODE_SIGN_KEYCHAIN: ${{ steps.cert.outputs.keychain }}"))
+  #expect(release.contains("CODE_SIGN_KEYCHAIN=$CODE_SIGN_KEYCHAIN"))
+}
+
+@Test
+func swiftBuildMakefilePassesKeychainToSigningPreludeAndCodesignRun() throws {
+  let makefile = try swiftBuildMakefileText()
+  let rootMakefile = try swiftMakefileText()
+
+  #expect(makefile.contains(#"CODE_SIGN_KEYCHAIN="$(CODE_SIGN_KEYCHAIN)""#))
+  #expect(makefile.contains("--keychain"))
+  #expect(rootMakefile.contains("export CODE_SIGN_KEYCHAIN"))
+  #expect(rootMakefile.contains("export SWIFT_MK_SIGN_KEYCHAIN"))
+}
+
+@Test
 func runFailsWithoutIdentity() {
   let previousIdentity = ProcessInfo.processInfo.environment["CODE_SIGN_IDENTITY"]
   let previousSignIdentity = ProcessInfo.processInfo.environment["SWIFT_MK_SIGN_IDENTITY"]
@@ -151,9 +241,48 @@ private func importSigningCertActionText() throws -> String {
   return try String(contentsOf: actionURL, encoding: .utf8)
 }
 
+private func codesignRunText() throws -> String {
+  let sourceURL = codesignTestsRepositoryRoot()
+    .appendingPathComponent("Sources/SwiftMkCLI/CodesignRun.swift")
+  return try String(contentsOf: sourceURL, encoding: .utf8)
+}
+
+private func workflowHelperText() throws -> String {
+  let sourceURL = codesignTestsRepositoryRoot()
+    .appendingPathComponent(".github/actions/workflow-helper/workflow-helper.swift")
+  return try String(contentsOf: sourceURL, encoding: .utf8)
+}
+
+private func workflowText(named name: String) throws -> String {
+  let workflowURL = codesignTestsRepositoryRoot()
+    .appendingPathComponent(".github/workflows")
+    .appendingPathComponent(name)
+  return try String(contentsOf: workflowURL, encoding: .utf8)
+}
+
+private func swiftBuildMakefileText() throws -> String {
+  let makefileURL = codesignTestsRepositoryRoot()
+    .appendingPathComponent("swift-build.mk")
+  return try String(contentsOf: makefileURL, encoding: .utf8)
+}
+
+private func swiftMakefileText() throws -> String {
+  let makefileURL = codesignTestsRepositoryRoot()
+    .appendingPathComponent("swift.mk")
+  return try String(contentsOf: makefileURL, encoding: .utf8)
+}
+
 private func codesignTestsRepositoryRoot() -> URL {
   URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
     .deletingLastPathComponent()
     .deletingLastPathComponent()
+}
+
+private func restoreEnvironmentValue(_ value: String?, forKey key: String) {
+  guard let value else {
+    unsetenv(key)
+    return
+  }
+  setenv(key, value, 1)
 }

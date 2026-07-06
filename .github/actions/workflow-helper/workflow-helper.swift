@@ -116,6 +116,24 @@ private func makeArguments(
   return commandArguments
 }
 
+private func makeSigningArguments(
+  certSHA1: String,
+  codeSignKeychain: String,
+  teamID: String
+) -> [String] {
+  var arguments: [String] = []
+  if !certSHA1.isEmpty {
+    arguments.append("CODE_SIGN_IDENTITY=\(certSHA1)")
+  }
+  if !codeSignKeychain.isEmpty {
+    arguments.append("CODE_SIGN_KEYCHAIN=\(codeSignKeychain)")
+  }
+  if !teamID.isEmpty {
+    arguments.append("DEVELOPMENT_TEAM=\(teamID)")
+  }
+  return arguments
+}
+
 private func requireSigningSecret(_ present: Bool, name: String) throws {
   guard present else {
     throw WorkflowHelperError.missingSigningSecret(name)
@@ -166,15 +184,13 @@ private func runMakeWithSigning(environment: Environment) throws {
   let makeTarget = try environment.required("MAKE_TARGET")
   let makeArgs = environment.optional("MAKE_ARGS")
   let certSHA1 = environment.optional("CERT_SHA1")
+  let codeSignKeychain = environment.optional("CODE_SIGN_KEYCHAIN")
   let teamID = environment.optional("TEAM_ID")
 
-  var signingArguments: [String] = []
-  if !certSHA1.isEmpty {
-    signingArguments.append("CODE_SIGN_IDENTITY=\(certSHA1)")
-  }
-  if !teamID.isEmpty {
-    signingArguments.append("DEVELOPMENT_TEAM=\(teamID)")
-  }
+  let signingArguments = makeSigningArguments(
+    certSHA1: certSHA1,
+    codeSignKeychain: codeSignKeychain,
+    teamID: teamID)
 
   try runCommand(
     executable: "make",
@@ -190,15 +206,13 @@ private func runExtraTargets(environment: Environment) throws {
   let rawExtraTargets = try environment.required("EXTRA_TARGETS_SHELL")
   let makeArgs = environment.optional("MAKE_ARGS")
   let certSHA1 = environment.optional("CERT_SHA1")
+  let codeSignKeychain = environment.optional("CODE_SIGN_KEYCHAIN")
   let teamID = environment.optional("TEAM_ID")
 
-  var signingArguments: [String] = []
-  if !certSHA1.isEmpty {
-    signingArguments.append("CODE_SIGN_IDENTITY=\(certSHA1)")
-  }
-  if !teamID.isEmpty {
-    signingArguments.append("DEVELOPMENT_TEAM=\(teamID)")
-  }
+  let signingArguments = makeSigningArguments(
+    certSHA1: certSHA1,
+    codeSignKeychain: codeSignKeychain,
+    teamID: teamID)
 
   for target in splitWords(rawExtraTargets) {
     print("extra-targets: running \(target)")

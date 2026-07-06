@@ -12,7 +12,8 @@
 # as make variables (a -included local.xcconfig) or as the environment (CI); make
 # expands an undefined variable to empty, which yields no override. SWIFT_MK_SIGN_*
 # names from the real environment still win inside the binary.
-SWIFT_MK_SIGNING_PRELUDE = xcc=""; if [ -n "$(strip $(SWIFT_MK_BIN))" ] && [ -x "$(SWIFT_MK_BIN)" ]; then xcc="$$(DEVELOPMENT_TEAM="$(DEVELOPMENT_TEAM)" CODE_SIGN_IDENTITY="$(CODE_SIGN_IDENTITY)" CODE_SIGN_STYLE="$(CODE_SIGN_STYLE)" "$(SWIFT_MK_BIN)" signing-xcconfig 2>/dev/null || true)"; fi; if [ -n "$$xcc" ]; then if [ -n "$${XCODE_XCCONFIG_FILE:-}" ]; then echo "swift-build.mk: XCODE_XCCONFIG_FILE already set ($${XCODE_XCCONFIG_FILE}); leaving it, not applying swift-mk signing" >&2; else export XCODE_XCCONFIG_FILE="$$xcc"; fi; fi;
+SWIFT_MK_SIGN_KEYCHAIN_ENV = $(if $(strip $(CODE_SIGN_KEYCHAIN)$(SWIFT_MK_SIGN_KEYCHAIN)),CODE_SIGN_KEYCHAIN="$(CODE_SIGN_KEYCHAIN)" SWIFT_MK_SIGN_KEYCHAIN="$(SWIFT_MK_SIGN_KEYCHAIN)" ,)
+SWIFT_MK_SIGNING_PRELUDE = xcc=""; if [ -n "$(strip $(SWIFT_MK_BIN))" ] && [ -x "$(SWIFT_MK_BIN)" ]; then xcc="$$(DEVELOPMENT_TEAM="$(DEVELOPMENT_TEAM)" CODE_SIGN_IDENTITY="$(CODE_SIGN_IDENTITY)" CODE_SIGN_STYLE="$(CODE_SIGN_STYLE)" $(SWIFT_MK_SIGN_KEYCHAIN_ENV)"$(SWIFT_MK_BIN)" signing-xcconfig 2>/dev/null || true)"; fi; if [ -n "$$xcc" ]; then if [ -n "$${XCODE_XCCONFIG_FILE:-}" ]; then echo "swift-build.mk: XCODE_XCCONFIG_FILE already set ($${XCODE_XCCONFIG_FILE}); leaving it, not applying swift-mk signing" >&2; else export XCODE_XCCONFIG_FILE="$$xcc"; fi; fi;
 SWIFT_MK_SIGNING_PREFLIGHT = "$(SWIFT_MK_BIN)" signing-preflight
 SWIFT_MK_SIGNING_REQUIRED = $(strip $(SWIFT_MK_VERIFY_XCCONFIG)$(if $(filter 1,$(SWIFT_MK_REQUIRE_SIGNING)),1,))
 
@@ -45,6 +46,7 @@ SWIFT_MK_VERIFY_ARTIFACTS_CMD = $(if $(strip $(SWIFT_MK_VERIFY_SIGNING_PATHS)),"
 #                                   bundles are discovered and signed too.
 #   SWIFT_MK_SIGN_IDENTIFIER        one bundle id applied to every path, or
 #   SWIFT_MK_SIGN_IDENTIFIER_PREFIX derive each id as <prefix>.<basename>.
+#   CODE_SIGN_KEYCHAIN             keychain path passed to codesign --keychain.
 # It runs only when something is declared and an identity is set (CODE_SIGN_IDENTITY
 # or SWIFT_MK_SIGN_IDENTITY), so an unsigned build (no cert, the common local and
 # fork case) is left untouched.
@@ -55,7 +57,9 @@ SWIFT_MK_SIGN_IDENTIFIER_PREFIX ?=
 SWIFT_MK_HAS_SIGN_WORK := $(strip $(SWIFT_MK_SIGN_PRODUCTS)$(SWIFT_MK_SIGN_BUNDLES_DIR))
 SWIFT_MK_SIGN_ID_ARGS = $(if $(strip $(SWIFT_MK_SIGN_IDENTIFIER)),--identifier $(SWIFT_MK_SIGN_IDENTIFIER),$(if $(strip $(SWIFT_MK_SIGN_IDENTIFIER_PREFIX)),--identifier-prefix $(SWIFT_MK_SIGN_IDENTIFIER_PREFIX),))
 SWIFT_MK_SIGN_BUNDLES_ARGS = $(if $(strip $(SWIFT_MK_SIGN_BUNDLES_DIR)),--bundles-in $(SWIFT_MK_SIGN_BUNDLES_DIR),)
-SWIFT_MK_POST_BUILD_SIGN_CMD = $(if $(SWIFT_MK_HAS_SIGN_WORK),$(if $(strip $(CODE_SIGN_IDENTITY))$(strip $(SWIFT_MK_SIGN_IDENTITY)),&& "$(SWIFT_MK_BIN)" codesign-run --mode binary $(SWIFT_MK_SIGN_ID_ARGS) $(SWIFT_MK_SIGN_BUNDLES_ARGS) $(SWIFT_MK_SIGN_PRODUCTS),),)
+SWIFT_MK_SIGN_KEYCHAIN_VALUE = $(if $(strip $(SWIFT_MK_SIGN_KEYCHAIN)),$(SWIFT_MK_SIGN_KEYCHAIN),$(CODE_SIGN_KEYCHAIN))
+SWIFT_MK_SIGN_KEYCHAIN_ARG = $(if $(strip $(SWIFT_MK_SIGN_KEYCHAIN_VALUE)),--keychain $(SWIFT_MK_SIGN_KEYCHAIN_VALUE),)
+SWIFT_MK_POST_BUILD_SIGN_CMD = $(if $(SWIFT_MK_HAS_SIGN_WORK),$(if $(strip $(CODE_SIGN_IDENTITY))$(strip $(SWIFT_MK_SIGN_IDENTITY)),&& "$(SWIFT_MK_BIN)" codesign-run --mode binary $(SWIFT_MK_SIGN_ID_ARGS) $(SWIFT_MK_SIGN_BUNDLES_ARGS) $(SWIFT_MK_SIGN_KEYCHAIN_ARG) $(SWIFT_MK_SIGN_PRODUCTS),),)
 
 # `swift-mk build` is the chokepoint: it runs the lint gates in-process and then
 # the configured SWIFT_BUILD_CMD, so there is no separate recipe step that compiles

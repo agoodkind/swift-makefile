@@ -3,7 +3,7 @@
 //  SwiftMkCore
 //
 //  Created by Alexander Goodkind <alex@goodkind.io> on 2026-06-05.
-//  Copyright © 2026, all rights reserved.
+//  Copyright (c) 2026, all rights reserved.
 //
 
 import Foundation
@@ -11,7 +11,7 @@ import Foundation
 // MARK: - SigningBuildConfig
 
 /// Builds the signing override xcconfig so swift-mk, not each consumer, owns the
-/// build-time code-signing identity, team, and style.
+/// build-time code-signing identity, team, style, and optional keychain.
 ///
 /// It mirrors `DeadcodeBuildConfig`: a single xcconfig that `build`/`deploy` point
 /// `xcodebuild` at with `XCODE_XCCONFIG_FILE`, which overrides every target's
@@ -62,24 +62,33 @@ public enum SigningBuildConfig {
     // sets; it is never chosen here.
     """
 
-  static func contents(identity: String, team: String, style: String) -> String? {
+  static func contents(
+    identity: String,
+    team: String,
+    style: String,
+    keychain: String = ""
+  ) -> String? {
     let trimmedIdentity = identity.trimmingCharacters(in: .whitespaces)
     let trimmedTeam = team.trimmingCharacters(in: .whitespaces)
     let trimmedStyle = style.trimmingCharacters(in: .whitespaces)
-    guard !trimmedIdentity.isEmpty || !trimmedTeam.isEmpty else {
+    let trimmedKeychain = keychain.trimmingCharacters(in: .whitespaces)
+    guard !trimmedIdentity.isEmpty || !trimmedTeam.isEmpty || !trimmedKeychain.isEmpty else {
       return nil
     }
     let resolvedStyle = resolveStyle(identity: trimmedIdentity, explicit: trimmedStyle)
     let identityLine =
       trimmedIdentity.isEmpty ? "" : "CODE_SIGN_IDENTITY = \(trimmedIdentity)\n"
     let teamLine = trimmedTeam.isEmpty ? "" : "DEVELOPMENT_TEAM = \(trimmedTeam)\n"
+    let keychainLine =
+      trimmedKeychain.isEmpty
+      ? "" : "OTHER_CODE_SIGN_FLAGS = --keychain \(trimmedKeychain)\n"
     // Ad-hoc PR checks: allow signing but never require a provisioned identity,
     // so a target whose project marks signing required still builds.
     let adHocLines =
       trimmedIdentity == adHocIdentity
       ? "CODE_SIGNING_ALLOWED = YES\nCODE_SIGNING_REQUIRED = NO\n" : ""
     return header + "\n" + identityLine + "CODE_SIGN_STYLE = \(resolvedStyle)\n" + teamLine
-      + adHocLines
+      + keychainLine + adHocLines
   }
 
   /// Manual whenever an identity is named (ad-hoc `-` or a real certificate);
@@ -100,6 +109,7 @@ public enum SigningBuildConfig {
     public let identity: String
     public let team: String
     public let style: String
+    public let keychain: String
   }
 
   /// Read the signing inputs from the environment. The `SWIFT_MK_SIGN_*` names win
@@ -112,7 +122,8 @@ public enum SigningBuildConfig {
       team: firstNonEmptyEnvironmentValue([
         "SWIFT_MK_SIGN_TEAM", "DEVELOPMENT_TEAM", "TUIST_DEVELOPMENT_TEAM",
       ]),
-      style: Env.get("SWIFT_MK_SIGN_STYLE", Env.get("CODE_SIGN_STYLE")))
+      style: Env.get("SWIFT_MK_SIGN_STYLE", Env.get("CODE_SIGN_STYLE")),
+      keychain: Env.get("SWIFT_MK_SIGN_KEYCHAIN", Env.get("CODE_SIGN_KEYCHAIN")))
   }
 
   /// Read the signing inputs, the environment first and then the given xcconfig
@@ -125,6 +136,7 @@ public enum SigningBuildConfig {
     var identity = environment.identity.trimmingCharacters(in: .whitespaces)
     var team = environment.team.trimmingCharacters(in: .whitespaces)
     var style = environment.style.trimmingCharacters(in: .whitespaces)
+    var keychain = environment.keychain.trimmingCharacters(in: .whitespaces)
     for path in localXcconfigPaths {
       let values = xcconfigValues(atPath: path)
       if identity.isEmpty {
@@ -136,8 +148,11 @@ public enum SigningBuildConfig {
       if style.isEmpty {
         style = values["CODE_SIGN_STYLE"] ?? ""
       }
+      if keychain.isEmpty {
+        keychain = values["SWIFT_MK_SIGN_KEYCHAIN"] ?? values["CODE_SIGN_KEYCHAIN"] ?? ""
+      }
     }
-    return Inputs(identity: identity, team: team, style: style)
+    return Inputs(identity: identity, team: team, style: style, keychain: keychain)
   }
 
   public static func signingRequired() -> Bool {
@@ -264,16 +279,25 @@ public enum SigningBuildConfig {
   public static func write(makeDir: String = ".make") -> String? {
     let inputs = environmentInputs()
     return write(
-      identity: inputs.identity, team: inputs.team, style: inputs.style, makeDir: makeDir)
+      identity: inputs.identity,
+      team: inputs.team,
+      style: inputs.style,
+      makeDir: makeDir,
+      keychain: inputs.keychain)
   }
 
   /// Write the xcconfig for explicit values and return its absolute path. Returns
   /// nil when no override applies or the write fails; on a write failure the build
   /// proceeds with its existing signing rather than being blocked by this.
   public static func write(
-    identity: String, team: String, style: String, makeDir: String
+    identity: String,
+    team: String,
+    style: String,
+    makeDir: String,
+    keychain: String = ""
   ) -> String? {
-    guard let text = contents(identity: identity, team: team, style: style) else {
+    guard let text = contents(identity: identity, team: team, style: style, keychain: keychain)
+    else {
       return nil
     }
     let path = (makeDir as NSString).appendingPathComponent(fileName)
@@ -312,7 +336,8 @@ public enum SigningBuildConfig {
         identity: inputs.identity,
         team: inputs.team,
         style: inputs.style,
-        makeDir: makeDir)
+        makeDir: makeDir,
+        keychain: inputs.keychain)
     else {
       return nil
     }

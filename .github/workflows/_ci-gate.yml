@@ -224,6 +224,7 @@ jobs:
           MAKE_TARGET: ${{ inputs.setup-target }}
           MAKE_ARGS: ${{ inputs.make-args }}
           CERT_SHA1: ${{ steps.cert-local.outputs.identity-sha1 || steps.cert-remote.outputs.identity-sha1 }}
+          CODE_SIGN_KEYCHAIN: ${{ steps.cert-local.outputs.keychain || steps.cert-remote.outputs.keychain }}
           TEAM_ID: ${{ inputs.apple-team-id }}
           PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile-local.outputs.profile-specifier || steps.profile-remote.outputs.profile-specifier }}
           APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
@@ -238,6 +239,7 @@ jobs:
           MAKE_TARGET: build
           MAKE_ARGS: ${{ inputs.make-args }}
           CERT_SHA1: ${{ steps.cert-local.outputs.identity-sha1 || steps.cert-remote.outputs.identity-sha1 }}
+          CODE_SIGN_KEYCHAIN: ${{ steps.cert-local.outputs.keychain || steps.cert-remote.outputs.keychain }}
           TEAM_ID: ${{ inputs.apple-team-id }}
           PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile-local.outputs.profile-specifier || steps.profile-remote.outputs.profile-specifier }}
           APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
@@ -252,6 +254,7 @@ jobs:
           MAKE_TARGET: test
           MAKE_ARGS: ${{ inputs.make-args }}
           CERT_SHA1: ${{ steps.cert-local.outputs.identity-sha1 || steps.cert-remote.outputs.identity-sha1 }}
+          CODE_SIGN_KEYCHAIN: ${{ steps.cert-local.outputs.keychain || steps.cert-remote.outputs.keychain }}
           TEAM_ID: ${{ inputs.apple-team-id }}
           PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile-local.outputs.profile-specifier || steps.profile-remote.outputs.profile-specifier }}
           APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
@@ -265,6 +268,7 @@ jobs:
         env:
           MAKE_ARGS: ${{ inputs.make-args }}
           CERT_SHA1: ${{ steps.cert-local.outputs.identity-sha1 || steps.cert-remote.outputs.identity-sha1 }}
+          CODE_SIGN_KEYCHAIN: ${{ steps.cert-local.outputs.keychain || steps.cert-remote.outputs.keychain }}
           TEAM_ID: ${{ inputs.apple-team-id }}
           PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile-local.outputs.profile-specifier || steps.profile-remote.outputs.profile-specifier }}
           APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
