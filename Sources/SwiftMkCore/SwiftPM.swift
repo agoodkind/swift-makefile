@@ -320,7 +320,12 @@ public enum SwiftPM {
   /// flag is YES and the CAS store path is usable. The make layer sets the enable flag
   /// on by default on any toolchain that supports `-cache-compile-job` (Swift 6.3+) and
   /// to NO otherwise, so these flags never reach an unsupporting compiler.
-  private static func compileCacheArguments() -> [String] {
+  ///
+  /// Internal, not private, so the dead-code gate forwards the same flags to periphery's
+  /// own `swift build`. A gate build in a different module mode than the product build
+  /// leaves `.build/Modules/*.swiftmodule` the explicit-module-build product build cannot
+  /// reuse, so both must build in one mode.
+  static func compileCacheArguments() -> [String] {
     guard Env.get("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED") == "YES" else {
       return []
     }
