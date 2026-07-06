@@ -19,6 +19,7 @@ let package = Package(
   products: [
     .executable(name: "swift-mk-render", targets: ["SwiftMkRenderCLI"]),
     .executable(name: "swift-mk", targets: ["SwiftMkCLI"]),
+    .executable(name: "swift-mk-maint", targets: ["SwiftMkMaint"]),
     .library(name: "SwiftMkCore", targets: ["SwiftMkCore"]),
     .library(name: "SwiftMkRenderCore", targets: ["SwiftMkRenderCore"]),
     .library(name: "SwiftMkUpdate", targets: ["SwiftMkUpdate"]),
@@ -56,7 +57,11 @@ let package = Package(
       name: "SwiftMkUpdate"
     ),
     .target(
-      name: "SwiftMkMaintCore"
+      name: "SwiftMkMaintCore",
+      dependencies: [
+        "SwiftMkUpdate",
+        .product(name: "ArgumentParser", package: "swift-argument-parser"),
+      ]
     ),
     .target(
       name: "SwiftMkCore",
@@ -85,6 +90,14 @@ let package = Package(
       name: "SwiftMkCLI",
       dependencies: [
         "SwiftMkCore",
+        "SwiftMkMaintCore",
+        "SwiftMkUpdate",
+        .product(name: "ArgumentParser", package: "swift-argument-parser"),
+      ]
+    ),
+    .executableTarget(
+      name: "SwiftMkMaint",
+      dependencies: [
         "SwiftMkMaintCore",
         "SwiftMkUpdate",
         .product(name: "ArgumentParser", package: "swift-argument-parser"),

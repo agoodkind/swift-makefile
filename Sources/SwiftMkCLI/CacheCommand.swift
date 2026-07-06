@@ -98,26 +98,18 @@ struct CachePruneCommand: ParsableCommand {
   var maxBytes: UInt64
 
   func run() throws {
-    do {
-      let diagnostics = CachePruneDiagnostics(
-        info: Output.info,
-        warning: Output.warning,
-        error: Output.error)
-      let result = try CachePruner(diagnostics: diagnostics).prune(path: path, maxBytes: maxBytes)
-      let entryNoun = result.evictedEntries.count == 1 ? "entry" : "entries"
-      Output.log(
-        "cache prune: evicted \(result.evictedEntries.count) \(entryNoun), "
-          + "\(result.evictedBytes) bytes; remaining \(result.remainingBytes) bytes")
-    } catch let error as CachePruneError {
-      // CachePruneError.description already carries the "cache prune:" prefix, so
-      // log it directly to avoid a doubled prefix; only unexpected errors get one.
-      // Output.error is the structured channel (JSONL record plus stderr); the
-      // pruner no longer logs before throwing, so this is the single emission.
-      Output.error(error.description)
-      throw ExitCode(1)
-    } catch {
-      Output.error("cache prune: \(error)")
-      throw ExitCode(1)
-    }
+    // Output.error is the structured channel (JSONL record plus stderr). The
+    // pruner no longer logs before throwing, so runCachePrune's catch is the
+    // single emission for a fatal prune error.
+    let diagnostics = CachePruneDiagnostics(
+      info: Output.info,
+      warning: Output.warning,
+      error: Output.error)
+    try runCachePrune(
+      path: path,
+      maxBytes: maxBytes,
+      diagnostics: diagnostics,
+      log: Output.log,
+      logError: Output.error)
   }
 }

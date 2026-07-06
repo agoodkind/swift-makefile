@@ -139,6 +139,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCLI/CiChangedCommand.swift \
 	Sources/SwiftMkCLI/UpdateCommand.swift \
 	Sources/SwiftMkCLI/VersionCommand.swift \
+	Sources/SwiftMkMaint/SwiftMkMaint.swift \
 	Sources/SwiftMkUpdate/ReleaseResolver.swift \
 	Sources/SwiftMkUpdate/UpdateConfig.swift \
 	Sources/SwiftMkUpdate/UpdateDiagnostics.swift \
@@ -150,6 +151,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkMaintCore/CachePruner.swift \
 	Sources/SwiftMkMaintCore/MaintenanceOutput.swift \
 	Sources/SwiftMkMaintCore/ReleaseVersion.swift \
+	Sources/SwiftMkMaintCore/UpdateCommandOptions.swift \
 	Sources/SwiftMkCore/Findings.swift \
 	Sources/SwiftMkCore/BaselineKey.swift \
 	Sources/SwiftMkCore/BaselineRecord.swift \
@@ -287,6 +289,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkMaintCoreTests/CachePrunerTests.swift \
 	Tests/SwiftMkMaintCoreTests/MaintenanceOutputTests.swift \
 	Tests/SwiftMkMaintCoreTests/ReleaseVersionTests.swift \
+	Tests/SwiftMkMaintCoreTests/MaintenanceRunnersTests.swift \
 	notices.txt \
 	templates/xcode/IDETemplateMacros.plist.template
 
