@@ -108,6 +108,11 @@ struct CachePruneCommand: ParsableCommand {
       Output.log(
         "cache prune: evicted \(result.evictedEntries.count) \(entryNoun), "
           + "\(result.evictedBytes) bytes; remaining \(result.remainingBytes) bytes")
+    } catch let error as CachePruneError {
+      // CachePruneError.description already carries the "cache prune:" prefix, so
+      // log it directly to avoid a doubled prefix; only unexpected errors get one.
+      Output.logError(error.description)
+      throw ExitCode(1)
     } catch {
       Output.logError("cache prune: \(error)")
       throw ExitCode(1)

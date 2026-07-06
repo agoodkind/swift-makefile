@@ -60,8 +60,9 @@ enum CachePrunePlannerTests {
         entries: testCase.entries,
         maxBytes: testCase.maxBytes)
 
-      _ = testCase.name
-      #expect(evictions.map(\.name) == testCase.expectedEvictions)
+      #expect(
+        evictions.map(\.name) == testCase.expectedEvictions,
+        "case: \(testCase.name)")
     }
   }
 
@@ -92,8 +93,9 @@ enum CachePrunePlannerTests {
         entries: testCase.entries,
         maxBytes: testCase.maxBytes)
 
-      _ = testCase.name
-      #expect(evictions.map(\.name) == testCase.expectedEvictions)
+      #expect(
+        evictions.map(\.name) == testCase.expectedEvictions,
+        "case: \(testCase.name)")
     }
   }
 

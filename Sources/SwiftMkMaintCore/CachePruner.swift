@@ -257,9 +257,9 @@ public struct CachePruner {
           return true
         })
     else {
-      // A nil enumerator (for example a directory we cannot open) must not be
-      // silently counted as zero bytes: record it as skipped so the total is not
-      // under-counted and the entry is visibly not pruned.
+      // A nil enumerator (for example a directory we cannot open) contributes 0
+      // bytes here, which does under-count the total; record it as skipped so the
+      // undercount is visible rather than silent, and the entry is not pruned.
       skippedEntries.append(
         CachePruneSkippedEntry(
           name: directoryURL.lastPathComponent, reason: "could not enumerate directory"))
