@@ -8,6 +8,7 @@
 
 import ArgumentParser
 import SwiftMkCore
+import SwiftMkMaintCore
 
 // MARK: - VersionCommand
 

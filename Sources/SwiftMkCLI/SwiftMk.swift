@@ -9,6 +9,7 @@
 import ArgumentParser
 import Foundation
 import SwiftMkCore
+import SwiftMkMaintCore
 import SwiftMkRenderCore
 
 // MARK: - SwiftMk
