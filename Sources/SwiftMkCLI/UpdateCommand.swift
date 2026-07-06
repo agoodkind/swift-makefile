@@ -134,6 +134,10 @@ struct VerifyReleaseCommand: ParsableCommand {
         Output.log(String(line))
       }
       Output.log("swift-mk: release \(result.tag) verified")
+    } catch let exit as ExitCode {
+      // A self-thrown ExitCode (for example the missing --team-id guard) already
+      // logged its specific message, so rethrow it without a second, vaguer line.
+      throw exit
     } catch {
       Output.logError("swift-mk: verify-release failed: \(error)")
       throw ExitCode(1)
