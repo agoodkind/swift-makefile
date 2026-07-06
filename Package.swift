@@ -99,7 +99,6 @@ let package = Package(
       name: "SwiftMkMaint",
       dependencies: [
         "SwiftMkMaintCore",
-        "SwiftMkUpdate",
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
       ]
     ),
