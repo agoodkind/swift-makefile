@@ -244,6 +244,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkUpdate/UpdateScheduler.swift \
 	Sources/SwiftMkUpdate/UpdateState.swift \
 	Sources/SwiftMkUpdate/Updater.swift \
+	Sources/SwiftMkUpdate/VerifyReleaseResult.swift \
 	Sources/SwiftMkMaintCore/CachePrunePlanner.swift \
 	Sources/SwiftMkMaintCore/CachePruner.swift \
 	Sources/SwiftMkMaintCore/MaintenanceOutput.swift \
@@ -386,6 +387,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/ManifestCompletenessTests.swift \
 	Tests/SwiftMkCoreTests/NoLibSwiftPMImportTests.swift \
 	Tests/SwiftMkUpdateTests/SwiftMkUpdateSchedulerTests.swift \
+	Tests/SwiftMkUpdateTests/SwiftMkReleaseVerifierTests.swift \
 	Tests/SwiftMkUpdateTests/SwiftMkUpdateSupport.swift \
 	Tests/SwiftMkUpdateTests/SwiftMkUpdateTargetPathTests.swift \
 	Tests/SwiftMkUpdateTests/SwiftMkUpdateTests.swift \

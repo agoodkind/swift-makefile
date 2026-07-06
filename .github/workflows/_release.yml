@@ -320,3 +320,72 @@ jobs:
           RELEASE_TAG: ${{ needs.meta.outputs.tag }}
           SWIFT_MK_DIST_DIR: ${{ inputs.dist-dir }}
         run: make release-publish
+
+  smoke:
+    needs: [meta, publish]
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    env:
+      REQUIRE_SIGNATURE: ${{ inputs.notarize && secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' && secrets.APPLE_NOTARY_KEY_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Swift build env
+        if: github.repository == 'agoodkind/swift-makefile'
+        uses: ./.github/actions/setup-build-env
+        with:
+          xcode-version: ${{ inputs.xcode-version }}
+          github-token: ${{ github.token }}
+          install-lint-tools: "false"
+          cache-profile: ${{ inputs.cache-profile }}
+          cache-version: ${{ inputs.cache-version }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+
+      - name: Setup Swift build env
+        if: github.repository != 'agoodkind/swift-makefile'
+        uses: agoodkind/swift-makefile/.github/actions/setup-build-env@main
+        with:
+          xcode-version: ${{ inputs.xcode-version }}
+          github-token: ${{ github.token }}
+          install-lint-tools: "false"
+          cache-profile: ${{ inputs.cache-profile }}
+          cache-version: ${{ inputs.cache-version }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+
+      - name: Verify published release
+        shell: bash
+        env:
+          RELEASE_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.meta.outputs.tag }}
+          RELEASE_ASSET: swift-mk_darwin_arm64.dmg
+        run: |
+          set -euo pipefail
+
+          swift_mk="${HOME}/.swift-mk-ci-toolchain/swift-mk"
+          verify_args=(
+            verify-release
+            --repo "${RELEASE_REPO}"
+            --tag "${RELEASE_TAG}"
+            --asset "${RELEASE_ASSET}"
+            --team-id H3BMXM4W7H
+          )
+          if [[ "${REQUIRE_SIGNATURE}" = "true" ]]; then
+            verify_args+=(--require-signature)
+          fi
+
+          attempt=1
+          max_attempts=5
+          while true; do
+            if "${swift_mk}" "${verify_args[@]}"; then
+              exit 0
+            fi
+            if [[ "${attempt}" -ge "${max_attempts}" ]]; then
+              exit 1
+            fi
+            attempt=$((attempt + 1))
+            sleep 15
+          done
