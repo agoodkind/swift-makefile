@@ -565,8 +565,9 @@ jobs:
   extra-targets-hosted:
     name: Extra Targets (hosted fallback)
     needs: [plan-runners, extra-targets-pool]
-    # See the build-hosted note, plus extra_targets_enabled so it only runs when
-    # extra targets were configured.
+    # See the build-hosted note. This runs only when the caller configured extra
+    # targets, expressed inline below since the reusable planner carries no such
+    # output.
     if: ${{ always() && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') && needs.plan-runners.outputs.on_pool == 'true' && (needs.extra-targets-pool.result == 'failure' || needs.extra-targets-pool.result == 'cancelled') }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
