@@ -74,6 +74,14 @@ on:
       apple-team-id:
         type: string
         default: ""
+      # Asset to smoke-verify after publish: the smoke job downloads it and runs
+      # the swift-mk verify-release check (staple, codesign, team id, then runs
+      # the binary and asserts the tag). Empty skips the smoke. The caller names
+      # its own asset so this reusable workflow stays generic instead of pinning
+      # one repo's artifact.
+      smoke-asset:
+        type: string
+        default: ""
       extra-cache-paths:
         type: string
         default: ""
@@ -323,6 +331,7 @@ jobs:
 
   smoke:
     needs: [meta, publish]
+    if: inputs.smoke-asset != ''
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
@@ -361,7 +370,8 @@ jobs:
         env:
           RELEASE_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.meta.outputs.tag }}
-          RELEASE_ASSET: swift-mk_darwin_arm64.dmg
+          RELEASE_ASSET: ${{ inputs.smoke-asset }}
+          RELEASE_TEAM_ID: ${{ inputs.apple-team-id }}
         run: |
           set -euo pipefail
 
@@ -371,10 +381,12 @@ jobs:
             --repo "${RELEASE_REPO}"
             --tag "${RELEASE_TAG}"
             --asset "${RELEASE_ASSET}"
-            --team-id H3BMXM4W7H
+            --team-id "${RELEASE_TEAM_ID}"
           )
           if [[ "${REQUIRE_SIGNATURE}" = "true" ]]; then
             verify_args+=(--require-signature)
+          else
+            verify_args+=(--no-require-signature)
           fi
 
           attempt=1
