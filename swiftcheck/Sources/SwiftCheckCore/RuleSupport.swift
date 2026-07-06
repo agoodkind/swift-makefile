@@ -136,7 +136,7 @@ func swiftSubcommand(after node: StringLiteralExprSyntax) -> String? {
     else {
       return nil
     }
-    return stringLiteralContent(next)
+    return plainStringLiteralContent(next)
   }
   // Shape `call("swift", ["build", ...])`: the executable is a call argument, so the
   // subcommand is the first string element of the next argument's array, or the next
@@ -159,9 +159,9 @@ func swiftSubcommand(after node: StringLiteralExprSyntax) -> String? {
       else {
         return nil
       }
-      return stringLiteralContent(firstElement)
+      return plainStringLiteralContent(firstElement)
     }
-    return next.as(StringLiteralExprSyntax.self).map(stringLiteralContent)
+    return next.as(StringLiteralExprSyntax.self).flatMap(plainStringLiteralContent)
   }
   return nil
 }
@@ -176,6 +176,17 @@ func stringLiteralContent(_ node: StringLiteralExprSyntax) -> String {
     }
   }
   return literal
+}
+
+/// The content of a string literal that has no interpolation, or nil when the literal
+/// interpolates. An interpolated literal such as `"sw\(x)ift"` has no single static
+/// value, so a rule that matches an exact executable name or subcommand must not treat
+/// its concatenated plain segments (`"swift"`) as that value and flag it.
+func plainStringLiteralContent(_ node: StringLiteralExprSyntax) -> String? {
+  for segment in node.segments where segment.as(ExpressionSegmentSyntax.self) != nil {
+    return nil
+  }
+  return stringLiteralContent(node)
 }
 
 func location(for position: AbsolutePosition, converter: SourceLocationConverter) -> (

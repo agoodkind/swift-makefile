@@ -91,6 +91,10 @@ private let allowedSwiftScriptFixture =
   "func script() { run(\"swift\", [\"Tools/Build.swift\"]) }\n"
 private let allowedComputedSubcommandFixture =
   "func go(subcommand: String) { run(\"swift\", [subcommand, \"build\"]) }\n"
+private let allowedInterpolatedExecutableFixture =
+  "func go(x: String) { run(\"sw\\(x)ift\", [\"build\"]) }\n"
+private let allowedInterpolatedSubcommandFixture =
+  "func go(x: String) { run(\"swift\", [\"bui\\(x)ld\"]) }\n"
 
 @Test
 func scanFlagsUnroutedSwiftBuildRunTest() throws {
@@ -135,6 +139,22 @@ func scanAllowsComputedFirstSubcommand() throws {
   let violations = try scan(paths: [filePath], enabledRules: [.unroutedBuildTooling])
 
   #expect(violations.isEmpty)
+}
+
+@Test
+func scanAllowsInterpolatedExecutableAndSubcommand() throws {
+  // An interpolated executable or subcommand literal has no static value, so its
+  // concatenated plain segments ("swift", "build") must not be read as the banned
+  // literal and flagged.
+  for fixture in [allowedInterpolatedExecutableFixture, allowedInterpolatedSubcommandFixture] {
+    let temporaryDirectory = try createTemporaryDirectory()
+    let filePath = temporaryDirectory.appendingPathComponent("Interpolated.swift").path
+    try fixture.write(toFile: filePath, atomically: true, encoding: .utf8)
+
+    let violations = try scan(paths: [filePath], enabledRules: [.unroutedBuildTooling])
+
+    #expect(violations.isEmpty)
+  }
 }
 
 @Test
