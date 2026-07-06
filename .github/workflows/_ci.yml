@@ -271,91 +271,20 @@ jobs:
           printf 'Quality / %s failed (pool=%s, hosted=%s)\n' "${LINT_NAME}" "${pool}" "${hosted}" >&2
           exit 1
 
-  # ── Runner planning ────────────────────────────────────────────────────────
-  # Runs on ubuntu-latest (fast, cheap) and decides which runner label each
-  # heavy gate should use. Fork PRs short-circuit to hosted before any network
-  # call. When local-pool-capacity-url is empty or the capacity endpoint says
-  # the pool is busy, all gates fall back to inputs.runner automatically; there
-  # is no separate no-op branch for the empty-URL case.
+  # Runner planning. The pool-or-hosted capacity decision lives in the shared
+  # reusable _plan-runners.yml so _release.yml reuses the same routing. Its
+  # outputs (build_label, test_label, quality_label, extra_targets_label,
+  # on_pool) are consumed by the gate jobs below via needs.plan-runners.outputs.
+  # extra_targets_enabled is not an output here: it is a pure function of this
+  # workflow's inputs, so the two Extra Targets jobs inline that expression in
+  # their if: conditions instead.
   plan-runners:
-    name: Plan runners
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    outputs:
-      build_label: ${{ steps.pick.outputs.build_label }}
-      test_label: ${{ steps.pick.outputs.test_label }}
-      quality_label: ${{ steps.pick.outputs.quality_label }}
-      extra_targets_label: ${{ steps.pick.outputs.extra_targets_label }}
-      # on_pool: the gates were routed to the self-hosted pool, so a hosted
-      # fallback is meaningful. extra_targets_enabled: the run configured any
-      # extra targets. Both name the intent the gnarly fallback if: needs, so it
-      # reads as "always, was on the pool, the pool did not pass".
-      on_pool: ${{ steps.pick.outputs.on_pool }}
-      extra_targets_enabled: ${{ inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]' }}
-    steps:
-      - name: Pick runner labels
-        id: pick
-        env:
-          CAPACITY_URL: ${{ inputs.local-pool-capacity-url }}
-          CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
-          POOL_LABEL: ${{ inputs.local-pool-label }}
-          HOSTED_LABEL: ${{ inputs.runner }}
-          REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
-          # Evaluates to "true" for fork PRs; everything else is trusted.
-          IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
-        run: |
-          set -euo pipefail
-
-          if [[ "${IS_FORK_PR}" == "true" ]]; then
-            # Untrusted event: never curl the internal capacity endpoint.
-            label="${HOSTED_LABEL}"
-          elif [[ -z "${CAPACITY_URL}" ]]; then
-            # No pool configured: route directly to hosted.
-            label="${HOSTED_LABEL}"
-          else
-            # Curl the capacity endpoint; any error (timeout, non-200, malformed
-            # body) falls through to hosted so the pool never blocks a gate.
-            # Pick the query separator so a capacity URL that already carries a
-            # query string stays valid instead of producing a double '?'.
-            sep='?'
-            case "${CAPACITY_URL}" in *\?*) sep='&' ;; esac
-            # Only send an Authorization header when a token is configured. The
-            # default public /capacity needs no token, and an empty "Bearer "
-            # can be rejected by a proxy in front of the endpoint, which would
-            # defeat the tokenless auto-routing. The array expansion is safe
-            # under set -u even when empty.
-            auth=()
-            if [[ -n "${CAPACITY_TOKEN}" ]]; then
-              auth+=(-H "Authorization: Bearer ${CAPACITY_TOKEN}")
-            fi
-            response=$(curl -sf --max-time 5 ${auth[@]+"${auth[@]}"} \
-              "${CAPACITY_URL}${sep}repo=${REPO}&run_id=${RUN_ID}" 2>/dev/null || printf '')
-            available=$(printf '%s' "${response}" | jq -r '.available // false' 2>/dev/null || printf 'false')
-            if [[ "${available}" == "true" ]]; then
-              label="${POOL_LABEL}"
-            else
-              label="${HOSTED_LABEL}"
-            fi
-          fi
-
-          # on_pool is true only when a pool label was actually chosen, so the
-          # hosted fallback never re-runs a gate that already ran on hosted.
-          if [[ "${label}" != "${HOSTED_LABEL}" ]]; then
-            on_pool=true
-          else
-            on_pool=false
-          fi
-
-          {
-            printf 'build_label=%s\n' "${label}"
-            printf 'test_label=%s\n' "${label}"
-            printf 'quality_label=%s\n' "${label}"
-            printf 'extra_targets_label=%s\n' "${label}"
-            printf 'on_pool=%s\n' "${on_pool}"
-          } >> "${GITHUB_OUTPUT}"
+    uses: ./.github/workflows/_plan-runners.yml
+    with:
+      runner: ${{ inputs.runner }}
+      local-pool-capacity-url: ${{ inputs.local-pool-capacity-url }}
+      local-pool-label: ${{ inputs.local-pool-label }}
+    secrets: inherit
 
   changes:
     name: Changes
@@ -605,7 +534,7 @@ jobs:
     # always() defeats the implicit skip that fires when a needed job uses
     # if: always() (the build/test aggregates do); the explicit result checks
     # keep this gated on every upstream gate actually succeeding.
-    if: ${{ !cancelled() && always() && needs.plan-runners.result == 'success' && needs.quality.result == 'success' && needs.build.result == 'success' && needs.test.result == 'success' && needs.plan-runners.outputs.extra_targets_enabled == 'true' }}
+    if: ${{ !cancelled() && always() && needs.plan-runners.result == 'success' && needs.quality.result == 'success' && needs.build.result == 'success' && needs.test.result == 'success' && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') }}
     needs: [plan-runners, changes, quality, build, test]
     uses: ./.github/workflows/_ci-gate.yml
     with:
@@ -636,7 +565,7 @@ jobs:
     needs: [plan-runners, extra-targets-pool]
     # See the build-hosted note, plus extra_targets_enabled so it only runs when
     # extra targets were configured.
-    if: ${{ always() && needs.plan-runners.outputs.extra_targets_enabled == 'true' && needs.plan-runners.outputs.on_pool == 'true' && (needs.extra-targets-pool.result == 'failure' || needs.extra-targets-pool.result == 'cancelled') }}
+    if: ${{ always() && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') && needs.plan-runners.outputs.on_pool == 'true' && (needs.extra-targets-pool.result == 'failure' || needs.extra-targets-pool.result == 'cancelled') }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: extra-targets
