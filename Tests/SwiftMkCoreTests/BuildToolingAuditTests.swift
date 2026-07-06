@@ -75,13 +75,18 @@ func auditFlagsRecipeWithMakePrefix() {
 
 @Test
 func auditFlagsEnvWrappedRecipe() {
-  // `env [VAR=val ...] cmd` runs cmd, so an env-wrapped compiler or toolchain spawn
-  // must still be flagged rather than resolving to the `env` command word.
+  // `env [OPTION]... [VAR=val ...] cmd` runs cmd, so an env-wrapped compiler or
+  // toolchain spawn must still be flagged rather than resolving to `env`. Option flags,
+  // including `-u`/`-C`/`-S` that take a following argument, are skipped.
   #expect(BuildToolingAudit.lineInvokesToolchain("\tenv FOO=1 swift build"))
   #expect(BuildToolingAudit.lineInvokesToolchain("\tenv swift test"))
   #expect(BuildToolingAudit.lineInvokesToolchain("\tenv FOO=1 xcodebuild -scheme App build"))
+  #expect(BuildToolingAudit.lineInvokesToolchain("\tenv -i swift build"))
+  #expect(BuildToolingAudit.lineInvokesToolchain("\tenv -u FOO swift test"))
+  #expect(BuildToolingAudit.lineInvokesToolchain("\t@env -i FOO=1 swift run tool"))
   // A non-toolchain command wrapped in env stays clean.
   #expect(!BuildToolingAudit.lineInvokesToolchain("\tenv FOO=1 make submodule"))
+  #expect(!BuildToolingAudit.lineInvokesToolchain("\tenv -i make submodule"))
 }
 
 @Test

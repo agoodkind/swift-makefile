@@ -22,14 +22,6 @@ import Foundation
 /// position or a `$(TUIST)`-style alias. There is no opt-out marker and no
 /// allowed form other than going through the binary.
 public enum BuildToolingAudit {
-  private static let minimumQuotedWordLength = 2
-  private static let uppercaseA: Unicode.Scalar = "A"
-  private static let uppercaseZ: Unicode.Scalar = "Z"
-  private static let lowercaseA: Unicode.Scalar = "a"
-  private static let lowercaseZ: Unicode.Scalar = "z"
-  private static let zeroDigit: Unicode.Scalar = "0"
-  private static let nineDigit: Unicode.Scalar = "9"
-
   /// What a finding flags, which selects its remediation text.
   public enum Kind: Sendable, Equatable {
     case codesign
@@ -266,13 +258,20 @@ public enum BuildToolingAudit {
   /// leading assignment prefixes skipped, or nil when the command has no argument.
   private static func argumentWord(in segment: Substring, after commandWord: String) -> String? {
     var sawCommand = false
+    var isFirstToken = true
     for rawToken in segment.split(whereSeparator: { $0 == " " || $0 == "\t" }) {
-      let token = stripSurroundingQuotes(String(rawToken))
+      let token = MakeTokenParsing.stripSurroundingQuotes(String(rawToken))
       if !sawCommand {
-        // Match the command word after removing any recipe prefix, so `@swift` matches
-        // the already-normalized `swift`. The returned argument keeps its raw form.
-        let normalized = stripRecipePrefix(token)
-        if normalized.isEmpty || isAssignmentPrefix(normalized) {
+        // The recipe prefix (@ - +) attaches only to the first token, so strip it there
+        // and match against the normalized command word; every later token, including an
+        // `env -i` flag, keeps its raw form. Non-matching tokens (env, its flags) are
+        // skipped until the command word, whose next token is the returned argument.
+        var normalized = token
+        if isFirstToken {
+          normalized = stripRecipePrefix(token)
+        }
+        isFirstToken = false
+        if normalized.isEmpty || MakeTokenParsing.isAssignmentPrefix(normalized) {
           continue
         }
         if normalized == commandWord {
@@ -322,22 +321,59 @@ public enum BuildToolingAudit {
     return segments
   }
 
+  // env short options that take a separate following argument, so the argument is
+  // skipped with the flag rather than mistaken for the wrapped command.
+  private static let envOptionsTakingArgument: Set<String> = ["-u", "-C", "-S"]
+
   private static func commandWord(in segment: Substring) -> String? {
-    var skippedEnvWrapper = false
-    for rawToken in segment.split(whereSeparator: { $0 == " " || $0 == "\t" }) {
-      let token = stripRecipePrefix(stripSurroundingQuotes(String(rawToken)))
-      if token.isEmpty || isAssignmentPrefix(token) {
+    let tokens =
+      segment
+      .split { $0 == " " || $0 == "\t" }
+      .map { MakeTokenParsing.stripSurroundingQuotes(String($0)) }
+    var index = 0
+    var isFirstToken = true
+    while index < tokens.count {
+      var token = tokens[index]
+      // GNU make recipe prefixes (@ - +) attach only to the first token of the recipe,
+      // so strip them there and nowhere else (an `env -i` flag keeps its leading dash).
+      if isFirstToken {
+        token = stripRecipePrefix(token)
+        isFirstToken = false
+      }
+      if token.isEmpty || MakeTokenParsing.isAssignmentPrefix(token) {
+        index += 1
         continue
       }
-      // `env [VAR=val ...] cmd` runs cmd, so treat a leading `env` as a transparent
-      // wrapper: `env FOO=1 swift build` resolves to `swift`, not `env`, and is flagged.
-      if !skippedEnvWrapper, token == "env" {
-        skippedEnvWrapper = true
+      // `env [OPTION]... [NAME=VALUE]... cmd` runs cmd, so treat a leading `env` as a
+      // transparent wrapper and resolve to the wrapped command, which is then flagged.
+      if token == "env" {
+        index = indexAfterEnvArguments(tokens, from: index + 1)
         continue
       }
       return token
     }
     return nil
+  }
+
+  /// The index of the command `env` wraps, skipping env's option flags (and the
+  /// following argument of `-u`/`-C`/`-S`) and its `NAME=VALUE` assignments.
+  private static func indexAfterEnvArguments(_ tokens: [String], from start: Int) -> Int {
+    var index = start
+    while index < tokens.count {
+      let token = tokens[index]
+      if MakeTokenParsing.isAssignmentPrefix(token) || token == "-" {
+        index += 1
+        continue
+      }
+      guard token.hasPrefix("-") else {
+        break
+      }
+      index += 1
+      if envOptionsTakingArgument.contains(token) {
+        index += 1
+      }
+    }
+    return index
   }
 
   /// A command token with any leading GNU make recipe prefixes removed, so a
@@ -352,7 +388,22 @@ public enum BuildToolingAudit {
     return String(result)
   }
 
-  private static func stripSurroundingQuotes(_ word: String) -> String {
+}
+
+// MARK: - MakeTokenParsing
+
+/// Shell-token parsing shared by the make-recipe audit: quote stripping, `VAR=val`
+/// assignment detection, and the shell-name character classes they rely on.
+private enum MakeTokenParsing {
+  static let minimumQuotedWordLength = 2
+  static let uppercaseA: Unicode.Scalar = "A"
+  static let uppercaseZ: Unicode.Scalar = "Z"
+  static let lowercaseA: Unicode.Scalar = "a"
+  static let lowercaseZ: Unicode.Scalar = "z"
+  static let zeroDigit: Unicode.Scalar = "0"
+  static let nineDigit: Unicode.Scalar = "9"
+
+  static func stripSurroundingQuotes(_ word: String) -> String {
     guard word.count >= minimumQuotedWordLength, let first = word.first, let last = word.last else {
       return word
     }
@@ -365,7 +416,7 @@ public enum BuildToolingAudit {
     return word
   }
 
-  private static func isAssignmentPrefix(_ word: String) -> Bool {
+  static func isAssignmentPrefix(_ word: String) -> Bool {
     guard let equalsIndex = word.firstIndex(of: "="), equalsIndex != word.startIndex else {
       return false
     }
@@ -379,19 +430,19 @@ public enum BuildToolingAudit {
     return true
   }
 
-  private static func isShellNameStart(_ scalar: Unicode.Scalar) -> Bool {
+  static func isShellNameStart(_ scalar: Unicode.Scalar) -> Bool {
     scalar == "_" || isAsciiLetter(scalar)
   }
 
-  private static func isShellNameCharacter(_ scalar: Unicode.Scalar) -> Bool {
+  static func isShellNameCharacter(_ scalar: Unicode.Scalar) -> Bool {
     isShellNameStart(scalar) || isAsciiDigit(scalar)
   }
 
-  private static func isAsciiLetter(_ scalar: Unicode.Scalar) -> Bool {
+  static func isAsciiLetter(_ scalar: Unicode.Scalar) -> Bool {
     (uppercaseA...uppercaseZ).contains(scalar) || (lowercaseA...lowercaseZ).contains(scalar)
   }
 
-  private static func isAsciiDigit(_ scalar: Unicode.Scalar) -> Bool {
+  static func isAsciiDigit(_ scalar: Unicode.Scalar) -> Bool {
     (zeroDigit...nineDigit).contains(scalar)
   }
 }
