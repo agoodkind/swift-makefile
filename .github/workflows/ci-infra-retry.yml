@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   rerun-cancelled:
-    name: Rerun an infra-cancelled CI run
+    name: Rerun an infra-cancelled run
     # Only cancelled runs, and only the first attempt, so a rerun can never loop.
     if: >-
       ${{ github.event.workflow_run.conclusion == 'cancelled' &&
