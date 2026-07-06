@@ -3,7 +3,7 @@
 //  SwiftMkCore
 //
 //  Created by Alexander Goodkind <alex@goodkind.io> on 2026-06-05.
-//  Copyright (c) 2026, all rights reserved.
+//  Copyright © 2026, all rights reserved.
 //
 
 import Foundation

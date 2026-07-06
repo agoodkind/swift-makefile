@@ -3,7 +3,7 @@
 //  SwiftMkCore
 //
 //  Created by Alexander Goodkind <alex@goodkind.io> on 2026-06-10.
-//  Copyright (c) 2026, all rights reserved.
+//  Copyright © 2026, all rights reserved.
 //
 //  The one codesign channel. Consumers never invoke codesign themselves: this
 //  command resolves the identity the same way the build-time override does and
