@@ -31,8 +31,8 @@ enum SwiftMkReleaseVerifierTests {
   }
 
   @Test
-  static func verifyReleaseSkipsSignatureChecksWhenNotRequired() throws {
-    try withPreparedUpdate(commandMode: .signatureFailure) { setup in
+  static func verifyReleaseSkipsStapleWhenNotRequired() throws {
+    try withPreparedUpdate(commandMode: .stapleFailure) { setup in
       let updater = Updater(options: setup.options)
 
       let result = try updater.verifyRelease(tag: newerTag, requireSignature: false)
@@ -40,6 +40,32 @@ enum SwiftMkReleaseVerifierTests {
       #expect(result.tag == newerTag)
       #expect(!result.requireSignature)
       #expect(result.validationOutput.contains("version: \(newerTag)"))
+    }
+  }
+
+  @Test
+  static func verifyReleaseSkipsTeamCheckWhenNotRequired() throws {
+    try withPreparedUpdate(commandMode: .teamMismatch) { setup in
+      let updater = Updater(options: setup.options)
+
+      let result = try updater.verifyRelease(tag: newerTag, requireSignature: false)
+
+      #expect(result.tag == newerTag)
+      #expect(result.validationOutput.contains("version: \(newerTag)"))
+    }
+  }
+
+  @Test
+  static func verifyReleaseRefusesUnsignedCandidateEvenWhenNotRequired() throws {
+    // A basic codesign validity check runs before the binary is executed even
+    // when require-signature is off, so an unsigned or tampered candidate is
+    // refused rather than launched.
+    try withPreparedUpdate(commandMode: .signatureFailure) { setup in
+      let updater = Updater(options: setup.options)
+
+      #expect(throws: UpdateError.self) {
+        try updater.verifyRelease(tag: newerTag, requireSignature: false)
+      }
     }
   }
 

@@ -95,8 +95,9 @@ struct VerifyReleaseCommand: ParsableCommand {
 
   @Flag(
     name: .customLong("require-signature"),
-    help: "Require staple and Developer ID signature verification.")
-  var requireSignature = false
+    inversion: .prefixedNo,
+    help: "Require staple and Developer ID team verification before running the candidate.")
+  var requireSignature = true
 
   func run() throws {
     do {

@@ -181,6 +181,7 @@ final class StubCommandRunner: CommandRunner {
   enum Mode {
     case success
     case signatureFailure
+    case stapleFailure
     case teamMismatch
     case validateMismatch
   }
@@ -210,7 +211,7 @@ final class StubCommandRunner: CommandRunner {
     if tool == "xcrun",
       args.prefix(Self.stapleArgumentCount) == ["stapler", "validate"]
     {
-      if mode == .signatureFailure {
+      if mode == .stapleFailure {
         return CommandOutput(status: 1, stdout: "", stderr: "staple failed")
       }
       return CommandOutput(status: 0, stdout: "", stderr: "")

@@ -247,10 +247,15 @@ public final class Updater {
       context: "mount dmg")
     attached = true
     let candidatePath = try findCandidate(in: mountURL)
+    // Always run a basic codesign validity check before executing the candidate,
+    // so a tampered or unsigned binary is never launched. The staple and the
+    // Developer ID team-identifier pin are the stricter checks gated on
+    // requireSignature.
+    try verifyCandidateCodesign(candidatePath: candidatePath)
     if requireSignature {
-      try verifyCandidateSignature(candidatePath: candidatePath)
+      try verifyCandidateTeamIdentifier(candidatePath: candidatePath)
     } else {
-      options.log("update: skipping signature verification")
+      options.log("update: skipping staple and team-identifier verification")
     }
     let validation = try validateCandidateVersion(
       candidatePath: candidatePath,
@@ -265,13 +270,16 @@ public final class Updater {
       context: "validate dmg staple")
   }
 
-  private func verifyCandidateSignature(candidatePath: String) throws {
+  private func verifyCandidateCodesign(candidatePath: String) throws {
     UpdateDiagnostics.debug("update verify candidate \(candidatePath)")
-    options.log("update: verifying candidate signature")
+    options.log("update: verifying candidate code signature")
     try runRequired(
       "codesign",
       ["--verify", "--strict", "--verbose=2", candidatePath],
       context: "verify candidate codesign")
+  }
+
+  private func verifyCandidateTeamIdentifier(candidatePath: String) throws {
     let details = try runRequired(
       "codesign",
       ["-dvv", candidatePath],
