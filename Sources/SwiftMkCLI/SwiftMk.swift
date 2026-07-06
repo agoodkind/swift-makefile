@@ -11,6 +11,8 @@ import Foundation
 import SwiftMkCore
 import SwiftMkRenderCore
 
+// throwaway probe: forces a cold swift-mk toolchain hash to co-tenant two cold gates on one pool VM
+
 // MARK: - SwiftMk
 
 @main
