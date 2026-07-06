@@ -72,7 +72,7 @@ public enum SigningBuildConfig {
     let trimmedTeam = team.trimmingCharacters(in: .whitespaces)
     let trimmedStyle = style.trimmingCharacters(in: .whitespaces)
     let trimmedKeychain = keychain.trimmingCharacters(in: .whitespaces)
-    guard !trimmedIdentity.isEmpty || !trimmedTeam.isEmpty || !trimmedKeychain.isEmpty else {
+    guard !trimmedIdentity.isEmpty || !trimmedTeam.isEmpty else {
       return nil
     }
     let resolvedStyle = resolveStyle(identity: trimmedIdentity, explicit: trimmedStyle)
@@ -81,7 +81,7 @@ public enum SigningBuildConfig {
     let teamLine = trimmedTeam.isEmpty ? "" : "DEVELOPMENT_TEAM = \(trimmedTeam)\n"
     let keychainLine =
       trimmedKeychain.isEmpty
-      ? "" : "OTHER_CODE_SIGN_FLAGS = --keychain \(trimmedKeychain)\n"
+      ? "" : "OTHER_CODE_SIGN_FLAGS = $(inherited) --keychain \(trimmedKeychain)\n"
     // Ad-hoc PR checks: allow signing but never require a provisioned identity,
     // so a target whose project marks signing required still builds.
     let adHocLines =

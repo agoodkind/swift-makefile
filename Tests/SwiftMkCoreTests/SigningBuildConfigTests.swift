@@ -63,7 +63,7 @@ func signingBuildConfigWritesOtherCodeSignFlagsForKeychain() throws {
       style: "",
       keychain: keychain))
   #expect(text.contains("CODE_SIGN_IDENTITY = \(identity)"))
-  #expect(text.contains("OTHER_CODE_SIGN_FLAGS = --keychain \(keychain)"))
+  #expect(text.contains("OTHER_CODE_SIGN_FLAGS = $(inherited) --keychain \(keychain)"))
 }
 
 @Test
@@ -81,6 +81,14 @@ func signingBuildConfigAutomaticFromTeamOnly() throws {
 func signingBuildConfigEmptyInputsProduceNoOverride() {
   #expect(SigningBuildConfig.contents(identity: "", team: "", style: "") == nil)
   #expect(SigningBuildConfig.contents(identity: "  ", team: "  ", style: "  ") == nil)
+}
+
+@Test
+func signingBuildConfigKeychainOnlyProducesNoOverride() {
+  let keychain = "/Users/runner/Library/Keychains/swift_mk_signing_runner.keychain-db"
+
+  #expect(
+    SigningBuildConfig.contents(identity: "", team: "", style: "", keychain: keychain) == nil)
 }
 
 @Test

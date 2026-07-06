@@ -23,8 +23,9 @@ func importSigningCertActionUsesRunnerKeyedKeychainName() throws {
   #expect(action.contains("RUNNER_NAME:-runner"))
   #expect(action.contains("swift_mk_signing_"))
   #expect(action.contains("keychain: ${{ steps.keychain.outputs.name }}"))
-  #expect(action.contains(#"security delete-keychain "${KEYCHAIN_NAME}.keychain""#))
-  #expect(action.contains(#"security find-identity -v -p codesigning "${KEYCHAIN_NAME}.keychain""#))
+  #expect(action.contains(#"KEYCHAIN_PATH: ${{ steps.keychain.outputs.path }}"#))
+  #expect(action.contains(#"security delete-keychain "$KEYCHAIN_PATH""#))
+  #expect(action.contains(#"security find-identity -v -p codesigning "$KEYCHAIN_PATH""#))
   #expect(!action.contains("signing_temp.keychain"))
   #expect(!action.contains("keychain: signing_temp"))
 }
@@ -154,27 +155,52 @@ func discoverBundlesIsEmptyForMissingDirectory() {
   #expect(Codesign.discoverBundles(in: "/no/such/dir-\(UUID().uuidString)").isEmpty)
 }
 
-@Test
-func codesignKeychainResolutionPrefersExplicitThenSwiftMkThenCodeSignEnvironment() {
-  let previousSwiftMkKeychain = ProcessInfo.processInfo.environment["SWIFT_MK_SIGN_KEYCHAIN"]
-  let previousCodeSignKeychain = ProcessInfo.processInfo.environment["CODE_SIGN_KEYCHAIN"]
-  unsetenv("SWIFT_MK_SIGN_KEYCHAIN")
-  unsetenv("CODE_SIGN_KEYCHAIN")
-  defer {
-    restoreEnvironmentValue(previousSwiftMkKeychain, forKey: "SWIFT_MK_SIGN_KEYCHAIN")
-    restoreEnvironmentValue(previousCodeSignKeychain, forKey: "CODE_SIGN_KEYCHAIN")
+// MARK: - CodesignEnvironmentTests
+
+/// These tests mutate process environment used by signing resolution, so they run
+/// serialized to keep global state out of parallel codesign tests.
+@Suite(.serialized)
+enum CodesignEnvironmentTests {
+  @Test
+  static func codesignKeychainResolutionPrefersExplicitThenSwiftMkThenCodeSignEnvironment() {
+    let previousSwiftMkKeychain = ProcessInfo.processInfo.environment["SWIFT_MK_SIGN_KEYCHAIN"]
+    let previousCodeSignKeychain = ProcessInfo.processInfo.environment["CODE_SIGN_KEYCHAIN"]
+    unsetenv("SWIFT_MK_SIGN_KEYCHAIN")
+    unsetenv("CODE_SIGN_KEYCHAIN")
+    defer {
+      restoreEnvironmentValue(previousSwiftMkKeychain, forKey: "SWIFT_MK_SIGN_KEYCHAIN")
+      restoreEnvironmentValue(previousCodeSignKeychain, forKey: "CODE_SIGN_KEYCHAIN")
+    }
+
+    setenv("CODE_SIGN_KEYCHAIN", "/tmp/code.keychain-db", 1)
+    #expect(
+      Codesign.resolveKeychain(explicit: nil, localXcconfigPaths: []) == "/tmp/code.keychain-db")
+
+    setenv("SWIFT_MK_SIGN_KEYCHAIN", "/tmp/swift.keychain-db", 1)
+    #expect(
+      Codesign.resolveKeychain(explicit: nil, localXcconfigPaths: []) == "/tmp/swift.keychain-db")
+    #expect(
+      Codesign.resolveKeychain(explicit: "/tmp/explicit.keychain-db", localXcconfigPaths: [])
+        == "/tmp/explicit.keychain-db")
   }
 
-  setenv("CODE_SIGN_KEYCHAIN", "/tmp/code.keychain-db", 1)
-  #expect(
-    Codesign.resolveKeychain(explicit: nil, localXcconfigPaths: []) == "/tmp/code.keychain-db")
-
-  setenv("SWIFT_MK_SIGN_KEYCHAIN", "/tmp/swift.keychain-db", 1)
-  #expect(
-    Codesign.resolveKeychain(explicit: nil, localXcconfigPaths: []) == "/tmp/swift.keychain-db")
-  #expect(
-    Codesign.resolveKeychain(explicit: "/tmp/explicit.keychain-db", localXcconfigPaths: [])
-      == "/tmp/explicit.keychain-db")
+  @Test
+  static func runFailsWithoutIdentity() {
+    let previousIdentity = ProcessInfo.processInfo.environment["CODE_SIGN_IDENTITY"]
+    let previousSignIdentity = ProcessInfo.processInfo.environment["SWIFT_MK_SIGN_IDENTITY"]
+    unsetenv("CODE_SIGN_IDENTITY")
+    unsetenv("SWIFT_MK_SIGN_IDENTITY")
+    defer {
+      if let previousIdentity { setenv("CODE_SIGN_IDENTITY", previousIdentity, 1) }
+      if let previousSignIdentity { setenv("SWIFT_MK_SIGN_IDENTITY", previousSignIdentity, 1) }
+    }
+    let outcome = Codesign.run(
+      paths: ["/tmp/x"],
+      mode: .binary,
+      identifier: nil,
+      localXcconfigPaths: [])
+    #expect(outcome == false)
+  }
 }
 
 @Test
@@ -215,24 +241,6 @@ func swiftBuildMakefilePassesKeychainToSigningPreludeAndCodesignRun() throws {
   #expect(makefile.contains("--keychain"))
   #expect(rootMakefile.contains("export CODE_SIGN_KEYCHAIN"))
   #expect(rootMakefile.contains("export SWIFT_MK_SIGN_KEYCHAIN"))
-}
-
-@Test
-func runFailsWithoutIdentity() {
-  let previousIdentity = ProcessInfo.processInfo.environment["CODE_SIGN_IDENTITY"]
-  let previousSignIdentity = ProcessInfo.processInfo.environment["SWIFT_MK_SIGN_IDENTITY"]
-  unsetenv("CODE_SIGN_IDENTITY")
-  unsetenv("SWIFT_MK_SIGN_IDENTITY")
-  defer {
-    if let previousIdentity { setenv("CODE_SIGN_IDENTITY", previousIdentity, 1) }
-    if let previousSignIdentity { setenv("SWIFT_MK_SIGN_IDENTITY", previousSignIdentity, 1) }
-  }
-  let outcome = Codesign.run(
-    paths: ["/tmp/x"],
-    mode: .binary,
-    identifier: nil,
-    localXcconfigPaths: [])
-  #expect(outcome == false)
 }
 
 private func importSigningCertActionText() throws -> String {

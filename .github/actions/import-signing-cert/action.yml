@@ -37,7 +37,7 @@ runs:
         runner_hash="$(printf '%s' "$runner_name" | shasum -a 256 | awk '{ print substr($1, 1, 12) }')"
         keychain_name="swift_mk_signing_${runner_slug}_${runner_hash}"
         # apple-actions writes this named keychain under the user's Keychains
-        # directory, and codesign --keychain accepts the database file path.
+        # directory, and security and codesign both accept the database file path.
         keychain_path="${HOME}/Library/Keychains/${keychain_name}.keychain-db"
         printf 'name=%s\n' "$keychain_name" >> "$GITHUB_OUTPUT"
         printf 'path=%s\n' "$keychain_path" >> "$GITHUB_OUTPUT"
@@ -45,8 +45,8 @@ runs:
     - name: Remove stale signing keychain for this runner
       shell: bash
       env:
-        KEYCHAIN_NAME: ${{ steps.keychain.outputs.name }}
-      run: security delete-keychain "${KEYCHAIN_NAME}.keychain" 2>/dev/null || true
+        KEYCHAIN_PATH: ${{ steps.keychain.outputs.path }}
+      run: security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
 
     - uses: apple-actions/import-codesign-certs@v3
       with:
@@ -59,12 +59,12 @@ runs:
       shell: bash
       env:
         IDENTITY_NAME: ${{ inputs.identity-name }}
-        KEYCHAIN_NAME: ${{ steps.keychain.outputs.name }}
+        KEYCHAIN_PATH: ${{ steps.keychain.outputs.path }}
       run: |
         set -euo pipefail
 
         identity_sha1="$(
-            security find-identity -v -p codesigning "${KEYCHAIN_NAME}.keychain" \
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
                 | awk -v identity="$IDENTITY_NAME" '
                     BEGIN { quoted = sprintf("%c%s%c", 34, identity, 34) }
                     index($0, quoted) { print $2; exit }
@@ -72,7 +72,7 @@ runs:
         )"
 
         if [[ -z "$identity_sha1" ]]; then
-            echo "Developer ID Application identity '$IDENTITY_NAME' not found in ${KEYCHAIN_NAME}.keychain" >&2
+            echo "Developer ID Application identity '$IDENTITY_NAME' not found in $KEYCHAIN_PATH" >&2
             exit 1
         fi
 
