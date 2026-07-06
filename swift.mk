@@ -137,6 +137,16 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCLI/ToolchainCommand.swift \
 	Sources/SwiftMkCLI/CacheCommand.swift \
 	Sources/SwiftMkCLI/CiChangedCommand.swift \
+	Sources/SwiftMkCLI/ReleaseVersion.swift \
+	Sources/SwiftMkCLI/UpdateCommand.swift \
+	Sources/SwiftMkCLI/VersionCommand.swift \
+	Sources/SwiftMkUpdate/ReleaseResolver.swift \
+	Sources/SwiftMkUpdate/UpdateConfig.swift \
+	Sources/SwiftMkUpdate/UpdateDiagnostics.swift \
+	Sources/SwiftMkUpdate/UpdateOptions.swift \
+	Sources/SwiftMkUpdate/UpdateScheduler.swift \
+	Sources/SwiftMkUpdate/UpdateState.swift \
+	Sources/SwiftMkUpdate/Updater.swift \
 	Sources/SwiftMkCore/Findings.swift \
 	Sources/SwiftMkCore/BaselineKey.swift \
 	Sources/SwiftMkCore/BaselineRecord.swift \
@@ -265,6 +275,10 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/SwiftPMTests.swift \
 	Tests/SwiftMkCoreTests/ManifestCompletenessTests.swift \
 	Tests/SwiftMkCoreTests/NoLibSwiftPMImportTests.swift \
+	Tests/SwiftMkUpdateTests/SwiftMkUpdateSchedulerTests.swift \
+	Tests/SwiftMkUpdateTests/SwiftMkUpdateSupport.swift \
+	Tests/SwiftMkUpdateTests/SwiftMkUpdateTargetPathTests.swift \
+	Tests/SwiftMkUpdateTests/SwiftMkUpdateTests.swift \
 	notices.txt \
 	templates/xcode/IDETemplateMacros.plist.template
 
