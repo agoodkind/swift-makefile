@@ -213,10 +213,13 @@ public enum Lint {
     // with the Xcode scan's verdict below. The label goes into the raw capture too,
     // so a later `Output:` dump of the capture stays self-describing.
     Output.log(DeadcodeScan.packageScanLabel)
-    let args = Env.words(
-      Env.get("PERIPHERY_ARGS", "scan --config .make/periphery.yml --strict"))
-    let result = Shell.run(
-      Env.get("PERIPHERY", "periphery"), args, environment: lintEnvironment())
+    let args = peripheryPackageScanArguments()
+    // The scan builds the package (clean_build), so serialize it with other engine builds
+    // in this worktree through the same re-entrant lock the product build uses.
+    let result = BuildLock.withLock {
+      Shell.run(
+        Env.get("PERIPHERY", "periphery"), args, environment: lintEnvironment())
+    }
     GateStatus.last = result.status
     Capture.write(DeadcodeScan.packageScanLabel + "\n" + result.combined, to: rawPath)
     Output.log(result.combined.trimmingCharacters(in: .newlines))
@@ -229,6 +232,32 @@ public enum Lint {
     )
     applyLineRanges(findingsPath)
     return indexStore
+  }
+
+  /// The periphery package-scan arguments, with the engine's compile-cache flags forwarded
+  /// to periphery's own `swift build` after `--`, so periphery builds the package in the
+  /// same module mode as the routed product build. Periphery's package scan does not skip
+  /// the build, so without this it runs a plain (implicit-module) `swift build` that leaves
+  /// `.build/Modules/*.swiftmodule` the explicit-module-build product build cannot reuse,
+  /// and the product build then fails to resolve their clang C-module dependencies. The
+  /// forwarding is engine-owned, so it applies even when a consumer overrides
+  /// `PERIPHERY_ARGS`; when the compile cache is off the forwarded set is empty and periphery
+  /// stays plain, matching a plain product build. Flags merge into an existing `--`
+  /// passthrough rather than adding a second one.
+  static func peripheryPackageScanArguments() -> [String] {
+    var args = Env.words(
+      Env.get("PERIPHERY_ARGS", "scan --config .make/periphery.yml --strict"))
+    let compileFlags = SwiftPM.compileCacheArguments()
+    guard !compileFlags.isEmpty else {
+      return args
+    }
+    if let passthroughIndex = args.firstIndex(of: "--") {
+      args.insert(contentsOf: compileFlags, at: args.index(after: passthroughIndex))
+    } else {
+      args.append("--")
+      args.append(contentsOf: compileFlags)
+    }
+    return args
   }
 
   /// Whether a build-output line is a Swift compiler error

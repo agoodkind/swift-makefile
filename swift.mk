@@ -273,6 +273,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/XCResultTests.swift \
 	Tests/SwiftMkCoreTests/BuildLockTests.swift \
 	Tests/SwiftMkCoreTests/SwiftPMTests.swift \
+	Tests/SwiftMkCoreTests/PeripheryPackageScanArgsTests.swift \
 	Tests/SwiftMkCoreTests/ManifestCompletenessTests.swift \
 	Tests/SwiftMkCoreTests/NoLibSwiftPMImportTests.swift \
 	Tests/SwiftMkUpdateTests/SwiftMkUpdateSchedulerTests.swift \
