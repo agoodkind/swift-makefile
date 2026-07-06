@@ -165,8 +165,10 @@ jobs:
       # notarize mid-build (bare CLI binaries that the staple step cannot help)
       # submits from inside make and sets `notarize: false` on this workflow.
       - name: Build release artifacts
+        shell: bash
         env:
           CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
+          CODE_SIGN_KEYCHAIN: ${{ steps.cert.outputs.keychain }}
           TEAM_ID: ${{ inputs.apple-team-id }}
           PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile.outputs.profile-specifier }}
           RELEASE_TAG: ${{ needs.meta.outputs.tag }}
@@ -176,14 +178,24 @@ jobs:
           APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          # Route caller-provided make inputs through env so they are shell data,
+          # not template text expanded into the script (avoids code injection via
+          # build-target or make-args).
+          BUILD_TARGET: ${{ inputs.build-target }}
+          MAKE_ARGS: ${{ inputs.make-args }}
         run: |
-          sign_args=""
+          sign_args=()
           if [ -n "${CERT_SHA1:-}" ]; then
-            sign_args="CODE_SIGN_IDENTITY=$CERT_SHA1 DMG_SIGN_IDENTITY=$CERT_SHA1"
+            sign_args+=("CODE_SIGN_IDENTITY=$CERT_SHA1" "DMG_SIGN_IDENTITY=$CERT_SHA1")
           fi
-          if [ -n "${TEAM_ID:-}" ]; then sign_args="$sign_args DEVELOPMENT_TEAM=$TEAM_ID"; fi
+          if [ -n "${CODE_SIGN_KEYCHAIN:-}" ]; then
+            sign_args+=("CODE_SIGN_KEYCHAIN=$CODE_SIGN_KEYCHAIN")
+          fi
+          if [ -n "${TEAM_ID:-}" ]; then
+            sign_args+=("DEVELOPMENT_TEAM=$TEAM_ID")
+          fi
           # shellcheck disable=SC2086
-          make ${{ inputs.build-target }} ${{ inputs.make-args }} $sign_args
+          make $BUILD_TARGET $MAKE_ARGS "${sign_args[@]}"
 
       - name: Generate SBOM
         if: inputs.sbom-subject-path != ''

@@ -41,6 +41,9 @@ struct CodesignRun: ParsableCommand {
   @Option(name: .long, help: "Local xcconfig consulted for blank signing values.")
   var localXcconfig: String = "Config/local.xcconfig"
 
+  @Option(name: .long, help: "Keychain path passed to codesign --keychain.")
+  var keychain: String?
+
   @Argument(help: "Paths to sign.")
   var paths: [String] = []
 
@@ -56,6 +59,7 @@ struct CodesignRun: ParsableCommand {
         identifier: identifier,
         identifierPrefix: identifierPrefix,
         bundlesDirectory: bundlesIn,
+        keychain: keychain,
         localXcconfigPaths: [localXcconfig]
       )
     else {

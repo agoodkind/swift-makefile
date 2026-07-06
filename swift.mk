@@ -650,10 +650,12 @@ export SWIFT_BUILD_CMD
 # variables, so without the export the gate processes never see them and a CI
 # runner with no local xcconfig loses DEVELOPMENT_TEAM inside the coverage build.
 export CODE_SIGN_IDENTITY
+export CODE_SIGN_KEYCHAIN
 export CODE_SIGN_STYLE
 export DEVELOPMENT_TEAM
 export TUIST_DEVELOPMENT_TEAM
 export SWIFT_MK_SIGN_IDENTITY
+export SWIFT_MK_SIGN_KEYCHAIN
 export SWIFT_MK_SIGN_TEAM
 export SWIFT_MK_SIGN_STYLE
 export SWIFT_MK_REQUIRE_SIGNING

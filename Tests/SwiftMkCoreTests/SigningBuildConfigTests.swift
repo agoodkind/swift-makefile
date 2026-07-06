@@ -47,8 +47,23 @@ func signingBuildConfigDeveloperIdFromIdentityAndTeam() throws {
   #expect(text.contains("CODE_SIGN_IDENTITY = \(identity)"))
   #expect(text.contains("CODE_SIGN_STYLE = Manual"))
   #expect(text.contains("DEVELOPMENT_TEAM = H3BMXM4W7H"))
+  #expect(!text.contains("OTHER_CODE_SIGN_FLAGS"))
   // A real identity is never ad-hoc, so the ad-hoc allowances stay out.
   #expect(!text.contains("CODE_SIGNING_REQUIRED = NO"))
+}
+
+@Test
+func signingBuildConfigWritesOtherCodeSignFlagsForKeychain() throws {
+  let keychain = "/Users/runner/Library/Keychains/swift_mk_signing_runner.keychain-db"
+  let identity = "Developer ID Application: Alex Goodkind (H3BMXM4W7H)"
+  let text = try #require(
+    SigningBuildConfig.contents(
+      identity: identity,
+      team: "H3BMXM4W7H",
+      style: "",
+      keychain: keychain))
+  #expect(text.contains("CODE_SIGN_IDENTITY = \(identity)"))
+  #expect(text.contains("OTHER_CODE_SIGN_FLAGS = $(inherited) --keychain \"\(keychain)\""))
 }
 
 @Test
@@ -66,6 +81,14 @@ func signingBuildConfigAutomaticFromTeamOnly() throws {
 func signingBuildConfigEmptyInputsProduceNoOverride() {
   #expect(SigningBuildConfig.contents(identity: "", team: "", style: "") == nil)
   #expect(SigningBuildConfig.contents(identity: "  ", team: "  ", style: "  ") == nil)
+}
+
+@Test
+func signingBuildConfigKeychainOnlyProducesNoOverride() {
+  let keychain = "/Users/runner/Library/Keychains/swift_mk_signing_runner.keychain-db"
+
+  #expect(
+    SigningBuildConfig.contents(identity: "", team: "", style: "", keychain: keychain) == nil)
 }
 
 @Test
@@ -136,7 +159,8 @@ func signingXcconfigValuesReturnsEmptyForMissingFile() {
 enum SigningEnvironmentOverrideTests {
   private static let signingEnvironmentKeys = [
     "CODE_SIGN_IDENTITY", "DEVELOPMENT_TEAM", "TUIST_DEVELOPMENT_TEAM", "CODE_SIGN_STYLE",
-    "SWIFT_MK_SIGN_IDENTITY", "SWIFT_MK_SIGN_TEAM", "SWIFT_MK_SIGN_STYLE",
+    "CODE_SIGN_KEYCHAIN", "SWIFT_MK_SIGN_IDENTITY", "SWIFT_MK_SIGN_TEAM", "SWIFT_MK_SIGN_STYLE",
+    "SWIFT_MK_SIGN_KEYCHAIN",
     "SWIFT_MK_REQUIRE_SIGNING", "SWIFT_MK_VERIFY_XCCONFIG",
   ]
 
@@ -178,6 +202,17 @@ enum SigningEnvironmentOverrideTests {
 
       setenv("SWIFT_MK_SIGN_TEAM", "SWIFTTEAM", 1)
       #expect(SigningBuildConfig.environmentInputs().team == "SWIFTTEAM")
+    }
+  }
+
+  @Test
+  static func keychainResolutionUsesSwiftMkThenCodeSignEnvironment() {
+    withCleanSigningEnvironment {
+      setenv("CODE_SIGN_KEYCHAIN", "/tmp/code.keychain-db", 1)
+      #expect(SigningBuildConfig.environmentInputs().keychain == "/tmp/code.keychain-db")
+
+      setenv("SWIFT_MK_SIGN_KEYCHAIN", "/tmp/swift.keychain-db", 1)
+      #expect(SigningBuildConfig.environmentInputs().keychain == "/tmp/swift.keychain-db")
     }
   }
 
