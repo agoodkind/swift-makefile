@@ -130,6 +130,6 @@ struct MaintCachePruneCommand: ParsableCommand {
       maxBytes: maxBytes,
       diagnostics: diagnostics,
       log: MaintenanceOutput.log,
-      logError: MaintenanceOutput.logError)
+      logError: MaintenanceOutput.error)
   }
 }
