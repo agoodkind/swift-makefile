@@ -18,6 +18,9 @@ public enum Shell {
 
   /// Number of launch attempts before a spawn failure is treated as terminal.
   private static let maxLaunchAttempts = 5
+  private static let traceEnvironmentKeys = [
+    "TRACEPARENT", "TRACE_ID", "SPAN_ID", "SWIFT_MK_TRACE_ID", "SWIFT_MK_SPAN_ID",
+  ]
 
   /// Build and start a process, retrying a spurious launch failure with a fresh
   /// `Process` each attempt. An `NSTask` cannot be relaunched (a second `run()`
@@ -56,6 +59,12 @@ public enum Shell {
     var merged = ProcessInfo.processInfo.environment
     for (key, value) in overrides {
       merged[key] = value
+    }
+    for key in traceEnvironmentKeys {
+      let value = Env.get(key)
+      if !value.isEmpty {
+        merged[key] = value
+      }
     }
     return merged
   }

@@ -69,6 +69,10 @@ public enum OTelExport {
     span = built.get(instrumentationName: serviceName)
       .spanBuilder(spanName: serviceName)
       .setParent(parent)
+      // The SDK creates an implementation span id under this parent; these
+      // attributes keep the printed run ids queryable on the exported span.
+      .setAttribute(key: "swift_mk.trace_id", value: correlation.traceID)
+      .setAttribute(key: "swift_mk.span_id", value: correlation.spanID)
       .startSpan()
   }
 
