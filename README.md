@@ -43,7 +43,7 @@ To pin a release tag or change the install directory without a local checkout, p
 curl -fsSL https://raw.githubusercontent.com/agoodkind/swift-makefile/main/install.sh | bash -s -- --version <TAG> --bin-dir <DIR>
 ```
 
-`swift-mk version` reports the installed release tag. `swift-mk update check` reports whether a newer release exists; `swift-mk update apply` verifies the new release's Developer ID signature and staple, then replaces the running binary in place. `swift-mk cache prune --path <dir> --max-bytes <n>` evicts least-recently-used entries from a cache directory to keep it under a byte cap. The `update` command is generic: point it at any consumer's dmg release with `--repo`, `--asset`, and `--target`.
+`swift-mk version` reports the installed release tag. `swift-mk update check` reports whether a newer release exists; `swift-mk update apply` verifies the new release's Developer ID signature and staple, then replaces the running binary in place. `swift-mk cache prune --path <dir> --max-bytes <n>` evicts the oldest entries by modification time from a cache directory to keep it under a byte cap. The `update` command is generic: point it at any consumer's dmg release with `--repo`, `--asset`, and `--target`.
 
 ## Public targets
 
