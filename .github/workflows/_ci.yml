@@ -193,7 +193,7 @@ jobs:
     # See build-hosted: always() + on_pool + a failed pool attempt. quality-pool's
     # result is the whole-matrix aggregate, so any failed or cancelled pool leg
     # reruns the full hosted matrix; the aggregator then resolves each lint per leg.
-    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && (needs.quality-pool.result == 'failure' || needs.quality-pool.result == 'cancelled') }}
+    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && needs.quality-pool.result != 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -288,9 +288,15 @@ jobs:
     secrets:
       LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
 
-  changes:
-    name: Changes
+  # changes-pool: first attempt on the planned Build runner, because the
+  # detector reads the Swift package graph and can need the same macOS toolchain.
+  # changes-hosted: hosted-only fallback when the pool attempt fails or is
+  # cancelled. changes: tiny aggregator that preserves the existing
+  # needs.changes.outputs contract for every downstream gate.
+  changes-pool:
+    name: Changes (pool attempt)
     needs: plan-runners
+    if: ${{ !cancelled() && needs.plan-runners.result == 'success' }}
     runs-on: ${{ needs.plan-runners.outputs.build_label }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
@@ -361,6 +367,126 @@ jobs:
 
           "${SWIFT_MK_BIN:-${HOME}/.swift-mk-ci-toolchain/swift-mk}" ci-changed
 
+  changes-hosted:
+    name: Changes (hosted fallback)
+    needs: [plan-runners, changes-pool]
+    # See build-hosted: always() + on_pool + a failed pool attempt.
+    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && needs.changes-pool.result != 'success' }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    outputs:
+      run: ${{ steps.detect.outputs.run }}
+      run_build: ${{ steps.detect.outputs.run_build }}
+      run_lint: ${{ steps.detect.outputs.run_lint }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Credentials stay persisted (the default): the detector's feature-branch
+          # merge-base can need `git fetch origin <default>`, which fails without auth on a
+          # private repo and would disable skipping on feature branches.
+          fetch-depth: 0
+
+      - name: Setup Swift build env
+        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
+        uses: ./.github/actions/setup-build-env
+        with:
+          xcode-version: ${{ inputs.xcode-version }}
+          github-token: ${{ github.token }}
+          install-lint-tools: "false"
+          install-tuist: "false"
+          install-xcodegen: "false"
+          # The detector reads the build graph fresh with swift package describe, so it
+          # restores only the dependency bucket (the SPM checkouts describe resolves
+          # against), not the build or index cache.
+          cache-profile: dependencies
+          cache-version: ${{ inputs.cache-version }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+          gate: changes
+
+      - name: Setup Swift build env
+        if: ${{ github.repository != 'agoodkind/swift-makefile' }}
+        uses: agoodkind/swift-makefile/.github/actions/setup-build-env@main
+        with:
+          xcode-version: ${{ inputs.xcode-version }}
+          github-token: ${{ github.token }}
+          install-lint-tools: "false"
+          install-tuist: "false"
+          install-xcodegen: "false"
+          # The detector reads the build graph fresh with swift package describe, so it
+          # restores only the dependency bucket (the SPM checkouts describe resolves
+          # against), not the build or index cache.
+          cache-profile: dependencies
+          cache-version: ${{ inputs.cache-version }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+          gate: changes
+
+      - name: Detect changes
+        id: detect
+        shell: bash
+        env:
+          # On a pull request, github.event.before is empty, github.ref_name is the merge
+          # ref (<n>/merge), and github.sha is the synthetic merge commit. The pull-request
+          # context (head sha, base branch, head branch) gives the detector a well-defined
+          # branch head to diff against its base, so the merge-base path runs. On a push,
+          # those pull-request fields are empty and the values fall back to the push context.
+          SWIFT_MK_EVENT_NAME: ${{ github.event_name }}
+          SWIFT_MK_DIFF_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          SWIFT_MK_DIFF_BASE: ${{ github.event.before }}
+          SWIFT_MK_DEFAULT_BRANCH: ${{ github.base_ref || github.event.repository.default_branch }}
+          SWIFT_MK_REF_NAME: ${{ github.head_ref || github.ref_name }}
+          SWIFT_MK_CI_EXTRA_DIRS: ${{ inputs.extra-dirs }}
+        run: |
+          set -euo pipefail
+
+          "${SWIFT_MK_BIN:-${HOME}/.swift-mk-ci-toolchain/swift-mk}" ci-changed
+
+  changes:
+    name: Changes
+    if: ${{ always() }}
+    needs: [changes-pool, changes-hosted]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.resolve.outputs.run }}
+      run_build: ${{ steps.resolve.outputs.run_build }}
+      run_lint: ${{ steps.resolve.outputs.run_lint }}
+    steps:
+      - name: Resolve changes result
+        id: resolve
+        env:
+          POOL_RESULT: ${{ needs.changes-pool.result }}
+          HOSTED_RESULT: ${{ needs.changes-hosted.result }}
+          POOL_RUN: ${{ needs.changes-pool.outputs.run }}
+          POOL_RUN_BUILD: ${{ needs.changes-pool.outputs.run_build }}
+          POOL_RUN_LINT: ${{ needs.changes-pool.outputs.run_lint }}
+          HOSTED_RUN: ${{ needs.changes-hosted.outputs.run }}
+          HOSTED_RUN_BUILD: ${{ needs.changes-hosted.outputs.run_build }}
+          HOSTED_RUN_LINT: ${{ needs.changes-hosted.outputs.run_lint }}
+        run: |
+          set -euo pipefail
+
+          resolve_output() {
+              local output_name="$1"
+              local pool_value="$2"
+              local hosted_value="$3"
+              local value="true"
+
+              if [[ "${POOL_RESULT}" == "success" && -n "${pool_value}" ]]; then
+                  value="${pool_value}"
+              elif [[ "${HOSTED_RESULT}" == "success" && -n "${hosted_value}" ]]; then
+                  value="${hosted_value}"
+              fi
+
+              printf '%s=%s\n' "${output_name}" "${value}" >> "${GITHUB_OUTPUT}"
+              printf 'Changes %s=%s (pool=%s, hosted=%s)\n' "${output_name}" "${value}" "${POOL_RESULT}" "${HOSTED_RESULT}"
+          }
+
+          resolve_output "run" "${POOL_RUN}" "${HOSTED_RUN}"
+          resolve_output "run_build" "${POOL_RUN_BUILD}" "${HOSTED_RUN_BUILD}"
+          resolve_output "run_lint" "${POOL_RUN_LINT}" "${HOSTED_RUN_LINT}"
+
   # ── Build ──────────────────────────────────────────────────────────────────
   # build-pool: first attempt on the planned runner (pool or hosted).
   # build-hosted: hosted-only fallback that runs when build-pool fails or is
@@ -399,8 +525,12 @@ jobs:
     name: Build (hosted fallback)
     needs: [plan-runners, build-pool]
     # always() defeats GitHub's implicit skip so the fallback runs when the pool
-    # attempt fails; on_pool gates it to pool-routed runs.
-    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && (needs.build-pool.result == 'failure' || needs.build-pool.result == 'cancelled') }}
+    # attempt did not succeed; on_pool gates it to pool-routed runs. The check is
+    # `!= 'success'` (not failure/cancelled only) because a sibling pool job the
+    # watchdog cancels (for example changes-pool) puts the run into a cancelling
+    # state, which makes this single-job pool attempt end as `skipped` rather than
+    # `cancelled`; the fallback must still rescue that case.
+    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && needs.build-pool.result != 'success' }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: build
@@ -481,7 +611,7 @@ jobs:
     name: Test (hosted fallback)
     needs: [plan-runners, test-pool]
     # See the build-hosted note: always() + on_pool + a failed pool attempt.
-    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && (needs.test-pool.result == 'failure' || needs.test-pool.result == 'cancelled') }}
+    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && needs.test-pool.result != 'success' }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: test
@@ -568,7 +698,7 @@ jobs:
     # See the build-hosted note. This runs only when the caller configured extra
     # targets, expressed inline below since the reusable planner carries no such
     # output.
-    if: ${{ always() && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') && needs.plan-runners.outputs.on_pool == 'true' && (needs.extra-targets-pool.result == 'failure' || needs.extra-targets-pool.result == 'cancelled') }}
+    if: ${{ always() && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') && needs.plan-runners.outputs.on_pool == 'true' && needs.extra-targets-pool.result != 'success' }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: extra-targets
