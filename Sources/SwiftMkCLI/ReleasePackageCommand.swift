@@ -38,7 +38,9 @@ struct ReleasePackageCommand: ParsableCommand {
       Output.error("release-build: \(error.description)")
       throw ExitCode(1)
     } catch {
-      Output.error("release-build: \(error)")
+      // Foundation errors (missing file, permissions) reach here; localizedDescription
+      // reads cleanly, while the ReleasePackageError case above keeps its own message.
+      Output.error("release-build: \(error.localizedDescription)")
       throw ExitCode(1)
     }
   }

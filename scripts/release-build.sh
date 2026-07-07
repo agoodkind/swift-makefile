@@ -20,6 +20,13 @@
 
 set -euo pipefail
 
+# Run from the repo root that contains this script, so the relative paths below
+# (git archive, scripts/swift-mk-build.sh, and the default dist dir) resolve no
+# matter the caller's working directory. This also anchors $PWD, used for
+# engine_root and engine_repo below, to this checkout.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${script_dir}/.."
+
 # This script uses macOS-only tooling (hdiutil and codesign), so fail early with
 # a clear message rather than a confusing packaging error later.
 if [[ "$(uname -s)" != "Darwin" ]]; then
