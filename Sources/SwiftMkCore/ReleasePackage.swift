@@ -100,10 +100,13 @@ public enum ReleasePackage {
       try stampVersion(tag: tag, versionFile: plan.versionFile)
     }
     let built = try buildProduct(plan)
-    try stageProduct(built: built, plan: plan)
+    // Arm the stage cleanup before staging, so a failure inside stageProduct (for
+    // example a copy error after the .stage directory is created) does not leave
+    // the stage directory behind on the throwing path.
     defer {
       cleanupPath(plan.stageDir, label: "stage")
     }
+    try stageProduct(built: built, plan: plan)
     let shouldSign = signingIdentityIsAvailable(signingEnginePath: signingEnginePath)
     let stagedBinary = (plan.stageDir as NSString).appendingPathComponent(plan.stagedBinaryName)
     if shouldSign {
