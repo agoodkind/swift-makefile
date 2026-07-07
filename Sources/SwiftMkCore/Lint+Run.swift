@@ -249,21 +249,18 @@ extension Lint {
       Env.get(
         "LINT_GATES",
         "lint-swiftlint lint-format lint-complexity lint-deadcode swiftcheck-extra"))
-    var failed: [String] = []
-    for gate in gates where !runGate(named: gate, context: context) {
-      failed.append(gate)
+    let items = gates.map { gate in
+      GateItem(name: gate) {
+        runGate(named: gate, context: context)
+      }
     }
+    let failed = GateDisplay.runGates(title: "Lint gates", items: items)
     if failed.isEmpty { return true }
 
     if bypassActive() {
       Output.log("LINT FINDINGS NON-BLOCKING via BYPASS_LINT")
       return true
     }
-    // One verdict line names the failing gates once. Each gate already printed
-    // its own status row and findings, so there is no separate failed-gates
-    // block to repeat them.
-    let noun = failed.count == 1 ? "check" : "checks"
-    Output.log("\n\(failed.count) \(noun) failed: \(failed.joined(separator: ", "))")
     return false
   }
 

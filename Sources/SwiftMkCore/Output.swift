@@ -74,6 +74,22 @@ public enum Output {
   }
 
   private static let levelEnvironmentName = "SWIFT_MK_LOG_LEVEL"
+  private static let captureLock = NSLock()
+  nonisolated(unsafe) private static var captureBuffer: String?
+
+  public static func beginCapture() {
+    captureLock.lock()
+    captureBuffer = ""
+    captureLock.unlock()
+  }
+
+  public static func endCapture() -> String {
+    captureLock.lock()
+    defer { captureLock.unlock() }
+    let captured = captureBuffer ?? ""
+    captureBuffer = nil
+    return captured
+  }
 
   private static func thresholdLevel() -> Level? {
     let raw = Env.get(levelEnvironmentName).lowercased()
@@ -130,6 +146,9 @@ public enum Output {
     // Resolve the run's trace and print the header before the first output, so
     // the header is the first line a run produces.
     Logging.ensureStarted()
+    if appendCaptured(text) {
+      return
+    }
     let handle: FileHandle
     switch stream {
     case .standardError:
@@ -138,5 +157,16 @@ public enum Output {
       handle = FileHandle.standardOutput
     }
     handle.write(Data(text.utf8))
+  }
+
+  private static func appendCaptured(_ text: String) -> Bool {
+    captureLock.lock()
+    defer { captureLock.unlock() }
+    guard var captured = captureBuffer else {
+      return false
+    }
+    captured += text
+    captureBuffer = captured
+    return true
   }
 }
