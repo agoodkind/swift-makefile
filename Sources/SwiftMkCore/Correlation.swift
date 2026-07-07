@@ -38,8 +38,8 @@ public struct Correlation: Sendable, Equatable {
     [Self.traceparentVersion, traceID, spanID, Self.sampledFlag].joined(separator: "-")
   }
 
-  /// Adopt an inbound W3C traceparent, keeping its trace id and minting a fresh
-  /// child span, or return nil when the value is malformed.
+  /// Adopt an inbound W3C traceparent, keeping its trace and span ids, or return
+  /// nil when the value is malformed.
   public static func fromTraceparent(_ value: String) -> Correlation? {
     let parts = value.split(separator: "-", omittingEmptySubsequences: false)
     guard parts.count == traceparentFieldCount else {
@@ -52,7 +52,7 @@ public struct Correlation: Sendable, Equatable {
     else {
       return nil
     }
-    return Correlation(traceID: String(trace), spanID: randomHex(byteCount: spanByteCount))
+    return Correlation(traceID: String(trace), spanID: String(span))
   }
 
   private static func randomHex(byteCount: Int) -> String {
