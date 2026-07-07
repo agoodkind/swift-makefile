@@ -293,6 +293,8 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/Toolchain+Coverage.swift \
 	Sources/SwiftMkCore/Toolchain+GatedCompile.swift \
 	Sources/SwiftMkCore/GatedBuild.swift \
+	Sources/SwiftMkCore/GateDisplay.swift \
+	Sources/SwiftMkCore/GateReport.swift \
 	Sources/SwiftMkCore/LintPolicy.swift \
 	Sources/SwiftMkCore/LintResources.swift \
 	Sources/SwiftMkCore/GeneratedFiles.swift \
@@ -338,6 +340,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/ToolchainReceiptTests.swift \
 	Tests/SwiftMkCoreTests/GatedBuildHarness.swift \
 	Tests/SwiftMkCoreTests/GatedBuildTests.swift \
+	Tests/SwiftMkCoreTests/GateReportTests.swift \
 	Tests/SwiftMkCoreTests/HardGateTests.swift \
 	Tests/SwiftMkCoreTests/LintSourceSetTests.swift \
 	Tests/SwiftMkCoreTests/NoMakeGatedBuildHarnessTests.swift \
@@ -367,6 +370,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/FindingsSourceTests.swift \
 	Tests/SwiftMkCoreTests/FindingTests.swift \
 	Tests/SwiftMkCoreTests/LoggingTests.swift \
+	Tests/SwiftMkCoreTests/OutputCaptureTests.swift \
 	Tests/SwiftMkCoreTests/PreflightTests.swift \
 	Tests/SwiftMkCoreTests/ShellStreamingTests.swift \
 	Tests/SwiftMkCoreTests/ShellTests.swift \

@@ -400,8 +400,6 @@ extension Lint {
     if failed.isEmpty {
       return true
     }
-    let noun = failed.count == 1 ? "check" : "checks"
-    Output.log("\n\(failed.count) \(noun) failed: \(failed.joined(separator: ", "))")
     return false
   }
 
@@ -413,41 +411,43 @@ extension Lint {
     context: PathContext, hooks: GatedBuild.Hooks
   ) -> [String] {
     let sources = LintSourceSet.resolve(context: context)
-    var failed: [String] = []
-    if !LintPolicy.swiftlint(
-      name: "lint-swiftlint",
-      sources: sources,
-      onlyRules: [],
-      baselinePath: Env.get("SWIFTLINT_BASELINE", ".swiftlint-baseline.jsonl"),
-      context: context)
-    {
-      failed.append("lint-swiftlint")
+    var items = [
+      GateItem(name: "lint-swiftlint") {
+        LintPolicy.swiftlint(
+          name: "lint-swiftlint",
+          sources: sources,
+          onlyRules: [],
+          baselinePath: Env.get("SWIFTLINT_BASELINE", ".swiftlint-baseline.jsonl"),
+          context: context)
+      },
+      GateItem(name: "lint-format") {
+        LintPolicy.format(sources: sources)
+      },
+      GateItem(name: "lint-complexity") {
+        LintPolicy.swiftlint(
+          name: "lint-complexity",
+          sources: sources,
+          onlyRules: complexityRules(),
+          baselinePath: Env.get(
+            "SWIFTLINT_COMPLEXITY_BASELINE", ".swiftlint-complexity-baseline.jsonl"),
+          context: context)
+      },
+      GateItem(name: "lint-deadcode") {
+        LintPolicy.deadcode(context: context)
+      },
+      GateItem(name: "swiftcheck-extra") {
+        LintPolicy.swiftcheck(sources: sources, context: context)
+      },
+      GateItem(name: "audit") {
+        LintPolicy.audit()
+      },
+    ]
+    if let logAudit = hooks.logAudit {
+      items.append(
+        GateItem(name: "log-audit") {
+          logAudit()
+        })
     }
-    if !LintPolicy.format(sources: sources) {
-      failed.append("lint-format")
-    }
-    if !LintPolicy.swiftlint(
-      name: "lint-complexity",
-      sources: sources,
-      onlyRules: complexityRules(),
-      baselinePath: Env.get(
-        "SWIFTLINT_COMPLEXITY_BASELINE", ".swiftlint-complexity-baseline.jsonl"),
-      context: context)
-    {
-      failed.append("lint-complexity")
-    }
-    if !LintPolicy.deadcode(context: context) {
-      failed.append("lint-deadcode")
-    }
-    if !LintPolicy.swiftcheck(sources: sources, context: context) {
-      failed.append("swiftcheck-extra")
-    }
-    if !LintPolicy.audit() {
-      failed.append("audit")
-    }
-    if let logAudit = hooks.logAudit, !logAudit() {
-      failed.append("log-audit")
-    }
-    return failed
+    return GateDisplay.runGates(title: "Build check gates", items: items)
   }
 }
