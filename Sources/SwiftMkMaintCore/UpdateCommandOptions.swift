@@ -153,6 +153,11 @@ public func runCachePrune(
       "cache prune: evicted \(result.evictedEntries.count) \(entryNoun), "
         + "\(result.evictedBytes) bytes; remaining \(result.remainingBytes) bytes")
     return result
+  } catch let error as CachePruneError {
+    // CachePruneError.description already carries the "cache prune:" prefix, so
+    // log it directly to avoid a doubled prefix; only unexpected errors get one.
+    logError(error.description)
+    throw ExitCode(1)
   } catch {
     logError("cache prune: \(error)")
     throw ExitCode(1)

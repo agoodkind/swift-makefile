@@ -107,7 +107,7 @@ enum MaintenanceRunnersTests {
       }
 
       #expect(messages.isEmpty)
-      #expect(errors == ["cache prune: cache prune: missing path \(missingPath)"])
+      #expect(errors == ["cache prune: missing path \(missingPath)"])
     }
   }
 

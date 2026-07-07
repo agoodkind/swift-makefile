@@ -111,7 +111,7 @@ struct MaintCacheCommand: ParsableCommand {
 struct MaintCachePruneCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "prune",
-    abstract: "Evict least-recently-used top-level entries until a cache is at a byte cap."
+    abstract: "Evict the oldest entries by modification time until a cache is at a byte cap."
   )
 
   @Option(name: .long, help: "Directory whose top-level entries should be pruned.")
