@@ -11,6 +11,8 @@ import Foundation
 import SwiftMkCore
 import SwiftMkRenderCore
 
+// throwaway probe: forces a cold toolchain hash to test jobs_per_vm=2 on the GCM-fixed daemon
+
 // MARK: - SwiftMk
 
 @main
