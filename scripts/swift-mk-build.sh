@@ -23,23 +23,30 @@ swift_mk_package_path() {
 }
 
 swift_mk_dependency_hash() {
+    local manifest_path
     local package_path
     local resolved_path
 
     package_path="$1"
+    manifest_path="${package_path}/Package.swift"
     resolved_path="${package_path}/Package.resolved"
-    if [[ -f "${resolved_path}" ]]; then
-        shasum "${resolved_path}" | awk '{ print $1 }'
+    if [[ ! -f "${manifest_path}" ]]; then
+        printf "%s\n" "swift-mk-missing-package"
         return
     fi
-    printf "%s\n" "swift-mk-noresolved"
+    {
+        shasum "${manifest_path}"
+        if [[ -f "${resolved_path}" ]]; then
+            shasum "${resolved_path}"
+        fi
+    } | awk '{ print $1 }' | LC_ALL=C sort | shasum | awk '{ print $1 }'
 }
 
 swift_mk_pool_cache_args() {
     local package_path
     local pool_cache_root
     local dependency_hash
-    local source_packages
+    local swiftpm_cache_path
 
     package_path="$1"
     pool_cache_root="/Volumes/My Shared Files/cache"
@@ -51,11 +58,12 @@ swift_mk_pool_cache_args() {
     fi
 
     dependency_hash=$(swift_mk_dependency_hash "${package_path}")
-    source_packages="${pool_cache_root}/spm/${dependency_hash}/SourcePackages"
-    mkdir -p "${source_packages}"
-    printf "%s\n" "-clonedSourcePackagesDirPath"
-    printf "%s\n" "${source_packages}"
-    printf "%s\n" "-disableAutomaticPackageResolution"
+    swiftpm_cache_path="${pool_cache_root}/spm/${dependency_hash}/swiftpm-cache"
+    mkdir -p "${swiftpm_cache_path}"
+    # SwiftPM CLI has no separate SourcePackages checkout flag. Keep the
+    # per-consumer scratch path and share only SwiftPM's supported dependency cache.
+    printf "%s\n" "--cache-path"
+    printf "%s\n" "${swiftpm_cache_path}"
 }
 
 swift_mk_build_from_repo() {
@@ -92,6 +100,10 @@ swift_mk_build_from_repo() {
             | tr -d '\r' \
             | awk 'NF { line = $0 } END { print line }'
     )
+    if [[ -z "${bin_dir}" ]]; then
+        printf "swift-mk: could not resolve SwiftPM binary output path\n" >&2
+        return 1
+    fi
     bin_path="${bin_dir}/swift-mk"
     cp "${bin_path}" "${output_path}"
     chmod +x "${output_path}"

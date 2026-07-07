@@ -85,7 +85,6 @@ runs:
         printf 'value=%s\n' "${DEPENDENCY_HASH}" >> "${GITHUB_OUTPUT}"
 
     - name: Configure self-hosted pool cache
-      if: runner.environment == 'self-hosted'
       shell: bash
       env:
         DEPENDENCY_HASH: ${{ steps.dependency-hash.outputs.value }}
