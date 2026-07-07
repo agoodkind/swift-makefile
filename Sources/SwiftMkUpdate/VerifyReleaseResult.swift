@@ -36,7 +36,7 @@ public struct VerifyReleaseResult: Equatable {
 
 extension Updater {
   public func verifyRelease(tag: String, requireSignature: Bool) throws -> VerifyReleaseResult {
-    let resolved = try resolveRelease(tag: tag)
+    let resolved = try resolveRelease(tag: tag, requireSignature: requireSignature)
     return try verifyResolvedRelease(resolved, requireSignature: requireSignature)
   }
 
@@ -59,8 +59,11 @@ extension Updater {
       run: run)
   }
 
-  private func resolveRelease(tag: String) throws -> ResolvedUpdate {
-    try options.config.validate()
+  private func resolveRelease(tag: String, requireSignature: Bool) throws -> ResolvedUpdate {
+    // Only require a team id when the signature (and thus the team-id check) will
+    // actually run, so verify-release without a signature does not force a
+    // placeholder team id past validation.
+    try options.config.validate(requireTeamID: requireSignature)
     let trimmedTag = tag.trimmingCharacters(in: .whitespacesAndNewlines)
     if trimmedTag.isEmpty {
       throw UpdateError.validation("release tag is required")

@@ -337,7 +337,10 @@ jobs:
     permissions:
       contents: read
     env:
-      REQUIRE_SIGNATURE: ${{ inputs.notarize && secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' && secrets.APPLE_NOTARY_KEY_BASE64 != '' }}
+      # Require a team id too: verify-release --require-signature checks the
+      # Developer ID team, so without apple-team-id the smoke would pass
+      # --require-signature but no --team-id and fail the missing-team-id guard.
+      REQUIRE_SIGNATURE: ${{ inputs.notarize && inputs.apple-team-id != '' && secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' && secrets.APPLE_NOTARY_KEY_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v7
         with:

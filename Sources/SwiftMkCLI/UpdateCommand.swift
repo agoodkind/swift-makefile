@@ -106,23 +106,16 @@ struct VerifyReleaseCommand: ParsableCommand {
       let environment = ProcessInfo.processInfo.environment
       let authToken = environment["GH_TOKEN"] ?? environment["GITHUB_TOKEN"]
       // The team id is only compared when a signature is required. Demand it in
-      // that mode, and substitute a placeholder otherwise so the shared config
-      // validation (which requires a non-empty team id for the update path) still
-      // passes without pinning a repo-specific default.
-      let resolvedTeamID: String
-      if requireSignature {
-        guard !teamID.isEmpty else {
-          Output.logError("swift-mk: verify-release --require-signature needs --team-id")
-          throw ExitCode(1)
-        }
-        resolvedTeamID = teamID
-      } else {
-        resolvedTeamID = teamID.isEmpty ? "unchecked" : teamID
+      // that mode; otherwise pass it through as-is (possibly empty), since
+      // verify-release validates with requireTeamID: false and does not need it.
+      if requireSignature, teamID.isEmpty {
+        Output.logError("swift-mk: verify-release --require-signature needs --team-id")
+        throw ExitCode(1)
       }
       let config = UpdateConfig(
         repo: repo,
         binary: "swift-mk",
-        teamID: resolvedTeamID,
+        teamID: teamID,
         currentVersion: tag,
         assetName: assetName,
         authToken: authToken)
