@@ -15,7 +15,12 @@ import Testing
 
 @Suite(.serialized)
 enum LoggingTests {
-  private static let environmentKeys = ["TRACEPARENT"]
+  private static let environmentKeys = [
+    "TRACEPARENT", "TRACE_ID", "SPAN_ID", "SWIFT_MK_TRACE_ID", "SWIFT_MK_SPAN_ID",
+  ]
+  private static let traceID = "11111111111111111111111111111111"
+  private static let spanID = "2222222222222222"
+  private static let traceparent = "00-\(traceID)-\(spanID)-01"
 
   @Test
   static func beginRunWritesTraceparentAndEnsureStartedAdoptsIt() throws {
@@ -24,8 +29,8 @@ enum LoggingTests {
 
       Logging.beginRun(makeLevel: "")
 
-      let traceparent = try readTrimmed(Logging.traceparentPathForTesting)
-      let persisted = try #require(Correlation.fromTraceparent(traceparent))
+      let persistedTraceparent = try readTrimmed(Logging.traceparentPathForTesting)
+      let persisted = try #require(Correlation.fromTraceparent(persistedTraceparent))
       let sentinel = try readTrimmed(Logging.sentinelPathForTesting)
       #expect(sentinel == persisted.traceID)
 
@@ -34,6 +39,42 @@ enum LoggingTests {
       Logging.ensureStarted()
 
       #expect(Logging.correlation.traceID == persisted.traceID)
+    }
+  }
+
+  @Test
+  static func beginRunAdoptsTraceparentFromEnvironment() throws {
+    try withTemporaryLogDirectory { _ in
+      clearLoggingEnvironment()
+      setenv("TRACEPARENT", traceparent, 1)
+
+      Logging.beginRun(makeLevel: "")
+
+      let persistedTraceparent = try readTrimmed(Logging.traceparentPathForTesting)
+      #expect(Logging.correlation.traceID == traceID)
+      #expect(Logging.correlation.spanID == spanID)
+      #expect(persistedTraceparent == traceparent)
+      #expect(Env.get("TRACEPARENT") == traceparent)
+      #expect(Env.get("TRACE_ID") == traceID)
+      #expect(Env.get("SPAN_ID") == spanID)
+      #expect(Env.get("SWIFT_MK_TRACE_ID") == traceID)
+      #expect(Env.get("SWIFT_MK_SPAN_ID") == spanID)
+    }
+  }
+
+  @Test
+  static func logRecordsUseAdoptedRunSpan() throws {
+    try withTemporaryLogDirectory { logDirectory in
+      clearLoggingEnvironment()
+      setenv("TRACEPARENT", traceparent, 1)
+
+      Logging.beginRun(makeLevel: "")
+      Logging.record("trace: record", level: "info")
+
+      let recordPath = (logDirectory as NSString).appendingPathComponent("trace.jsonl")
+      let record = try decodeLogRecord(readTrimmed(recordPath))
+      #expect(record.traceID == traceID)
+      #expect(record.spanID == spanID)
     }
   }
 
@@ -92,9 +133,8 @@ enum LoggingTests {
 
   private static func savedEnvironment() -> [String: String?] {
     var saved: [String: String?] = [:]
-    let environment = ProcessInfo.processInfo.environment
     for key in environmentKeys {
-      saved[key] = environment[key]
+      saved[key] = getenv(key).map { String(cString: $0) }
     }
     return saved
   }
@@ -116,6 +156,21 @@ enum LoggingTests {
   private static func clearLoggingEnvironment() {
     for key in environmentKeys {
       unsetenv(key)
+    }
+  }
+
+  private static func decodeLogRecord(_ line: String) throws -> LogRecord {
+    let data = Data(line.utf8)
+    return try JSONDecoder().decode(LogRecord.self, from: data)
+  }
+
+  private struct LogRecord: Decodable {
+    let traceID: String
+    let spanID: String
+
+    enum CodingKeys: String, CodingKey {
+      case traceID = "trace_id"
+      case spanID = "span_id"
     }
   }
 }

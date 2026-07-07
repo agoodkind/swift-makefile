@@ -56,14 +56,15 @@ public enum Logging {
         ensureStartedLocked()
         return
       }
-      let minted = Correlation.new()
+      let adopted = Correlation.fromTraceparent(Env.get("TRACEPARENT"))
+      let current = adopted ?? Correlation.new()
       started = true
-      correlationValue = minted
-      setenv("TRACEPARENT", minted.traceparent, 1)
-      writeTraceparent(minted)
+      correlationValue = current
+      exportCorrelation(current)
+      writeTraceparent(current)
       // The make recipe redirects stderr to hide stale-binary errors.
-      printHeaderOnce(minted, to: .standardOutput)
-      startExport(minted)
+      printHeaderOnce(current, to: .standardOutput)
+      startExport(current)
     }
   }
 
@@ -166,16 +167,25 @@ public enum Logging {
 
   private static func resolveCorrelation() -> Correlation {
     if let adopted = Correlation.fromTraceparent(Env.get("TRACEPARENT")) {
+      exportCorrelation(adopted)
       return adopted
     }
     if let adopted = traceparentFileCorrelation() {
-      setenv("TRACEPARENT", adopted.traceparent, 1)
+      exportCorrelation(adopted)
       return adopted
     }
     let minted = Correlation.new()
-    setenv("TRACEPARENT", minted.traceparent, 1)
+    exportCorrelation(minted)
     writeTraceparent(minted)
     return minted
+  }
+
+  private static func exportCorrelation(_ correlation: Correlation) {
+    setenv("TRACEPARENT", correlation.traceparent, 1)
+    setenv("TRACE_ID", correlation.traceID, 1)
+    setenv("SPAN_ID", correlation.spanID, 1)
+    setenv("SWIFT_MK_TRACE_ID", correlation.traceID, 1)
+    setenv("SWIFT_MK_SPAN_ID", correlation.spanID, 1)
   }
 
   private static func writeTraceparent(_ correlation: Correlation) {
