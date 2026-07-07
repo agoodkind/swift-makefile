@@ -8,13 +8,14 @@
 
 import ArgumentParser
 import SwiftMkCore
+import SwiftMkMaintCore
 
 // MARK: - CacheCommand
 
 /// `swift-mk cache`: the engine-owned cache model. `plan` emits the CI cache plan
-/// (keys plus paths) to `$GITHUB_OUTPUT`; `paths`, `info`, and `clean` introspect
-/// and manage the same caches locally. The path list and keys live in one place so
-/// CI and local share the model instead of a parallel shell script.
+/// (keys plus paths) to `$GITHUB_OUTPUT`; `paths`, `info`, `clean`, and `prune`
+/// introspect and manage the same caches locally. The path list and keys live in
+/// one place so CI and local share the model instead of a parallel shell script.
 struct CacheCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "cache",
@@ -87,17 +88,36 @@ struct CacheCleanCommand: ParsableCommand {
 struct CachePruneCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "prune",
-    abstract: "Remove least-recently-used shared cache entries until the cache is under a byte cap."
+    abstract: "Evict least-recently-used top-level entries until a cache is at a byte cap."
   )
 
-  @Option(help: "Maximum cache size in bytes.")
+  @Option(name: .long, help: "Directory whose top-level entries should be pruned.")
+  var path: String
+
+  @Option(name: .customLong("max-bytes"), help: "Maximum total bytes to keep.")
   var maxBytes: UInt64
 
-  @Option(help: "Shared cache root to prune.")
-  var path: String?
-
   func run() throws {
-    let status = CacheService.runPrune(maxBytes: maxBytes, path: path)
-    if status != 0 { throw ExitCode(status) }
+    do {
+      let diagnostics = CachePruneDiagnostics(
+        info: Output.info,
+        warning: Output.warning,
+        error: Output.error)
+      let result = try CachePruner(diagnostics: diagnostics).prune(path: path, maxBytes: maxBytes)
+      let entryNoun = result.evictedEntries.count == 1 ? "entry" : "entries"
+      Output.log(
+        "cache prune: evicted \(result.evictedEntries.count) \(entryNoun), "
+          + "\(result.evictedBytes) bytes; remaining \(result.remainingBytes) bytes")
+    } catch let error as CachePruneError {
+      // CachePruneError.description already carries the "cache prune:" prefix, so
+      // log it directly to avoid a doubled prefix; only unexpected errors get one.
+      // Output.error is the structured channel (JSONL record plus stderr); the
+      // pruner no longer logs before throwing, so this is the single emission.
+      Output.error(error.description)
+      throw ExitCode(1)
+    } catch {
+      Output.error("cache prune: \(error)")
+      throw ExitCode(1)
+    }
   }
 }

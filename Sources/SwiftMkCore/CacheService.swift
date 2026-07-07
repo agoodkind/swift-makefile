@@ -332,11 +332,4 @@ public enum CacheService {
     let field = result.stdout.split { $0 == "\t" || $0 == " " }.first
     return field.map(String.init) ?? "?"
   }
-
-  static func defaultSharedCacheRootPath() -> String {
-    let home = Env.get("HOME", FileManager.default.homeDirectoryForCurrentUser.path)
-    return URL(fileURLWithPath: home, isDirectory: true)
-      .appendingPathComponent("Library/Caches/swift-mk", isDirectory: true)
-      .path
-  }
 }

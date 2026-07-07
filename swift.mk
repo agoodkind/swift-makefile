@@ -137,7 +137,6 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCLI/ToolchainCommand.swift \
 	Sources/SwiftMkCLI/CacheCommand.swift \
 	Sources/SwiftMkCLI/CiChangedCommand.swift \
-	Sources/SwiftMkCLI/ReleaseVersion.swift \
 	Sources/SwiftMkCLI/UpdateCommand.swift \
 	Sources/SwiftMkCLI/VersionCommand.swift \
 	Sources/SwiftMkUpdate/ReleaseResolver.swift \
@@ -147,6 +146,10 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkUpdate/UpdateScheduler.swift \
 	Sources/SwiftMkUpdate/UpdateState.swift \
 	Sources/SwiftMkUpdate/Updater.swift \
+	Sources/SwiftMkMaintCore/CachePrunePlanner.swift \
+	Sources/SwiftMkMaintCore/CachePruner.swift \
+	Sources/SwiftMkMaintCore/MaintenanceOutput.swift \
+	Sources/SwiftMkMaintCore/ReleaseVersion.swift \
 	Sources/SwiftMkCore/Findings.swift \
 	Sources/SwiftMkCore/BaselineKey.swift \
 	Sources/SwiftMkCore/BaselineRecord.swift \
@@ -179,7 +182,6 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/BuildCache.swift \
 	Sources/SwiftMkCore/CachePaths.swift \
 	Sources/SwiftMkCore/CachePlan.swift \
-	Sources/SwiftMkCore/CacheService+Prune.swift \
 	Sources/SwiftMkCore/CacheService.swift \
 	Sources/SwiftMkCore/CiChanged.swift \
 	Sources/SwiftMkCore/CiChanged+Graph.swift \
@@ -282,6 +284,10 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkUpdateTests/SwiftMkUpdateSupport.swift \
 	Tests/SwiftMkUpdateTests/SwiftMkUpdateTargetPathTests.swift \
 	Tests/SwiftMkUpdateTests/SwiftMkUpdateTests.swift \
+	Tests/SwiftMkMaintCoreTests/CachePrunePlannerTests.swift \
+	Tests/SwiftMkMaintCoreTests/CachePrunerTests.swift \
+	Tests/SwiftMkMaintCoreTests/MaintenanceOutputTests.swift \
+	Tests/SwiftMkMaintCoreTests/ReleaseVersionTests.swift \
 	notices.txt \
 	templates/xcode/IDETemplateMacros.plist.template
 
