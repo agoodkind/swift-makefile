@@ -16,6 +16,6 @@ struct VersionCommand: ParsableCommand {
   static let configuration = CommandConfiguration(commandName: "version")
 
   func run() {
-    Output.log("version: \(ReleaseVersion.current)")
+    runVersion(log: Output.log)
   }
 }
