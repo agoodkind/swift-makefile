@@ -60,15 +60,14 @@ extension Updater {
   }
 
   private func resolveRelease(tag: String, requireSignature: Bool) throws -> ResolvedUpdate {
-    // Only require a team id when the signature (and thus the team-id check) will
-    // actually run, so verify-release without a signature does not force a
-    // placeholder team id past validation.
-    try options.config.validate(requireTeamID: requireSignature)
     let trimmedTag = tag.trimmingCharacters(in: .whitespacesAndNewlines)
     if trimmedTag.isEmpty {
       throw UpdateError.validation("release tag is required")
     }
     options.log("update: resolving release \(trimmedTag)")
+    // ReleaseResolver.release validates options.config with the same requireTeamID
+    // (skipping the team-id check when no signature is required), so this path does
+    // not validate again.
     let release = try ReleaseResolver.release(
       config: options.config,
       httpClient: options.httpClient,
