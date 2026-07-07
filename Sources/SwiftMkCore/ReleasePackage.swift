@@ -60,7 +60,9 @@ public enum ReleasePackageError: Error, Equatable, CustomStringConvertible {
 
 public enum ReleasePackage {
   private static let devVersion = "dev"
-  private static let versionNeedle = "static let current = \"dev\""
+  // Derive the needle from devVersion so the dev sentinel is defined in one place;
+  // a mismatch would silently make stamping fail to match.
+  private static let versionNeedle = "static let current = \"\(devVersion)\""
   private static let safeTagScalars = CharacterSet(
     charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
 
@@ -125,14 +127,18 @@ public enum ReleasePackage {
     try validateTag(tag)
     let contents = try String(contentsOfFile: versionFile, encoding: .utf8)
     let replacement = "static let current = \"\(tag)\""
-    let stamped = contents.replacingOccurrences(of: versionNeedle, with: replacement)
-    try stamped.write(toFile: versionFile, atomically: true, encoding: .utf8)
-    let reread = try String(contentsOfFile: versionFile, encoding: .utf8)
-    // Idempotent: succeed when the target stamp is present, whether this call
-    // wrote it or a prior run already did; fail only when it did not take.
-    guard reread.contains(replacement) else {
+    // Idempotent: the file is already stamped to this tag, so leave it untouched.
+    if contents.contains(replacement) {
+      return
+    }
+    // The dev sentinel must be present to stamp. Throw before writing so a file
+    // that cannot be stamped (for example already a different value) is left
+    // untouched rather than rewritten in a failing call.
+    guard contents.contains(versionNeedle) else {
       throw ReleasePackageError.versionStampFailed(versionFile, tag)
     }
+    let stamped = contents.replacingOccurrences(of: versionNeedle, with: replacement)
+    try stamped.write(toFile: versionFile, atomically: true, encoding: .utf8)
   }
 
   private static func validateTag(_ tag: String) throws {
