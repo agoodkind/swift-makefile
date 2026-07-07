@@ -72,7 +72,8 @@ extension Updater {
     let release = try ReleaseResolver.release(
       config: options.config,
       httpClient: options.httpClient,
-      tag: trimmedTag)
+      tag: trimmedTag,
+      requireTeamID: requireSignature)
     if release.tag != trimmedTag {
       throw UpdateError.release("release tag mismatch: expected \(trimmedTag), got \(release.tag)")
     }

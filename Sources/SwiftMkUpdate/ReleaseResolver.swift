@@ -74,9 +74,12 @@ public enum ReleaseResolver {
   public static func release(
     config: UpdateConfig,
     httpClient: any ReleaseHTTPClient,
-    tag: String
+    tag: String,
+    requireTeamID: Bool = true
   ) throws -> Release {
-    try config.validate()
+    // Resolving a release by tag does not use the team id, so let a caller (for
+    // example verify-release without a required signature) skip that check.
+    try config.validate(requireTeamID: requireTeamID)
     let trimmedTag = tag.trimmingCharacters(in: .whitespacesAndNewlines)
     if trimmedTag.isEmpty {
       throw UpdateError.validation("release tag is required")
