@@ -204,7 +204,7 @@ public enum ReleasePackage {
   private static func signingIdentityIsAvailable(signingEnginePath: String?) -> Bool {
     guard let signingEnginePath, !signingEnginePath.isEmpty else {
       // No signing engine was passed. This is the expected path for an unsigned
-      // local or secretless run, so state it plainly rather than as an error.
+      // local or fork run, so state it plainly rather than as an error.
       Output.info("release-build: no signing engine provided; packaging unsigned artifacts")
       return false
     }
