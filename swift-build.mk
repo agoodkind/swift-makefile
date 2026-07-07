@@ -108,7 +108,11 @@ endif
 
 install: deploy
 
+# Engine-owned trivial clean. swift-mk owns clean now: it removes the SwiftPM
+# build dir and the engine-managed DerivedData and runs `swift package clean`,
+# ignoring any consumer SWIFT_CLEAN_CMD so a clean never compiles a dev tool. This
+# is the full-path clean (for example `make clean build`); a clean-only goal takes
+# the self-contained fast path in bootstrap.mk and never loads this module.
 clean:
-ifneq ($(strip $(SWIFT_CLEAN_CMD)),)
-	@$(SWIFT_CLEAN_CMD)
-endif
+	@if [ -f Package.swift ]; then swift package clean >/dev/null 2>&1 || true; fi; \
+		rm -rf .build "$(SWIFT_MK_DERIVED_DATA)"
