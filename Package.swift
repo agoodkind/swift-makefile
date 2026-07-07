@@ -112,7 +112,10 @@ let package = Package(
     ),
     .testTarget(
       name: "SwiftMkMaintCoreTests",
-      dependencies: ["SwiftMkMaintCore"]
+      dependencies: [
+        "SwiftMkMaintCore",
+        .product(name: "ArgumentParser", package: "swift-argument-parser"),
+      ]
     ),
   ]
 )
