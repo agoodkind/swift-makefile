@@ -89,16 +89,20 @@ extension Updater {
     _ resolved: ResolvedUpdate,
     requireSignature: Bool
   ) throws -> VerifyReleaseResult {
-    try stageResolvedRelease(
-      resolved,
-      requireSignature: requireSignature
-    ) { _, validation in
-      VerifyReleaseResult(
-        tag: resolved.release.tag,
-        assetName: resolved.asset.name,
-        assetURL: resolved.asset.browserDownloadURL,
-        requireSignature: requireSignature,
-        validationOutput: validation.stdout)
+    // Take the same single-flight update lock apply() uses, so a concurrent
+    // apply() and verify-release cannot race on the shared cache archive path.
+    try withUpdateLock(statePath: options.statePath) {
+      try stageResolvedRelease(
+        resolved,
+        requireSignature: requireSignature
+      ) { _, validation in
+        VerifyReleaseResult(
+          tag: resolved.release.tag,
+          assetName: resolved.asset.name,
+          assetURL: resolved.asset.browserDownloadURL,
+          requireSignature: requireSignature,
+          validationOutput: validation.stdout)
+      }
     }
   }
 }

@@ -454,7 +454,9 @@ private func isDevelopmentBuild(_ version: String) -> Bool {
   ReleaseResolver.isDevelopmentVersion(version)
 }
 
-private func withUpdateLock<ResultValue>(
+// Internal (not private) so the release-verify path can take the same
+// single-flight lock apply() uses, serializing staging into the shared cache.
+func withUpdateLock<ResultValue>(
   statePath: String,
   run: () throws -> ResultValue
 ) throws -> ResultValue {
