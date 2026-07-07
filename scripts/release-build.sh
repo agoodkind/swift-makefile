@@ -46,7 +46,7 @@ if [[ ! "$tag" =~ ^[A-Za-z0-9._-]+$ ]]; then
     echo "release-build: RELEASE_TAG has unsafe characters (want [A-Za-z0-9._-]): $tag" >&2
     exit 1
 fi
-version_file="Sources/SwiftMkCLI/ReleaseVersion.swift"
+version_file="Sources/SwiftMkMaintCore/ReleaseVersion.swift"
 product="swift-mk"
 asset="${product}_darwin_arm64.dmg"
 identifier="io.goodkind.swift-mk"

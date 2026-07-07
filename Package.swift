@@ -56,6 +56,9 @@ let package = Package(
       name: "SwiftMkUpdate"
     ),
     .target(
+      name: "SwiftMkMaintCore"
+    ),
+    .target(
       name: "SwiftMkCore",
       dependencies: [
         "SwiftMkRenderCore",
@@ -82,6 +85,7 @@ let package = Package(
       name: "SwiftMkCLI",
       dependencies: [
         "SwiftMkCore",
+        "SwiftMkMaintCore",
         "SwiftMkUpdate",
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
       ]
@@ -93,6 +97,10 @@ let package = Package(
     .testTarget(
       name: "SwiftMkUpdateTests",
       dependencies: ["SwiftMkUpdate"]
+    ),
+    .testTarget(
+      name: "SwiftMkMaintCoreTests",
+      dependencies: ["SwiftMkMaintCore"]
     ),
   ]
 )
