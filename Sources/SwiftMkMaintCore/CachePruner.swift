@@ -147,7 +147,8 @@ public struct CachePruner {
       do {
         try fileManager.removeItem(at: entryURL)
       } catch {
-        diagnostics.error("cache prune: could not remove \(entryURL.path): \(error)")
+        // Throw with the message; the caller logs the thrown error once. Logging
+        // here as well would double-print the same fatal line.
         throw CachePruneError.filesystem(
           "cache prune: could not remove \(entryURL.path): \(error)")
       }
@@ -194,7 +195,8 @@ public struct CachePruner {
         includingPropertiesForKeys: Array(Self.resourceKeys),
         options: [])
     } catch {
-      diagnostics.error("cache prune: could not list \(directoryURL.path): \(error)")
+      // Throw with the message; the caller logs the thrown error once. Logging
+      // here as well would double-print the same fatal line.
       throw CachePruneError.filesystem(
         "cache prune: could not list \(directoryURL.path): \(error)")
     }

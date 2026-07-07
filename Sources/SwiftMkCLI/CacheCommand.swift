@@ -111,10 +111,12 @@ struct CachePruneCommand: ParsableCommand {
     } catch let error as CachePruneError {
       // CachePruneError.description already carries the "cache prune:" prefix, so
       // log it directly to avoid a doubled prefix; only unexpected errors get one.
-      Output.logError(error.description)
+      // Output.error is the structured channel (JSONL record plus stderr); the
+      // pruner no longer logs before throwing, so this is the single emission.
+      Output.error(error.description)
       throw ExitCode(1)
     } catch {
-      Output.logError("cache prune: \(error)")
+      Output.error("cache prune: \(error)")
       throw ExitCode(1)
     }
   }
