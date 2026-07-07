@@ -368,6 +368,10 @@ jobs:
       - name: Verify published release
         shell: bash
         env:
+          # verify-release authenticates GitHub API calls with GH_TOKEN, so a
+          # private repo resolves and the smoke avoids the unauthenticated rate
+          # limit. Set it explicitly on the step rather than rely on inheritance.
+          GH_TOKEN: ${{ github.token }}
           RELEASE_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.meta.outputs.tag }}
           RELEASE_ASSET: ${{ inputs.smoke-asset }}
