@@ -37,6 +37,7 @@ public enum ReleasePackageError: Error, Equatable, CustomStringConvertible {
   case binPathUnresolved(String)
   case builtBinaryMissing(String)
   case commandFailed(String, Int32)
+  case signingIdentityUnavailable(String)
   case unsafeTag(String)
   case versionStampFailed(String, String)
 
@@ -48,6 +49,8 @@ public enum ReleasePackageError: Error, Equatable, CustomStringConvertible {
       return "built binary not found at \(path)"
     case let .commandFailed(command, status):
       return "\(command) failed with status \(status)"
+    case .signingIdentityUnavailable(let reason):
+      return "signing identity unavailable: \(reason)"
     case .unsafeTag(let tag):
       return "release tag has unsafe characters (want [A-Za-z0-9._-]): \(tag)"
     case let .versionStampFailed(file, tag):
@@ -96,31 +99,52 @@ public enum ReleasePackage {
     try FileManager.default.createDirectory(
       atPath: plan.distDir,
       withIntermediateDirectories: true)
-    if tag != devVersion {
-      try stampVersion(tag: tag, versionFile: plan.versionFile)
+    // Capture the version file before stamping so a later failure (build, stage,
+    // sign, or dmg) can restore it, leaving ReleaseVersion.swift unstamped rather
+    // than pinned to a tag whose release did not complete.
+    let originalVersionContents: String?
+    if tag == devVersion {
+      originalVersionContents = nil
+    } else {
+      originalVersionContents = try String(contentsOfFile: plan.versionFile, encoding: .utf8)
     }
-    let built = try buildProduct(plan)
-    // Arm the stage cleanup before staging, so a failure inside stageProduct (for
-    // example a copy error after the .stage directory is created) does not leave
-    // the stage directory behind on the throwing path.
-    defer {
-      cleanupPath(plan.stageDir, label: "stage")
-    }
-    try stageProduct(built: built, plan: plan)
-    let shouldSign = signingIdentityIsAvailable(signingEnginePath: signingEnginePath)
-    let stagedBinary = (plan.stageDir as NSString).appendingPathComponent(plan.stagedBinaryName)
-    if shouldSign {
-      try codesign(
-        signingEnginePath: signingEnginePath,
-        arguments: [
-          "codesign-run", "--mode", "binary", "--identifier", plan.identifier, stagedBinary,
-        ])
-    }
-    try createDmg(plan)
-    if shouldSign {
-      try codesign(
-        signingEnginePath: signingEnginePath,
-        arguments: ["codesign-run", "--mode", "dmg", plan.dmgPath])
+    do {
+      if tag != devVersion {
+        try stampVersion(tag: tag, versionFile: plan.versionFile)
+      }
+      let built = try buildProduct(plan)
+      // Arm the stage cleanup before staging, so a failure inside stageProduct (for
+      // example a copy error after the .stage directory is created) does not leave
+      // the stage directory behind on the throwing path.
+      defer {
+        cleanupPath(plan.stageDir, label: "stage")
+      }
+      try stageProduct(built: built, plan: plan)
+      let shouldSign = try signingIdentityIsAvailable(signingEnginePath: signingEnginePath)
+      let stagedBinary = (plan.stageDir as NSString).appendingPathComponent(plan.stagedBinaryName)
+      if shouldSign {
+        try codesign(
+          signingEnginePath: signingEnginePath,
+          arguments: [
+            "codesign-run", "--mode", "binary", "--identifier", plan.identifier, stagedBinary,
+          ])
+      }
+      try createDmg(plan)
+      if shouldSign {
+        try codesign(
+          signingEnginePath: signingEnginePath,
+          arguments: ["codesign-run", "--mode", "dmg", plan.dmgPath])
+      }
+    } catch {
+      if let originalVersionContents {
+        do {
+          try originalVersionContents.write(
+            toFile: plan.versionFile, atomically: true, encoding: .utf8)
+        } catch {
+          Output.warning("release-build: failed to restore \(plan.versionFile): \(error)")
+        }
+      }
+      throw error
     }
   }
 
@@ -204,7 +228,7 @@ public enum ReleasePackage {
     }
   }
 
-  private static func signingIdentityIsAvailable(signingEnginePath: String?) -> Bool {
+  private static func signingIdentityIsAvailable(signingEnginePath: String?) throws -> Bool {
     guard let signingEnginePath, !signingEnginePath.isEmpty else {
       // No signing engine was passed. This is the expected path for an unsigned
       // local or fork run, so state it plainly rather than as an error.
@@ -212,23 +236,26 @@ public enum ReleasePackage {
       return false
     }
     guard FileManager.default.isExecutableFile(atPath: signingEnginePath) else {
-      Output.logError(
-        "release-build: signing engine is not executable at \(signingEnginePath); "
-          + "shipping unsigned artifacts")
-      return false
+      // A signing engine was configured but cannot run. That is a misconfiguration,
+      // not a run without a cert, so fail rather than silently ship unsigned.
+      throw ReleasePackageError.signingIdentityUnavailable(
+        "signing engine is not executable at \(signingEnginePath)")
     }
     Output.debug("release-build: resolving signing identity")
     let result = Shell.run(signingEnginePath, ["signing-identity"])
     if result.status != 0 {
+      // signing-identity prints nothing and exits 0 when no identity is set, so a
+      // non-zero status is a genuine command failure, not a run without a cert.
       Output.emitStandardError(result.combined)
-      Output.logError("release-build: signing-identity failed; shipping unsigned artifacts")
-      return false
+      throw ReleasePackageError.commandFailed(
+        "\(signingEnginePath) signing-identity", result.status)
     }
     let identity = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     if identity.isEmpty {
-      Output.logError(
-        "release-build: no signing identity resolved through swift-mk; "
-          + "shipping unsigned artifacts")
+      // No identity resolved. On a CI or fork run without a cert the identity is
+      // simply not imported; Global Constraint 5 requires that run to stay green
+      // with signing skipped, so package unsigned rather than fail.
+      Output.info("release-build: no signing identity resolved; packaging unsigned artifacts")
       return false
     }
     return true
