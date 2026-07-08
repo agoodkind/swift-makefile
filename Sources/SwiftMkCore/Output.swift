@@ -75,10 +75,14 @@ public enum Output {
 
   private static let levelEnvironmentName = "SWIFT_MK_LOG_LEVEL"
   private static let captureLock = NSLock()
-  nonisolated(unsafe) private static var captureBuffer: String?
+  // A plain String plus a capturing flag rather than an optional buffer, so the
+  // append path mutates the stored value in place with no optional handling.
+  nonisolated(unsafe) private static var captureBuffer = ""
+  nonisolated(unsafe) private static var capturing = false
 
   public static func beginCapture() {
     captureLock.lock()
+    capturing = true
     captureBuffer = ""
     captureLock.unlock()
   }
@@ -86,8 +90,9 @@ public enum Output {
   public static func endCapture() -> String {
     captureLock.lock()
     defer { captureLock.unlock() }
-    let captured = captureBuffer ?? ""
-    captureBuffer = nil
+    let captured = captureBuffer
+    capturing = false
+    captureBuffer = ""
     return captured
   }
 
@@ -162,11 +167,11 @@ public enum Output {
   private static func appendCaptured(_ text: String) -> Bool {
     captureLock.lock()
     defer { captureLock.unlock() }
-    guard var captured = captureBuffer else {
+    guard capturing else {
       return false
     }
-    captured += text
-    captureBuffer = captured
+    // Append in place so a large capture does not copy the whole buffer per write.
+    captureBuffer.append(text)
     return true
   }
 }
