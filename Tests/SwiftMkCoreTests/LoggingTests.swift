@@ -15,9 +15,7 @@ import Testing
 
 @Suite(.serialized)
 enum LoggingTests {
-  private static let environmentKeys = [
-    "TRACEPARENT", "TRACE_ID", "SPAN_ID", "SWIFT_MK_TRACE_ID", "SWIFT_MK_SPAN_ID",
-  ]
+  private static let environmentKeys = Correlation.environmentKeys
   private static let traceID = "11111111111111111111111111111111"
   private static let spanID = "2222222222222222"
   private static let traceparent = "00-\(traceID)-\(spanID)-01"
@@ -34,7 +32,8 @@ enum LoggingTests {
       let sentinel = try readTrimmed(Logging.sentinelPathForTesting)
       #expect(sentinel == persisted.traceID)
 
-      unsetenv("TRACEPARENT")
+      // Clear the env pair so ensureStarted adopts from the persisted file.
+      clearLoggingEnvironment()
       Logging.resetForTesting(logDirectory: logDirectory)
       Logging.ensureStarted()
 
