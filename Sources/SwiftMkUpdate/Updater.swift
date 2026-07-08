@@ -57,7 +57,7 @@ public final class Updater {
   private static let successStatusCode = 200
   private static let executablePermission = 0o755
 
-  private let options: UpdateOptions
+  let options: UpdateOptions
 
   public init(options: UpdateOptions) {
     self.options = options
@@ -119,7 +119,7 @@ public final class Updater {
     return ResolvedUpdate(release: release, asset: asset, check: check)
   }
 
-  private func selectedAsset(in assets: [ReleaseAsset]) -> ReleaseAsset? {
+  func selectedAsset(in assets: [ReleaseAsset]) -> ReleaseAsset? {
     for asset in assets where asset.name == options.config.assetName {
       return asset
     }
@@ -127,17 +127,10 @@ public final class Updater {
   }
 
   private func applyResolvedUpdate(_ resolved: ResolvedUpdate) throws -> ApplyResult {
-    try FileManager.default.createDirectory(
-      atPath: options.cacheDir, withIntermediateDirectories: true)
-    let archivePath = URL(fileURLWithPath: options.cacheDir, isDirectory: true)
-      .appendingPathComponent(resolved.asset.name)
-      .path
-    try download(url: resolved.asset.browserDownloadURL, to: archivePath)
-    try verifyChecksum(asset: resolved.asset, release: resolved.release, archivePath: archivePath)
-    return try mountedVerifiedCandidate(
-      archivePath: archivePath,
-      releaseTag: resolved.release.tag
-    ) { candidatePath in
+    try stageResolvedRelease(
+      resolved,
+      requireSignature: true
+    ) { candidatePath, _ in
       if options.dryRun {
         try recordUpdateResult(options: options, result: .dryRun, error: nil, appliedTag: nil)
         return ApplyResult(
@@ -160,7 +153,7 @@ public final class Updater {
     }
   }
 
-  private func download(url: URL, to path: String) throws {
+  func download(url: URL, to path: String) throws {
     UpdateDiagnostics.debug("update download \(url.absoluteString)")
     options.log("update: downloading \(url.absoluteString)")
     let (data, status) = try options.httpClient.get(
@@ -189,7 +182,7 @@ public final class Updater {
     }
   }
 
-  private func verifyChecksum(
+  func verifyChecksum(
     asset: ReleaseAsset,
     release: Release,
     archivePath: String
@@ -229,10 +222,11 @@ public final class Updater {
     return expected
   }
 
-  private func mountedVerifiedCandidate<ResultValue>(
+  func mountedVerifiedCandidate<ResultValue>(
     archivePath: String,
     releaseTag: String,
-    run: (String) throws -> ResultValue
+    requireSignature: Bool,
+    run: (_ candidatePath: String, _ validation: CommandOutput) throws -> ResultValue
   ) throws -> ResultValue {
     UpdateDiagnostics.debug("update mount \(archivePath)")
     let mountURL = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -244,27 +238,48 @@ public final class Updater {
       detachMountIfNeeded(attached: attached, mountURL: mountURL, options: options)
       removeTemporaryItem(at: mountURL, context: "mount")
     }
-    try runRequired(
-      "xcrun",
-      ["stapler", "validate", archivePath],
-      context: "validate dmg staple")
+    if requireSignature {
+      try verifyArchiveStaple(archivePath: archivePath)
+    }
     try runRequired(
       "hdiutil",
       ["attach", "-nobrowse", "-readonly", "-mountpoint", mountURL.path, archivePath],
       context: "mount dmg")
     attached = true
     let candidatePath = try findCandidate(in: mountURL)
-    try verifyCandidate(candidatePath: candidatePath, releaseTag: releaseTag)
-    return try run(candidatePath)
+    // Always run a basic codesign validity check before executing the candidate,
+    // so a tampered or unsigned binary is never launched. The staple and the
+    // Developer ID team-identifier pin are the stricter checks gated on
+    // requireSignature.
+    try verifyCandidateCodesign(candidatePath: candidatePath)
+    if requireSignature {
+      try verifyCandidateTeamIdentifier(candidatePath: candidatePath)
+    } else {
+      options.log("update: skipping staple and team-identifier verification")
+    }
+    let validation = try validateCandidateVersion(
+      candidatePath: candidatePath,
+      releaseTag: releaseTag)
+    return try run(candidatePath, validation)
   }
 
-  private func verifyCandidate(candidatePath: String, releaseTag: String) throws {
+  private func verifyArchiveStaple(archivePath: String) throws {
+    try runRequired(
+      "xcrun",
+      ["stapler", "validate", archivePath],
+      context: "validate dmg staple")
+  }
+
+  private func verifyCandidateCodesign(candidatePath: String) throws {
     UpdateDiagnostics.debug("update verify candidate \(candidatePath)")
-    options.log("update: verifying candidate signature")
+    options.log("update: verifying candidate code signature")
     try runRequired(
       "codesign",
       ["--verify", "--strict", "--verbose=2", candidatePath],
       context: "verify candidate codesign")
+  }
+
+  private func verifyCandidateTeamIdentifier(candidatePath: String) throws {
     let details = try runRequired(
       "codesign",
       ["-dvv", candidatePath],
@@ -276,7 +291,14 @@ public final class Updater {
           + "got \(teamID ?? "<none>")"
       )
     }
+  }
+
+  private func validateCandidateVersion(
+    candidatePath: String,
+    releaseTag: String
+  ) throws -> CommandOutput {
     options.log("update: running candidate validation")
+    UpdateDiagnostics.debug("update command \(candidatePath)")
     let validation = options.commandRunner.run(candidatePath, options.config.validateArgs)
     guard validation.status == 0 else {
       throw UpdateError.command(
@@ -287,6 +309,7 @@ public final class Updater {
     else {
       throw UpdateError.command("candidate validation output did not include \(releaseTag)")
     }
+    return validation
   }
 
   @discardableResult
@@ -419,7 +442,7 @@ private func noUpdateCheck(options: UpdateOptions) -> CheckResult {
 
 // MARK: - ResolvedUpdate
 
-private struct ResolvedUpdate {
+struct ResolvedUpdate {
   let release: Release
   let asset: ReleaseAsset
   let check: CheckResult
@@ -431,7 +454,9 @@ private func isDevelopmentBuild(_ version: String) -> Bool {
   ReleaseResolver.isDevelopmentVersion(version)
 }
 
-private func withUpdateLock<ResultValue>(
+// Internal (not private) so the release-verify path can take the same
+// single-flight lock apply() uses, serializing staging into the shared cache.
+func withUpdateLock<ResultValue>(
   statePath: String,
   run: () throws -> ResultValue
 ) throws -> ResultValue {

@@ -74,6 +74,14 @@ on:
       apple-team-id:
         type: string
         default: ""
+      # Asset to smoke-verify after publish: the smoke job downloads it and runs
+      # the swift-mk verify-release check (staple, codesign, team id, then runs
+      # the binary and asserts the tag). Empty skips the smoke. The caller names
+      # its own asset so this reusable workflow stays generic instead of pinning
+      # one repo's artifact.
+      smoke-asset:
+        type: string
+        default: ""
       extra-cache-paths:
         type: string
         default: ""
@@ -320,3 +328,88 @@ jobs:
           RELEASE_TAG: ${{ needs.meta.outputs.tag }}
           SWIFT_MK_DIST_DIR: ${{ inputs.dist-dir }}
         run: make release-publish
+
+  smoke:
+    needs: [meta, publish]
+    if: inputs.smoke-asset != ''
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    env:
+      # Require a team id too: verify-release --require-signature checks the
+      # Developer ID team, so without apple-team-id the smoke would pass
+      # --require-signature but no --team-id and fail the missing-team-id guard.
+      REQUIRE_SIGNATURE: ${{ inputs.notarize && inputs.apple-team-id != '' && secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' && secrets.APPLE_NOTARY_KEY_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Swift build env
+        if: github.repository == 'agoodkind/swift-makefile'
+        uses: ./.github/actions/setup-build-env
+        with:
+          xcode-version: ${{ inputs.xcode-version }}
+          github-token: ${{ github.token }}
+          install-lint-tools: "false"
+          cache-profile: ${{ inputs.cache-profile }}
+          cache-version: ${{ inputs.cache-version }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+
+      - name: Setup Swift build env
+        if: github.repository != 'agoodkind/swift-makefile'
+        uses: agoodkind/swift-makefile/.github/actions/setup-build-env@main
+        with:
+          xcode-version: ${{ inputs.xcode-version }}
+          github-token: ${{ github.token }}
+          install-lint-tools: "false"
+          cache-profile: ${{ inputs.cache-profile }}
+          cache-version: ${{ inputs.cache-version }}
+          extra-cache-paths: ${{ inputs.extra-cache-paths }}
+
+      - name: Verify published release
+        shell: bash
+        env:
+          # verify-release authenticates GitHub API calls with GH_TOKEN, so a
+          # private repo resolves and the smoke avoids the unauthenticated rate
+          # limit. Set it explicitly on the step rather than rely on inheritance.
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.meta.outputs.tag }}
+          RELEASE_ASSET: ${{ inputs.smoke-asset }}
+          RELEASE_TEAM_ID: ${{ inputs.apple-team-id }}
+        run: |
+          set -euo pipefail
+
+          swift_mk="${HOME}/.swift-mk-ci-toolchain/swift-mk"
+          verify_args=(
+            verify-release
+            --repo "${RELEASE_REPO}"
+            --tag "${RELEASE_TAG}"
+            --asset "${RELEASE_ASSET}"
+          )
+          # Only pass --team-id when the caller set one. verify-release decides
+          # whether a team id is required from --require-signature, so passing an
+          # empty value would just feed it a blank team id to compare against.
+          if [[ -n "${RELEASE_TEAM_ID}" ]]; then
+            verify_args+=(--team-id "${RELEASE_TEAM_ID}")
+          fi
+          if [[ "${REQUIRE_SIGNATURE}" = "true" ]]; then
+            verify_args+=(--require-signature)
+          else
+            verify_args+=(--no-require-signature)
+          fi
+
+          attempt=1
+          max_attempts=5
+          while true; do
+            if "${swift_mk}" "${verify_args[@]}"; then
+              exit 0
+            fi
+            if [[ "${attempt}" -ge "${max_attempts}" ]]; then
+              exit 1
+            fi
+            attempt=$((attempt + 1))
+            sleep 15
+          done

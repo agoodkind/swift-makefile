@@ -24,4 +24,7 @@ jobs:
       notarize-pattern: "*.dmg"
       signing-identity-name: "Developer ID Application: Alex Goodkind (H3BMXM4W7H)"
       apple-team-id: H3BMXM4W7H
+      # Smoke-verify the published dmg by downloading it and running the shipped
+      # swift-mk binary, so a non-launching release fails here.
+      smoke-asset: swift-mk_darwin_arm64.dmg
     secrets: inherit
