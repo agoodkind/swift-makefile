@@ -62,8 +62,12 @@ swift_mk_pool_cache_args() {
     mkdir -p "${swiftpm_cache_path}"
     # SwiftPM CLI has no separate SourcePackages checkout flag. Keep the
     # per-consumer scratch path and share only SwiftPM's supported dependency cache.
+    # Disable the manifest DB because SwiftPM's shared manifest cache lives under
+    # --cache-path and is write-heavy.
     printf "%s\n" "--cache-path"
     printf "%s\n" "${swiftpm_cache_path}"
+    printf "%s\n" "--manifest-cache"
+    printf "%s\n" "none"
 }
 
 swift_mk_build_from_repo() {

@@ -97,16 +97,15 @@ runs:
             exit 0
         fi
 
-        # The write-heavy CAS stores stay off the shared mount because concurrent
-        # writers corrupt them with CASID missing from Object Store failures, so
-        # SWIFT_MK_XCODE_CACHE_PATH and SWIFT_MK_SWIFTPM_CACHE_PATH stay unset
-        # and keep their VM-local defaults.
-        module_cache="${POOL_CACHE_ROOT}/swift-mk/module-cache"
+        # The write-heavy package-support cache, module cache, and CAS stores stay
+        # off the shared mount. Concurrent writers corrupt them, so the shared pool
+        # mount carries only the immutable SourcePackages checkout cache.
+        pool_local_cache="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/swift-mk/pool-cache"
         spm_cache="${POOL_CACHE_ROOT}/spm/${DEPENDENCY_HASH}/SourcePackages"
-        mkdir -p "${module_cache}" "${spm_cache}"
+        mkdir -p "${pool_local_cache}" "${spm_cache}"
         {
             printf 'SWIFT_MK_POOL=1\n'
-            printf 'SWIFT_MK_MODULE_CACHE=%s\n' "${module_cache}"
+            printf 'SWIFT_MK_POOL_LOCAL_CACHE=%s\n' "${pool_local_cache}"
             printf 'SWIFT_MK_SPM_CACHE=%s\n' "${spm_cache}"
         } >> "${GITHUB_ENV}"
 

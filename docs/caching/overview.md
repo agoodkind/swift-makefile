@@ -10,7 +10,7 @@ The cache subsystem speeds builds across runs and across worktrees, and the engi
 
 [`CachePaths`](../../Sources/SwiftMkCore/CachePaths.swift) sorts the cacheable directories into three buckets, because they have different lifetimes and writers:
 
-- The dependency bucket holds job-invariant downloads: SPM checkouts, the module cache, and mise installs. Every gate fetches the same ones, so one shared key is correct.
+- The dependency bucket holds job-invariant downloads: SPM checkouts, the module cache, and mise installs. Every gate fetches the same ones, so one shared key is correct. Pool runners keep only SPM checkouts on the shared host mount, because package-support state and module caches are write-heavy.
 - The build bucket holds commit-keyed intermediates: the `.build` dirs and the DerivedData build database.
 - The compile bucket holds the compilation cache (CAS) stores. These are build products, not downloads, and only the compiling gates fill them, so they get their own bucket and their own keying.
 
@@ -25,6 +25,12 @@ GitHub `actions/cache` keeps only the first save under a key, and the compiling 
 ## Cross-runner reuse
 
 The compile bucket is content-addressed and restored by architecture-stable keys, so a pile built on one runner replays on another, pool or hosted. The SwiftPM compile cache is on by default, the SwiftPM peer of the Xcode cache, enabled by the engine on any toolchain that supports the flag (Swift 6.3+) and routed through the [`SwiftPM`](../../Sources/SwiftMkCore/SwiftPM.swift) chokepoint; a consumer sets nothing and the engine owns it with no opt-out.
+
+## Pool cache contract
+
+Pool runners share the SPM checkout directory with `-clonedSourcePackagesDirPath`, and populated checkouts also receive `-disableAutomaticPackageResolution` so the build reads those checkouts without resolving new versions. The writable package-support cache moves to `-packageCachePath` under `SWIFT_MK_POOL_LOCAL_CACHE`, and `MODULE_CACHE_DIR` also moves under that VM-local root.
+
+The bootstrap SwiftPM build can share repository downloads with `--cache-path`, but it passes `--manifest-cache none` so SwiftPM does not open its shared manifest-cache database on the pool mount.
 
 ## The default branch warms the cache for pull requests
 

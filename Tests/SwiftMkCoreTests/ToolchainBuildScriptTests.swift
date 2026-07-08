@@ -19,6 +19,8 @@ enum ToolchainBuildScriptTests {
     let script = try rootFile("scripts/swift-mk-build.sh")
 
     #expect(script.contains(#"printf "%s\n" "--cache-path""#))
+    #expect(script.contains(#"printf "%s\n" "--manifest-cache""#))
+    #expect(script.contains(#"printf "%s\n" "none""#))
     #expect(!script.contains("-clonedSourcePackagesDirPath"))
     #expect(!script.contains("-disableAutomaticPackageResolution"))
     #expect(!script.contains("--disable-automatic-resolution"))
@@ -76,6 +78,8 @@ enum ToolchainBuildScriptTests {
 
     #expect(!action.contains("if: runner.environment == 'self-hosted'"))
     #expect(action.contains(#"if [[ ! -d "${POOL_CACHE_ROOT}" ]]; then"#))
+    #expect(action.contains("SWIFT_MK_POOL_LOCAL_CACHE"))
+    #expect(!action.contains("SWIFT_MK_MODULE_CACHE=%s"))
   }
 
   @Test

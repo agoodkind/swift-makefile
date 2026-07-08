@@ -476,13 +476,21 @@ extension Toolchain {
   /// happened. Pinning it to the shared root makes the store survive that wipe and
   /// persist across runners. The setting is inert when compilation caching is off (the
   /// no-cache coverage build), so injecting it on every path is safe.
+  ///
+  /// Pool builds keep only the SourcePackages checkouts on the shared host mount.
+  /// Xcode's package-support cache and the Clang module cache are write-heavy, so
+  /// they move to a VM-local per-slot root when `SWIFT_MK_POOL=1`.
   static func sharedCacheArguments() -> [String] {
     var args: [String] = []
+    let isPool = Env.get("SWIFT_MK_POOL") == "1"
     let spm = resolvedSharedCachePath(
       "SWIFT_MK_SPM_CACHE", defaultSubdirectory: "SourcePackages")
     if let spm {
       args.append(contentsOf: ["-clonedSourcePackagesDirPath", spm])
-      if Env.get("SWIFT_MK_POOL") == "1",
+      if isPool {
+        args.append(contentsOf: ["-packageCachePath", poolLocalCachePath("PackageCache")])
+      }
+      if isPool,
         sharedSourcePackagesCheckoutIsPopulated(spm)
       {
         args.append("-disableAutomaticPackageResolution")
@@ -491,7 +499,8 @@ extension Toolchain {
     let module = resolvedSharedCachePath(
       "SWIFT_MK_MODULE_CACHE", defaultSubdirectory: "ModuleCache")
     if let module {
-      args.append("MODULE_CACHE_DIR=\(module)")
+      let modulePath = isPool ? poolLocalCachePath("ModuleCache") : module
+      args.append("MODULE_CACHE_DIR=\(modulePath)")
     }
     let cas = resolvedSharedCachePath(
       "SWIFT_MK_XCODE_CACHE_PATH", defaultSubdirectory: "CompilationCache")
@@ -519,6 +528,28 @@ extension Toolchain {
       return defaultSharedCacheRoot().appendingPathComponent(defaultSubdirectory).path
     }
     return raw
+  }
+
+  static func poolLocalCachePath(_ subdirectory: String) -> String {
+    let explicitRoot = Env.get("SWIFT_MK_POOL_LOCAL_CACHE")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    if !explicitRoot.isEmpty {
+      return URL(fileURLWithPath: explicitRoot, isDirectory: true)
+        .appendingPathComponent(subdirectory, isDirectory: true)
+        .path
+    }
+
+    let runnerTemp = Env.get("RUNNER_TEMP")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let tempRoot =
+      runnerTemp.isEmpty
+      ? FileManager.default.temporaryDirectory.path
+      : runnerTemp
+    return URL(fileURLWithPath: tempRoot, isDirectory: true)
+      .appendingPathComponent("swift-mk", isDirectory: true)
+      .appendingPathComponent("pool-cache", isDirectory: true)
+      .appendingPathComponent(subdirectory, isDirectory: true)
+      .path
   }
 
   static func sharedSourcePackagesCheckoutIsPopulated(_ sourcePackagesPath: String) -> Bool {
