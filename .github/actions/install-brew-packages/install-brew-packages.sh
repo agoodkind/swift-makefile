@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+brew_locked() {
+    flock -w 300 /tmp/swift-mk-brew.lock brew "$@"
+}
+
 # The workflow passes `brew-packages` as one space-delimited string, so this
 # helper performs the single intentional split before calling Homebrew.
 main() {
@@ -15,7 +19,7 @@ main() {
     fi
 
     read -r -a brew_package_array <<< "${brew_packages}"
-    brew install "${brew_package_array[@]}"
+    brew_locked install "${brew_package_array[@]}"
 }
 
 main "$@"

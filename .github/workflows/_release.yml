@@ -159,7 +159,18 @@ jobs:
 
       - name: Install brew packages
         if: inputs.brew-packages != ''
-        run: brew install ${{ inputs.brew-packages }}
+        shell: bash
+        env:
+          BREW_PACKAGES: ${{ inputs.brew-packages }}
+        run: |
+          set -euo pipefail
+
+          brew_locked() {
+              flock -w 300 /tmp/swift-mk-brew.lock brew "$@"
+          }
+
+          read -r -a brew_package_array <<< "${BREW_PACKAGES}"
+          brew_locked install "${brew_package_array[@]}"
 
       - name: Setup Swift build env
         if: github.repository == 'agoodkind/swift-makefile'

@@ -257,8 +257,12 @@ runs:
       run: |
         set -euo pipefail
 
+        brew_locked() {
+            flock -w 300 /tmp/swift-mk-brew.lock brew "$@"
+        }
+
         if ! command -v xcodegen >/dev/null 2>&1; then
-            brew install xcodegen
+            brew_locked install xcodegen
         fi
 
         xcodegen --version
@@ -273,13 +277,17 @@ runs:
         # bottles lag the current formulae and CI lints with a different tool
         # version than the fleet's local machines (a one-patch SwiftLint skew
         # produced 153 phantom findings). Update once, then upgrade or install.
-        brew update --quiet
+        brew_locked() {
+            flock -w 300 /tmp/swift-mk-brew.lock brew "$@"
+        }
+
+        brew_locked update --quiet
 
         for tool in swift-format swiftlint periphery osv-scanner; do
             if command -v "$tool" >/dev/null 2>&1; then
-                brew upgrade "$tool" 2>/dev/null || true
+                brew_locked upgrade "$tool" 2>/dev/null || true
             else
-                brew install "$tool"
+                brew_locked install "$tool"
             fi
         done
 
