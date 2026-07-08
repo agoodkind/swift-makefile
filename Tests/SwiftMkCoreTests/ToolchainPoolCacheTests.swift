@@ -39,6 +39,30 @@ enum ToolchainPoolCacheTests {
   }
 
   @Test
+  static func poolSharedSpmCacheAllowsResolutionWhenCheckoutsAreEmpty() throws {
+    try withTemporaryDirectory { directory in
+      let sourcePackages = directory.appendingPathComponent("SourcePackages", isDirectory: true)
+      let checkouts = sourcePackages.appendingPathComponent("checkouts", isDirectory: true)
+
+      try FileManager.default.createDirectory(
+        at: checkouts,
+        withIntermediateDirectories: true)
+
+      withSharedCacheEnv(
+        module: "/tmp/swift-mk-mc",
+        spm: sourcePackages.path,
+        cas: "/tmp/swift-mk-cas",
+        pool: "1"
+      ) {
+        let args = Toolchain.sharedCacheArguments()
+        #expect(args.contains("-clonedSourcePackagesDirPath"))
+        #expect(args.contains(sourcePackages.path))
+        #expect(!args.contains("-disableAutomaticPackageResolution"))
+      }
+    }
+  }
+
+  @Test
   static func poolSharedSpmCacheDisablesAutomaticPackageResolutionWhenCheckoutsExist() throws {
     try withTemporaryDirectory { directory in
       let sourcePackages = directory.appendingPathComponent("SourcePackages", isDirectory: true)

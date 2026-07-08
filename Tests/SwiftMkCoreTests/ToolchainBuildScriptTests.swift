@@ -26,6 +26,11 @@ enum ToolchainBuildScriptTests {
 
   @Test
   static func poolBuildScriptHashesResolvedFileOnlyWhenPresent() throws {
+    let script = try rootFile("scripts/swift-mk-build.sh")
+    #expect(script.contains(#"shasum "${manifest_path}""#))
+    #expect(script.contains(#"if [[ -f "${resolved_path}" ]]; then"#))
+    #expect(script.contains(#"shasum "${resolved_path}""#))
+
     try withTemporaryDirectory { packageDirectory in
       let manifest = packageDirectory.appendingPathComponent("Package.swift")
       let resolved = packageDirectory.appendingPathComponent("Package.resolved")
