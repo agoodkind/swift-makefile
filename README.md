@@ -8,13 +8,13 @@ Provided AS IS under the MIT License with no warranty. See [LICENSE](LICENSE).
 
 Each subsystem has a present-tense overview under `docs/<area>/overview.md` that links to the source and test holding each detail, so the docs track the code.
 
-- [Build](docs/build/overview.md) covers the two chokepoints, the CLI-not-library rationale, the per-worktree build lock, and the routing enforcement.
+- [Build](docs/build/overview.md) covers the two chokepoints, the CLI-not-library rationale, the per-worktree build lock, the consumer toolchain contract, and the routing enforcement.
 - [Build gate](docs/gate/overview.md) covers the gate proof, the in-process receipt, and the direct-toolchain audit.
 - [Dead-code gate](docs/deadcode/overview.md) covers the two scans, the engine-derived coverage build and its owned settings, the shared prebuild seam, the index-completeness check, and the coverage-completeness check.
 - [Signing](docs/signing/overview.md) covers the single-source-of-truth xcconfig override, inferred style, and post-build signing and notarization.
 - [Caching](docs/caching/overview.md) covers the engine-owned cache plan and the compile-cache stores.
-- [Consumer fetch](docs/fetch/overview.md) covers the fetched `.make` package, the `SWIFT_MK_SCRIPT_FILES` manifest, and the completeness invariant every consumer's `swift-mk` build depends on.
-- [CI](docs/ci/overview.md) covers the reusable workflows, the required gate set, the skip detector, runner fallback, and the non-overridable OSV policy.
+- [Consumer fetch](docs/fetch/overview.md) covers the bootstrap source, the fetched `.make` package, the `SWIFT_MK_SCRIPT_FILES` manifest, and the completeness invariant every consumer's `swift-mk` build depends on.
+- [CI](docs/ci/overview.md) covers the reusable workflows, the required gate set, the skip detector, pool routing, hosted fallback, outage backstops, and the non-overridable OSV policy.
 
 ## Files
 

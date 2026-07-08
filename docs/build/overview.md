@@ -15,3 +15,9 @@ Every chokepoint compile proves it is authorized before it runs and holds the pe
 ## The cache flags
 
 Each chokepoint applies the shared compile-cache flags, so a consumer sets nothing and the engine owns the cache with no opt-out. [caching](../caching/overview.md) owns the cache plan, the compile-cache stores, and the cross-runner behavior.
+
+## Consumer contract
+
+A consumer routes build, test, and generate work through the `swift-mk` toolchain surface. The default SwiftPM commands call `swift-mk toolchain swiftpm build` and `swift-mk toolchain swiftpm test`; Xcode consumers set their normal project inputs and receive `swift-mk toolchain build`, `test`, `generate`, and `install` commands from `swift.mk`. The command a consumer provides is still its project build, but the engine owns the compiler boundary.
+
+The enforcement rules keep that boundary visible. The makefile audit fails direct recipe calls to `swift build`, `swift test`, `swift run`, `xcodebuild`, `tuist`, `xcodegen`, and `codesign` when they bypass `$(SWIFT_MK_BIN)`. The shared SwiftSyntax analyzer's `unrouted_build_tooling` rule fails Swift source that spawns `swift build`, `swift test`, or `swift run` outside the engine chokepoint. The [enforcement](enforcement.md) overview links to the rules and tests that hold the contract.
