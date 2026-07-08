@@ -20,6 +20,56 @@ enum SwiftMkUpdateSupport {
   static let sha256 = "abc123"
   static let teamID = "H3BMXM4W7H"
   static let successStatusCode = 200
+  static let sampleTimestamp: TimeInterval = 1_782_000_000
+
+  static func config(currentVersion: String = currentTag) -> UpdateConfig {
+    UpdateConfig(
+      repo: "agoodkind/swift-makefile",
+      binary: "swift-mk",
+      teamID: teamID,
+      currentVersion: currentVersion,
+      assetName: "swift-mk_darwin_arm64.dmg")
+  }
+
+  static func releaseListData() -> Data {
+    Data(
+      """
+      [
+        {
+          "html_url": "https://github.com/agoodkind/swift-makefile/releases/tag/\(newerTag)",
+          "tag_name": "\(newerTag)",
+          "draft": false,
+          "prerelease": true,
+          "assets": [
+            {
+              "name": "swift-mk_darwin_arm64.dmg",
+              "browser_download_url": "https://example.test/swift-mk.dmg",
+              "digest": "sha256:\(sha256)"
+            }
+          ]
+        }
+      ]
+      """.utf8)
+  }
+
+  static func releaseData() -> Data {
+    Data(
+      """
+      {
+        "html_url": "https://github.com/agoodkind/swift-makefile/releases/tag/\(newerTag)",
+        "tag_name": "\(newerTag)",
+        "draft": false,
+        "prerelease": true,
+        "assets": [
+          {
+            "name": "swift-mk_darwin_arm64.dmg",
+            "browser_download_url": "https://example.test/swift-mk.dmg",
+            "digest": "sha256:\(sha256)"
+          }
+        ]
+      }
+      """.utf8)
+  }
 }
 
 /// Run `body` with a fresh temporary directory that is removed afterward. Shared
@@ -37,6 +87,55 @@ func withTemporaryDirectory(_ run: (URL) throws -> Void) throws {
     }
   }
   try run(directory)
+}
+
+func withPreparedUpdate(
+  commandMode: StubCommandRunner.Mode = .success,
+  _ run: (PreparedUpdate) throws -> Void
+) throws {
+  try withTemporaryDirectory { directory in
+    let targetURL = directory.appendingPathComponent("swift-mk")
+    try PreparedUpdate.originalContents.write(
+      to: targetURL, atomically: true, encoding: .utf8)
+    let taggedReleaseURL =
+      "https://api.github.com/repos/agoodkind/swift-makefile/releases/tags/"
+      + SwiftMkUpdateSupport.newerTag
+    let httpClient = StubHTTPClient(
+      responses: [
+        "https://api.github.com/repos/agoodkind/swift-makefile/releases": (
+          SwiftMkUpdateSupport.releaseListData(),
+          SwiftMkUpdateSupport.successStatusCode
+        ),
+        taggedReleaseURL: (
+          SwiftMkUpdateSupport.releaseData(),
+          SwiftMkUpdateSupport.successStatusCode
+        ),
+        "https://example.test/swift-mk.dmg": (
+          Data("dmg".utf8),
+          SwiftMkUpdateSupport.successStatusCode
+        ),
+      ])
+    let commandRunner = StubCommandRunner(binary: "swift-mk", mode: commandMode)
+    let cacheDir = directory.appendingPathComponent("cache").path
+    let statePath = directory.appendingPathComponent("state/update-state.json").path
+    let options = UpdateOptions(
+      config: SwiftMkUpdateSupport.config(),
+      targetPath: targetURL.path,
+      cacheDir: cacheDir,
+      statePath: statePath,
+      dryRun: false,
+      httpClient: httpClient,
+      commandRunner: commandRunner
+    ) {
+      Date(timeIntervalSince1970: SwiftMkUpdateSupport.sampleTimestamp)
+    }
+
+    try run(
+      PreparedUpdate(
+        options: options,
+        targetURL: targetURL,
+        statePath: statePath))
+  }
 }
 
 // MARK: - PreparedUpdate
@@ -81,6 +180,8 @@ final class StubHTTPClient: ReleaseHTTPClient {
 final class StubCommandRunner: CommandRunner {
   enum Mode {
     case success
+    case signatureFailure
+    case stapleFailure
     case teamMismatch
     case validateMismatch
   }
@@ -110,6 +211,9 @@ final class StubCommandRunner: CommandRunner {
     if tool == "xcrun",
       args.prefix(Self.stapleArgumentCount) == ["stapler", "validate"]
     {
+      if mode == .stapleFailure {
+        return CommandOutput(status: 1, stdout: "", stderr: "staple failed")
+      }
       return CommandOutput(status: 0, stdout: "", stderr: "")
     }
     if tool == "hdiutil",
@@ -125,6 +229,9 @@ final class StubCommandRunner: CommandRunner {
     if tool == "codesign",
       args.first == "--verify"
     {
+      if mode == .signatureFailure {
+        return CommandOutput(status: 1, stdout: "", stderr: "codesign failed")
+      }
       return CommandOutput(status: 0, stdout: "", stderr: "")
     }
     if tool == "codesign",

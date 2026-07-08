@@ -71,6 +71,29 @@ public enum ReleaseResolver {
     return release.toRelease()
   }
 
+  public static func release(
+    config: UpdateConfig,
+    httpClient: any ReleaseHTTPClient,
+    tag: String,
+    requireTeamID: Bool = true
+  ) throws -> Release {
+    // Resolving a release by tag does not use the team id, so let a caller (for
+    // example verify-release without a required signature) skip that check.
+    try config.validate(requireTeamID: requireTeamID)
+    let trimmedTag = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmedTag.isEmpty {
+      throw UpdateError.validation("release tag is required")
+    }
+    let encodedTag = try encodedPathComponent(trimmedTag, context: "release tag")
+    let url = try releaseURL(config: config, path: "releases/tags/\(encodedTag)")
+    let data = try fetchJSON(url: url, config: config, httpClient: httpClient)
+    let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
+    if release.draft {
+      throw UpdateError.release("release \(release.tagName) is draft")
+    }
+    return release.toRelease()
+  }
+
   static func downloadHeaders(config: UpdateConfig, url: URL) -> [String: String] {
     var headers = ["Accept": "application/octet-stream"]
     // Attach the bearer token only when the download host matches the API base
@@ -180,6 +203,21 @@ public enum ReleaseResolver {
       throw UpdateError.validation("update release URL is invalid")
     }
     return url
+  }
+
+  private static func encodedPathComponent(_ value: String, context: String) throws -> String {
+    var allowed = CharacterSet.urlPathAllowed
+    // Remove `%` too: urlPathAllowed keeps it, so a pre-escaped input like `%2F`
+    // would pass through and the server would read it as a path separator,
+    // breaking the single-component assumption for releases/tags/<tag>. Escaping
+    // `%` to `%25` keeps the value one path component.
+    allowed.remove(charactersIn: "/?#%")
+    guard let encoded = value.addingPercentEncoding(withAllowedCharacters: allowed),
+      !encoded.isEmpty
+    else {
+      throw UpdateError.validation("\(context) is invalid")
+    }
+    return encoded
   }
 
   private static func timestampPrefix(_ value: String) -> Int64? {

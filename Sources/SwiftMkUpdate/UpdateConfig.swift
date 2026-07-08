@@ -87,7 +87,11 @@ public struct UpdateConfig: Equatable {
     self.authToken = authToken
   }
 
-  public func validate() throws {
+  // requireTeamID defaults to true so the apply path keeps demanding a team id.
+  // verify-release passes false when it will not check the signature, so a
+  // library or API caller does not have to invent a placeholder team id just to
+  // pass validation for a check that is skipped.
+  public func validate(requireTeamID: Bool = true) throws {
     try validateRepo()
     if binary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
       throw UpdateError.validation("update binary is required")
@@ -100,7 +104,7 @@ public struct UpdateConfig: Equatable {
     if assetName != (assetName as NSString).lastPathComponent || assetName == ".." {
       throw UpdateError.validation("update asset name must be a bare file name")
     }
-    if teamID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+    if requireTeamID, teamID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
       throw UpdateError.validation("update team ID is required")
     }
     if currentVersion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
