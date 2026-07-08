@@ -2,9 +2,9 @@
 
 set -euo pipefail
 
-brew_locked() {
-    flock -w 300 /tmp/swift-mk-brew.lock brew "$@"
-}
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=.github/actions/brew-lock/brew-lock.sh
+source "${script_dir}/../brew-lock/brew-lock.sh"
 
 # The workflow passes `brew-packages` as one space-delimited string, so this
 # helper performs the single intentional split before calling Homebrew.
