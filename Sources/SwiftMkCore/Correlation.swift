@@ -60,8 +60,8 @@ public struct Correlation: Sendable, Equatable {
     }
     var fields = parts.makeIterator()
     guard let version = fields.next(), version == traceparentVersion,
-      let trace = fields.next(), isLowerHex(trace, length: traceHexLength),
-      let span = fields.next(), isLowerHex(span, length: spanHexLength),
+      let trace = fields.next(), isValidID(trace, length: traceHexLength),
+      let span = fields.next(), isValidID(span, length: spanHexLength),
       let flags = fields.next(), isLowerHex(flags, length: flagsHexLength)
     else {
       return nil
@@ -88,10 +88,10 @@ public struct Correlation: Sendable, Equatable {
   }
 
   /// Build a correlation from a raw trace/span id pair, or nil when either is not
-  /// a well-formed lowercase-hex id of the expected length.
+  /// a valid id (lowercase hex of the expected length and not all zeros).
   public static func fromIDs(traceID: String, spanID: String) -> Correlation? {
-    guard isLowerHex(Substring(traceID), length: traceHexLength),
-      isLowerHex(Substring(spanID), length: spanHexLength)
+    guard isValidID(Substring(traceID), length: traceHexLength),
+      isValidID(Substring(spanID), length: spanHexLength)
     else {
       return nil
     }
@@ -115,5 +115,12 @@ public struct Correlation: Sendable, Equatable {
     return value.allSatisfy { character in
       ("0"..."9").contains(character) || ("a"..."f").contains(character)
     }
+  }
+
+  /// A valid W3C trace or span id: lowercase hex of the expected length and not all
+  /// zeros. The all-zero id is reserved as "invalid" by the trace-context spec, so
+  /// it is rejected rather than adopted as a real trace.
+  private static func isValidID(_ value: Substring, length: Int) -> Bool {
+    isLowerHex(value, length: length) && value.contains { $0 != "0" }
   }
 }
