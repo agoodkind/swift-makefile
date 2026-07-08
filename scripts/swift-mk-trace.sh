@@ -43,6 +43,17 @@ is_lower_hex() {
     [[ -z "$stripped" ]]
 }
 
+# True when value is a valid W3C id: lowercase hex of the expected length and not
+# all zeros. An all-zero trace-id or span-id is invalid per the W3C trace-context
+# spec, so a caller that exports one is treated as having none.
+is_valid_id() {
+    is_lower_hex "$1" "$2" || return 1
+    case "$1" in
+        *[!0]*) return 0 ;;
+    esac
+    return 1
+}
+
 # Validate a W3C traceparent and, on success, set the global `traceparent` to the
 # same trace and span with the flags normalized to 01. Any well-formed two-hex
 # flags field is accepted (an unsampled 00 is valid), so a valid inbound context
@@ -56,8 +67,8 @@ use_traceparent() {
     [[ "$remainder" != "$candidate" ]] || return 1
     local span=${remainder%%-*}
     local flags=${remainder#"$span"-}
-    is_lower_hex "$trace" "$TRACE_HEX_LENGTH" || return 1
-    is_lower_hex "$span" "$SPAN_HEX_LENGTH" || return 1
+    is_valid_id "$trace" "$TRACE_HEX_LENGTH" || return 1
+    is_valid_id "$span" "$SPAN_HEX_LENGTH" || return 1
     is_lower_hex "$flags" "$FLAGS_HEX_LENGTH" || return 1
     [[ "$candidate" = "00-$trace-$span-$flags" ]] || return 1
     traceparent="00-$trace-$span-01"
@@ -94,13 +105,13 @@ main() {
 
     if use_traceparent "${TRACEPARENT:-}"; then
         :
-    elif is_lower_hex "${TRACE_ID:-}" "$TRACE_HEX_LENGTH" \
-        && is_lower_hex "${SPAN_ID:-}" "$SPAN_HEX_LENGTH"; then
+    elif is_valid_id "${TRACE_ID:-}" "$TRACE_HEX_LENGTH" \
+        && is_valid_id "${SPAN_ID:-}" "$SPAN_HEX_LENGTH"; then
         trace=$TRACE_ID
         span=$SPAN_ID
         traceparent="00-$trace-$span-01"
-    elif is_lower_hex "${SWIFT_MK_TRACE_ID:-}" "$TRACE_HEX_LENGTH" \
-        && is_lower_hex "${SWIFT_MK_SPAN_ID:-}" "$SPAN_HEX_LENGTH"; then
+    elif is_valid_id "${SWIFT_MK_TRACE_ID:-}" "$TRACE_HEX_LENGTH" \
+        && is_valid_id "${SWIFT_MK_SPAN_ID:-}" "$SPAN_HEX_LENGTH"; then
         trace=$SWIFT_MK_TRACE_ID
         span=$SWIFT_MK_SPAN_ID
         traceparent="00-$trace-$span-01"

@@ -23,7 +23,12 @@ SWIFT_MK_TRACE_SCRIPT := $(firstword \
 	$(wildcard $(dir $(lastword $(MAKEFILE_LIST)))scripts/swift-mk-trace.sh) \
 	$(wildcard .make/scripts/swift-mk-trace.sh))
 ifneq ($(strip $(SWIFT_MK_TRACE_SCRIPT)),)
-SWIFT_MK_TRACE_RESULT := $(shell TRACEPARENT='$(TRACEPARENT)' TRACE_ID='$(TRACE_ID)' SPAN_ID='$(SPAN_ID)' SWIFT_MK_TRACE_ID='$(SWIFT_MK_TRACE_ID)' SWIFT_MK_SPAN_ID='$(SWIFT_MK_SPAN_ID)' SWIFT_MK_SKIP_FETCH='$(SWIFT_MK_SKIP_FETCH)' bash "$(SWIFT_MK_TRACE_SCRIPT)")
+# Export the inputs so the script reads them from the environment rather than
+# interpolating make values into the shell command, which a value containing a
+# quote could break. An env-origin or command-line value is already exported; the
+# explicit export also covers a plain makefile assignment.
+export TRACEPARENT TRACE_ID SPAN_ID SWIFT_MK_TRACE_ID SWIFT_MK_SPAN_ID SWIFT_MK_SKIP_FETCH
+SWIFT_MK_TRACE_RESULT := $(shell bash "$(SWIFT_MK_TRACE_SCRIPT)")
 ifeq ($(word 1,$(SWIFT_MK_TRACE_RESULT)),ok)
 TRACEPARENT := $(word 2,$(SWIFT_MK_TRACE_RESULT))
 TRACE_ID := $(word 3,$(SWIFT_MK_TRACE_RESULT))
@@ -294,6 +299,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/NotarizeTests.swift \
 	Tests/SwiftMkCoreTests/CountAwareGateTests.swift \
 	Tests/SwiftMkCoreTests/CorrelationTests.swift \
+	Tests/SwiftMkCoreTests/EnvironmentSerialized.swift \
 	Tests/SwiftMkCoreTests/DeadcodeScanTests.swift \
 	Tests/SwiftMkCoreTests/DeadcodeVerdictTests.swift \
 	Tests/SwiftMkCoreTests/DeadcodeCoverageCompletenessTests.swift \
