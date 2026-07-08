@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 #
-# install.sh downloads the signed, notarized swift-mk CLI from the latest
-# GitHub release and installs it into a user bin directory.
+# install.sh downloads the signed, notarized swift-mk maintenance CLI
+# (version, update, cache prune) from the latest GitHub release and installs it
+# into a user bin directory. Running the lint, build, and dead-code gates stays
+# a build-from-source concern; this installs the lean host tool only.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/agoodkind/swift-makefile/main/install.sh | bash
@@ -33,8 +35,9 @@ usage() {
     # Embed the help text rather than reading $0, which is `bash` (not this
     # script) under the documented `curl | bash` pattern.
     cat <<'USAGE'
-install.sh downloads the signed, notarized swift-mk CLI from the latest
-GitHub release and installs it into a user bin directory.
+install.sh downloads the signed, notarized swift-mk maintenance CLI
+(version, update, cache prune) from the latest GitHub release and installs it
+into a user bin directory.
 
 Usage:
   curl -fsSL https://raw.githubusercontent.com/agoodkind/swift-makefile/main/install.sh | bash
