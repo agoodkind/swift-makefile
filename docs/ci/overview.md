@@ -24,9 +24,21 @@ Skipping is step-level, so the required checks stay green. The `changes` job in 
 
 On a skip, each gate job routes to an `ubuntu-latest` runner instead of the macOS pool, through a conditional `runs-on` in [`_ci.yml`](../../.github/workflows/_ci.yml). The job runs, its guarded steps skip, and its named check reports green from the cheap runner, so skipped gate jobs occupy no macOS pool slot. The `changes` job itself reads the graph on the runner `plan-runners` selects, which is the self-hosted pool label when the pool has free capacity and a hosted runner when it does not, so the detector uses at most one macOS runner per push or pull request. It restores the swift-mk binary and the dependency cache so `swift package describe` resolves without a cold fetch.
 
-## Runners with a hosted floor
+## Pool routing with a hosted floor
 
 CI prefers a self-hosted pool and falls back to GitHub-hosted runners, so a pool outage never blocks a run. The pool routing is best-effort with a hosted floor that always exists.
+
+The `plan-runners` reusable workflow chooses the runner label for each heavy gate before any macOS job starts. It runs on `ubuntu-latest`, calls the broker's `/capacity` endpoint, and emits labels for Build, Test, Quality, and Extra Targets. A true capacity response routes the gates to the self-hosted pool label. An empty capacity URL, a fork pull request, a failed request, a malformed response, or a false capacity response routes every gate to the hosted runner input.
+
+The pool path and hosted path are a paired attempt, not two required checks. Build, Test, each Quality leg, Extra Targets, and the change detector try the planned label first. When the planned label was the pool and that attempt does not succeed, the hosted fallback runs on the hosted runner. The small aggregator jobs keep the visible required checks stable, so reviewers see Build, Test, each `Quality / ...` check, and Extra Targets rather than separate pool and hosted required statuses.
+
+The caller workflow keeps one live CI run per ref with `cancel-in-progress: true`. A newer push cancels the older run, and the infra retry workflow treats that as a superseding run rather than a pool outage.
+
+## Pool outage backstops
+
+The broker handles normal overflow by reporting truthful capacity before a job routes to the pool. The scheduled pool watchdog covers the case where the broker is down or unreachable after a run already queued a pool-labelled job. It scans queued and in-progress runs for jobs stuck on the pool label past the threshold, then cancels the whole run.
+
+`ci-infra-retry.yml` reruns only an infra-cancelled first attempt. It skips a run with a real job failure, skips a run superseded by a newer push, and uses the full rerun endpoint because a run with only cancelled jobs may have no failed jobs to rerun. On the rerun, `plan-runners` sees unavailable capacity and routes the gates to hosted.
 
 ## Build on the default branch to warm pull requests
 
