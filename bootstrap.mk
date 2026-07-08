@@ -10,104 +10,8 @@ SWIFT_MK_BASE_URL ?= https://raw.githubusercontent.com/agoodkind/swift-makefile/
 SWIFT_MK_API_REPO ?= agoodkind/swift-makefile
 SWIFT_MK_API_REF ?= main
 
-# This pre-fetch trace bootstrap is mirrored in swift.mk because the consumer
-# bootstrap must run before any fetched script exists.
-define swift_mk_trace_bootstrap
-$(shell \
-swift_mk_is_lower_hex() { \
-	value=$$1; \
-	expected=$$2; \
-	[ -n "$$value" ] || return 1; \
-	[ $${#value} -eq "$$expected" ] || return 1; \
-	stripped=$$(printf '%s' "$$value" | tr -d '0123456789abcdef'); \
-	[ -z "$$stripped" ]; \
-}; \
-swift_mk_use_traceparent() { \
-	candidate=$$1; \
-	trace=$${candidate#00-}; \
-	[ "$$trace" != "$$candidate" ] || return 1; \
-	trace=$${trace%%-*}; \
-	remainder=$${candidate#00-$$trace-}; \
-	[ "$$remainder" != "$$candidate" ] || return 1; \
-	span=$${remainder%%-*}; \
-	flags=$${remainder#$$span-}; \
-	[ "$$flags" = "01" ] || return 1; \
-	swift_mk_is_lower_hex "$$trace" 32 || return 1; \
-	swift_mk_is_lower_hex "$$span" 16 || return 1; \
-	[ "$$candidate" = "00-$$trace-$$span-01" ] || return 1; \
-	traceparent="00-$$trace-$$span-01"; \
-}; \
-swift_mk_random_hex() { \
-	bytes=$$1; \
-	expected=16; \
-	if [ "$$bytes" = "16" ]; then expected=32; fi; \
-	value=""; \
-	if command -v openssl >/dev/null 2>&1; then \
-		value=$$(openssl rand -hex "$$bytes" 2>/dev/null || true); \
-		if swift_mk_is_lower_hex "$$value" "$$expected"; then printf '%s' "$$value"; return 0; fi; \
-	fi; \
-	if [ -r /dev/urandom ] && command -v od >/dev/null 2>&1; then \
-		value=$$(od -An -N "$$bytes" -tx1 /dev/urandom 2>/dev/null | tr -d ' \n'); \
-		if swift_mk_is_lower_hex "$$value" "$$expected"; then printf '%s' "$$value"; return 0; fi; \
-	fi; \
-	if [ -r /dev/urandom ] && command -v hexdump >/dev/null 2>&1; then \
-		value=$$(hexdump -n "$$bytes" -e '1/1 "%02x"' /dev/urandom 2>/dev/null); \
-		if swift_mk_is_lower_hex "$$value" "$$expected"; then printf '%s' "$$value"; return 0; fi; \
-	fi; \
-	return 1; \
-}; \
-log_dir=".make/logs"; \
-traceparent_file="$$log_dir/.traceparent"; \
-run_file="$$log_dir/.run"; \
-make_traceparent="$(TRACEPARENT)"; \
-make_trace_id="$(SWIFT_MK_TRACE_ID)"; \
-make_span_id="$(SWIFT_MK_SPAN_ID)"; \
-traceparent=""; \
-trace=""; \
-span=""; \
-mkdir -p "$$log_dir" || exit 1; \
-if swift_mk_use_traceparent "$$make_traceparent"; then \
-	:; \
-elif swift_mk_use_traceparent "$$TRACEPARENT"; then \
-	:; \
-elif swift_mk_is_lower_hex "$$make_trace_id" 32 && swift_mk_is_lower_hex "$$make_span_id" 16; then \
-	trace=$$make_trace_id; \
-	span=$$make_span_id; \
-	traceparent="00-$$trace-$$span-01"; \
-elif swift_mk_is_lower_hex "$$SWIFT_MK_TRACE_ID" 32 && swift_mk_is_lower_hex "$$SWIFT_MK_SPAN_ID" 16; then \
-	trace=$$SWIFT_MK_TRACE_ID; \
-	span=$$SWIFT_MK_SPAN_ID; \
-	traceparent="00-$$trace-$$span-01"; \
-elif [ "$(strip $(SWIFT_MK_SKIP_FETCH))" = "1" ] && [ -s "$$traceparent_file" ]; then \
-	IFS= read -r file_traceparent < "$$traceparent_file" || file_traceparent=""; \
-	swift_mk_use_traceparent "$$file_traceparent" || traceparent=""; \
-fi; \
-if [ -z "$$traceparent" ]; then \
-	trace=$$(swift_mk_random_hex 16) || exit 1; \
-	span=$$(swift_mk_random_hex 8) || exit 1; \
-	traceparent="00-$$trace-$$span-01"; \
-fi; \
-printf '%s\n' "$$traceparent" > "$$traceparent_file" || exit 1; \
-previous_run=""; \
-if [ -s "$$run_file" ]; then IFS= read -r previous_run < "$$run_file" || previous_run=""; fi; \
-if [ "$$previous_run" != "$$trace" ]; then \
-	printf '%s\n' "$$trace" > "$$run_file" || exit 1; \
-	printf '🔎 logs=.make/logs trace_id=%s span_id=%s\n' "$$trace" "$$span" >&2; \
-fi; \
-printf 'ok %s %s %s\n' "$$traceparent" "$$trace" "$$span")
-endef
-
-SWIFT_MK_TRACE_BOOTSTRAP_RESULT := $(call swift_mk_trace_bootstrap)
-$(if $(filter ok,$(word 1,$(SWIFT_MK_TRACE_BOOTSTRAP_RESULT))),,$(error swift-makefile failed to initialize trace))
-TRACEPARENT := $(word 2,$(SWIFT_MK_TRACE_BOOTSTRAP_RESULT))
-TRACE_ID := $(word 3,$(SWIFT_MK_TRACE_BOOTSTRAP_RESULT))
-SPAN_ID := $(word 4,$(SWIFT_MK_TRACE_BOOTSTRAP_RESULT))
-SWIFT_MK_TRACE_ID := $(TRACE_ID)
-SWIFT_MK_SPAN_ID := $(SPAN_ID)
-export TRACEPARENT TRACE_ID SPAN_ID SWIFT_MK_TRACE_ID SWIFT_MK_SPAN_ID
-
 # Fetch a single file from the local swift-makefile checkout (SWIFT_MK_DEV_DIR) or
-# GitHub. Used only to obtain swift.mk; swift.mk fetches everything else itself.
+# GitHub. Used to obtain swift.mk; swift.mk fetches everything else itself.
 define _swift_mk_fetch
 	tmp_file=$$(mktemp "$(2).tmp.XXXXXX") || exit 1; \
 	trap 'rm -f "$$tmp_file"' EXIT; \
@@ -125,6 +29,47 @@ define _swift_mk_fetch
 		fi; \
 	fi
 endef
+
+# Print the trace header before any other work. This is a minimal self-contained
+# core: adopt an inherited TRACEPARENT (any well-formed one, normalized to flags
+# 01), then the canonical TRACE_ID/SPAN_ID pair, then the SWIFT_MK_TRACE_ID/
+# SWIFT_MK_SPAN_ID aliases, or mint a fresh id, so the consumer bootstrap needs no
+# fetch and works offline. The full trace logic (same precedence plus stricter
+# W3C validation) lives once in scripts/swift-mk-trace.sh, which swift.mk runs for
+# the engine build. Wrapped in a define so make treats the shell body literally,
+# not as make comments/parens.
+define swift_mk_trace_min
+$(shell \
+	log_dir=".make/logs"; mkdir -p "$$log_dir" || exit 1; \
+	tp="$$TRACEPARENT"; trace=""; span=""; \
+	rest=$${tp#00-}; \
+	if [ "$$rest" != "$$tp" ]; then trace=$${rest%%-*}; tail=$${rest#*-}; span=$${tail%%-*}; fi; \
+	is_hex() { [ $${#1} -eq "$$2" ] && [ -z "`printf '%s' "$$1" | tr -d 0123456789abcdef`" ]; }; \
+	if ! is_hex "$$trace" 32 || ! is_hex "$$span" 16; then trace=""; span=""; fi; \
+	if [ -z "$$trace" ] && is_hex "$$TRACE_ID" 32 && is_hex "$$SPAN_ID" 16; then trace="$$TRACE_ID"; span="$$SPAN_ID"; fi; \
+	if [ -z "$$trace" ] && is_hex "$$SWIFT_MK_TRACE_ID" 32 && is_hex "$$SWIFT_MK_SPAN_ID" 16; then trace="$$SWIFT_MK_TRACE_ID"; span="$$SWIFT_MK_SPAN_ID"; fi; \
+	if [ -z "$$trace" ]; then \
+		trace=`od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d '[:space:]'`; \
+		span=`od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d '[:space:]'`; \
+	fi; \
+	if ! is_hex "$$trace" 32 || ! is_hex "$$span" 16; then exit 0; fi; \
+	tp="00-$$trace-$$span-01"; \
+	printf '%s\n' "$$tp" > "$$log_dir/.traceparent" || exit 1; \
+	prev=""; if [ -s "$$log_dir/.run" ]; then IFS= read -r prev < "$$log_dir/.run"; fi; \
+	if [ "$$prev" != "$$trace" ]; then printf '%s\n' "$$trace" > "$$log_dir/.run"; \
+		printf '🔎 logs=.make/logs trace_id=%s span_id=%s\n' "$$trace" "$$span" >&2; fi; \
+	printf 'ok %s %s %s' "$$tp" "$$trace" "$$span")
+endef
+
+SWIFT_MK_TRACE_RESULT := $(call swift_mk_trace_min)
+ifeq ($(word 1,$(SWIFT_MK_TRACE_RESULT)),ok)
+TRACEPARENT := $(word 2,$(SWIFT_MK_TRACE_RESULT))
+TRACE_ID := $(word 3,$(SWIFT_MK_TRACE_RESULT))
+SPAN_ID := $(word 4,$(SWIFT_MK_TRACE_RESULT))
+SWIFT_MK_TRACE_ID := $(TRACE_ID)
+SWIFT_MK_SPAN_ID := $(SPAN_ID)
+export TRACEPARENT TRACE_ID SPAN_ID SWIFT_MK_TRACE_ID SWIFT_MK_SPAN_ID
+endif
 
 # Clean-only fast path. When every requested goal is `clean`, skip fetching and
 # including swift.mk (no network, no swift-mk build, no consumer dev tool) and run
