@@ -1,7 +1,7 @@
 .make/
 .build/
 .swiftpm/
-Package.resolved
+swiftcheck/Package.resolved
 build/
 # Track the docs build area; the broad build/ rule above is for compiler output.
 !docs/build/
