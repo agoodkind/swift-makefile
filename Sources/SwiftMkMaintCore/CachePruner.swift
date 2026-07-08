@@ -15,6 +15,7 @@ public enum CachePruneError: Error, CustomStringConvertible, Equatable {
   case missingPath(String)
   case notDirectory(String)
   case pathRequired
+  case unsafePath(String)
 
   public var description: String {
     switch self {
@@ -26,6 +27,8 @@ public enum CachePruneError: Error, CustomStringConvertible, Equatable {
       return "cache prune: path is not a directory \(path)"
     case .pathRequired:
       return "cache prune: --path is required"
+    case .unsafePath(let path):
+      return "cache prune: unsafe path \(path)"
     }
   }
 }
@@ -113,6 +116,8 @@ public struct CachePruneResult: Equatable {
 // MARK: - CachePruner
 
 public struct CachePruner {
+  private static let minimumPrunePathComponents = 3
+
   private static let resourceKeys: Set<URLResourceKey> = [
     .contentModificationDateKey,
     .fileSizeKey,
@@ -174,14 +179,26 @@ public struct CachePruner {
     if trimmedPath.isEmpty {
       throw CachePruneError.pathRequired
     }
+    let expandedPath = NSString(string: trimmedPath).expandingTildeInPath
+    if !expandedPath.hasPrefix("/") {
+      throw CachePruneError.unsafePath(path)
+    }
+    let directoryURL = URL(fileURLWithPath: expandedPath, isDirectory: true)
+      .resolvingSymlinksInPath()
+      .standardizedFileURL
+    let resolvedPath = directoryURL.path
+    let components = resolvedPath.split(separator: "/", omittingEmptySubsequences: true)
+    if resolvedPath == "/" || components.count < Self.minimumPrunePathComponents {
+      throw CachePruneError.unsafePath(resolvedPath)
+    }
     var isDirectory: ObjCBool = false
-    guard fileManager.fileExists(atPath: trimmedPath, isDirectory: &isDirectory) else {
-      throw CachePruneError.missingPath(trimmedPath)
+    guard fileManager.fileExists(atPath: resolvedPath, isDirectory: &isDirectory) else {
+      throw CachePruneError.missingPath(resolvedPath)
     }
     guard isDirectory.boolValue else {
-      throw CachePruneError.notDirectory(trimmedPath)
+      throw CachePruneError.notDirectory(resolvedPath)
     }
-    return URL(fileURLWithPath: trimmedPath, isDirectory: true).standardizedFileURL
+    return directoryURL
   }
 
   private func collectEntries(

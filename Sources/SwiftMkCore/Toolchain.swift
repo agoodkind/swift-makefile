@@ -482,7 +482,9 @@ extension Toolchain {
       "SWIFT_MK_SPM_CACHE", defaultSubdirectory: "SourcePackages")
     if let spm {
       args.append(contentsOf: ["-clonedSourcePackagesDirPath", spm])
-      if Env.get("SWIFT_MK_POOL") == "1" {
+      if Env.get("SWIFT_MK_POOL") == "1",
+        sharedSourcePackagesCheckoutIsPopulated(spm)
+      {
         args.append("-disableAutomaticPackageResolution")
       }
     }
@@ -517,6 +519,22 @@ extension Toolchain {
       return defaultSharedCacheRoot().appendingPathComponent(defaultSubdirectory).path
     }
     return raw
+  }
+
+  static func sharedSourcePackagesCheckoutIsPopulated(_ sourcePackagesPath: String) -> Bool {
+    let checkoutsURL = URL(fileURLWithPath: sourcePackagesPath, isDirectory: true)
+      .appendingPathComponent("checkouts", isDirectory: true)
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: checkoutsURL.path, isDirectory: &isDirectory),
+      isDirectory.boolValue
+    else {
+      return false
+    }
+    do {
+      return try !FileManager.default.contentsOfDirectory(atPath: checkoutsURL.path).isEmpty
+    } catch {
+      return false
+    }
   }
 
   private static func defaultSharedCacheRoot() -> URL {

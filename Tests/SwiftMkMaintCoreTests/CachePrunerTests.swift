@@ -28,6 +28,24 @@ enum CachePrunerTests {
   }
 
   @Test
+  static func symlinkedPruneRootResolvesBeforeSafetyValidation() throws {
+    try withTemporaryDirectory { directory in
+      let symlink = directory.appendingPathComponent("cache-link", isDirectory: true)
+      try FileManager.default.createSymbolicLink(
+        at: symlink,
+        withDestinationURL: URL(fileURLWithPath: "/private/tmp", isDirectory: true))
+      let resolvedTarget = URL(fileURLWithPath: "/private/tmp", isDirectory: true)
+        .resolvingSymlinksInPath()
+        .standardizedFileURL
+        .path
+
+      #expect(throws: CachePruneError.unsafePath(resolvedTarget)) {
+        try CachePruner().prune(path: symlink.path, maxBytes: UInt64.max)
+      }
+    }
+  }
+
+  @Test
   static func symlinkAndUnreadableEntryDoNotCrashDriver() throws {
     try withTemporaryDirectory { directory in
       let target = directory.appendingPathComponent("target.txt")

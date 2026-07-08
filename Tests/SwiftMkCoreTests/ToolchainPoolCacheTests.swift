@@ -17,17 +17,48 @@ import Testing
 @Suite(.serialized)
 enum ToolchainPoolCacheTests {
   @Test
-  static func poolSharedSpmCacheDisablesAutomaticPackageResolution() {
-    withSharedCacheEnv(
-      module: "/tmp/swift-mk-mc",
-      spm: "/tmp/swift-mk-spm",
-      cas: "/tmp/swift-mk-cas",
-      pool: "1"
-    ) {
-      let args = Toolchain.sharedCacheArguments()
-      #expect(args.contains("-clonedSourcePackagesDirPath"))
-      #expect(args.contains("/tmp/swift-mk-spm"))
-      #expect(args.contains("-disableAutomaticPackageResolution"))
+  static func poolSharedSpmCacheAllowsResolutionWhenCheckoutsAreCold() throws {
+    try withTemporaryDirectory { directory in
+      let sourcePackages = directory.appendingPathComponent("SourcePackages", isDirectory: true)
+      try FileManager.default.createDirectory(
+        at: sourcePackages,
+        withIntermediateDirectories: true)
+
+      withSharedCacheEnv(
+        module: "/tmp/swift-mk-mc",
+        spm: sourcePackages.path,
+        cas: "/tmp/swift-mk-cas",
+        pool: "1"
+      ) {
+        let args = Toolchain.sharedCacheArguments()
+        #expect(args.contains("-clonedSourcePackagesDirPath"))
+        #expect(args.contains(sourcePackages.path))
+        #expect(!args.contains("-disableAutomaticPackageResolution"))
+      }
+    }
+  }
+
+  @Test
+  static func poolSharedSpmCacheDisablesAutomaticPackageResolutionWhenCheckoutsExist() throws {
+    try withTemporaryDirectory { directory in
+      let sourcePackages = directory.appendingPathComponent("SourcePackages", isDirectory: true)
+      let checkouts = sourcePackages.appendingPathComponent("checkouts", isDirectory: true)
+
+      try FileManager.default.createDirectory(
+        at: checkouts.appendingPathComponent("dependency", isDirectory: true),
+        withIntermediateDirectories: true)
+
+      withSharedCacheEnv(
+        module: "/tmp/swift-mk-mc",
+        spm: sourcePackages.path,
+        cas: "/tmp/swift-mk-cas",
+        pool: "1"
+      ) {
+        let args = Toolchain.sharedCacheArguments()
+        #expect(args.contains("-clonedSourcePackagesDirPath"))
+        #expect(args.contains(sourcePackages.path))
+        #expect(args.contains("-disableAutomaticPackageResolution"))
+      }
     }
   }
 
@@ -79,6 +110,26 @@ enum ToolchainPoolCacheTests {
       setenv(name, value, 1)
     } else {
       unsetenv(name)
+    }
+  }
+
+  private static func withTemporaryDirectory(_ run: (URL) throws -> Void) throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "swift-mk-toolchain-pool-\(UUID().uuidString)",
+      isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer {
+      removeTemporaryDirectory(directory)
+    }
+    try run(directory)
+  }
+
+  private static func removeTemporaryDirectory(_ directory: URL) {
+    let removalResult = Result {
+      try FileManager.default.removeItem(at: directory)
+    }
+    if case .failure(let error) = removalResult {
+      Issue.record("could not remove temporary directory \(directory.path): \(error)")
     }
   }
 }
