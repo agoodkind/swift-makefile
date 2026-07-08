@@ -530,11 +530,10 @@ extension Toolchain {
     else {
       return false
     }
-    do {
-      return try !FileManager.default.contentsOfDirectory(atPath: checkoutsURL.path).isEmpty
-    } catch {
+    guard let enumerator = FileManager.default.enumerator(atPath: checkoutsURL.path) else {
       return false
     }
+    return enumerator.nextObject() != nil
   }
 
   private static func defaultSharedCacheRoot() -> URL {

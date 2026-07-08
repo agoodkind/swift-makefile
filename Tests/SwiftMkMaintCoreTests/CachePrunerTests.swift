@@ -46,6 +46,13 @@ enum CachePrunerTests {
   }
 
   @Test
+  static func relativePathReportsTrimmedUnsafePath() throws {
+    #expect(throws: CachePruneError.unsafePath("relative/cache")) {
+      try CachePruner().prune(path: "  relative/cache  \n", maxBytes: UInt64.max)
+    }
+  }
+
+  @Test
   static func symlinkAndUnreadableEntryDoNotCrashDriver() throws {
     try withTemporaryDirectory { directory in
       let target = directory.appendingPathComponent("target.txt")

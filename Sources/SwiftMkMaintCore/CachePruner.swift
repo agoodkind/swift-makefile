@@ -181,7 +181,7 @@ public struct CachePruner {
     }
     let expandedPath = NSString(string: trimmedPath).expandingTildeInPath
     if !expandedPath.hasPrefix("/") {
-      throw CachePruneError.unsafePath(path)
+      throw CachePruneError.unsafePath(expandedPath)
     }
     let directoryURL = URL(fileURLWithPath: expandedPath, isDirectory: true)
       .resolvingSymlinksInPath()

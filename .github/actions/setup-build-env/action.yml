@@ -75,7 +75,7 @@ runs:
       id: dependency-hash
       shell: bash
       env:
-        DEPENDENCY_HASH: ${{ hashFiles('Package.swift', 'Package.resolved', 'Tuist/Package.swift', 'Tuist/Package.resolved', 'Tools/Package.swift', 'Tools/Package.resolved', 'swiftcheck/Package.swift', 'swiftcheck/Package.resolved') }}
+        DEPENDENCY_HASH: ${{ hashFiles('Package.swift', 'Package.resolved', 'Project.swift', 'Workspace.swift', 'Tuist.swift', 'Tuist/Package.swift', 'Tuist/Package.resolved', 'Tools/Package.swift', 'Tools/Package.resolved', 'swiftcheck/Package.swift', 'swiftcheck/Package.resolved', 'project.yml') }}
       run: |
         set -euo pipefail
 

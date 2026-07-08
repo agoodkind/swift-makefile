@@ -78,6 +78,25 @@ enum ToolchainBuildScriptTests {
     #expect(action.contains(#"if [[ ! -d "${POOL_CACHE_ROOT}" ]]; then"#))
   }
 
+  @Test
+  static func setupBuildEnvDependencyHashIncludesConsumerManifests() throws {
+    let action = try rootFile(".github/actions/setup-build-env/action.yml")
+    let expression = try dependencyHashExpression(in: action)
+
+    #expect(expression.contains("'Package.swift'"))
+    #expect(expression.contains("'Package.resolved'"))
+    #expect(expression.contains("'Project.swift'"))
+    #expect(expression.contains("'Workspace.swift'"))
+    #expect(expression.contains("'Tuist.swift'"))
+    #expect(expression.contains("'Tuist/Package.swift'"))
+    #expect(expression.contains("'Tuist/Package.resolved'"))
+    #expect(expression.contains("'Tools/Package.swift'"))
+    #expect(expression.contains("'Tools/Package.resolved'"))
+    #expect(expression.contains("'swiftcheck/Package.swift'"))
+    #expect(expression.contains("'swiftcheck/Package.resolved'"))
+    #expect(expression.contains("'project.yml'"))
+  }
+
   private static func rootFile(_ relativePath: String) throws -> String {
     let root = URL(fileURLWithPath: #filePath)
       .deletingLastPathComponent()
@@ -85,6 +104,15 @@ enum ToolchainBuildScriptTests {
       .deletingLastPathComponent()
     return try String(
       contentsOf: root.appendingPathComponent(relativePath), encoding: .utf8)
+  }
+
+  private static func dependencyHashExpression(in action: String) throws -> String {
+    let lines = action.split(separator: "\n", omittingEmptySubsequences: false)
+    for line in lines
+    where line.contains("DEPENDENCY_HASH: ${{ hashFiles(") {
+      return String(line)
+    }
+    throw ScriptFailure(message: "missing DEPENDENCY_HASH hashFiles expression")
   }
 
   private static func dependencyHash(for packageDirectory: URL) throws -> String {
