@@ -112,7 +112,14 @@ install: deploy
 # build dir and the engine-managed DerivedData and runs `swift package clean`,
 # ignoring any consumer SWIFT_CLEAN_CMD so a clean never compiles a dev tool. This
 # is the full-path clean (for example `make clean build`); a clean-only goal takes
-# the self-contained fast path in bootstrap.mk and never loads this module.
+# the self-contained fast path in bootstrap.mk and never loads this module. The
+# DerivedData removal is guarded to a real subpath of $(CURDIR), the same as the
+# fast path, so a SWIFT_MK_DERIVED_DATA override cannot `rm -rf` an arbitrary path.
 clean:
 	@if [ -f Package.swift ]; then swift package clean >/dev/null 2>&1 || true; fi; \
-		rm -rf .build "$(SWIFT_MK_DERIVED_DATA)"
+		rm -rf .build; \
+		dd="$(abspath $(SWIFT_MK_DERIVED_DATA))"; \
+		case "$$dd" in \
+			"$(CURDIR)"/?*) rm -rf "$$dd" ;; \
+			*) printf 'swift-mk: refusing to remove SWIFT_MK_DERIVED_DATA=%s (resolves outside the checkout)\n' "$(SWIFT_MK_DERIVED_DATA)" >&2 ;; \
+		esac

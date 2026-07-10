@@ -14,10 +14,14 @@ set -euo pipefail
 
 ENGINE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR=""
+OUTSIDE_DIR=""
 
 cleanup() {
     if [[ -n "$WORK_DIR" && -d "$WORK_DIR" ]]; then
         rm -rf "$WORK_DIR"
+    fi
+    if [[ -n "$OUTSIDE_DIR" && -d "$OUTSIDE_DIR" ]]; then
+        rm -rf "$OUTSIDE_DIR"
     fi
 }
 trap cleanup EXIT INT TERM
@@ -62,7 +66,27 @@ if [[ -d "$WORK_DIR/.derived-data" ]]; then
     fail "clean did not remove .derived-data"
 fi
 
-# 2. Guard: a build goal must NOT take the fast path, so parsing fetches swift.mk.
+# 2. Guard: an out-of-checkout SWIFT_MK_DERIVED_DATA override is refused, not
+#    deleted, so a stray `make clean SWIFT_MK_DERIVED_DATA=/some/path` cannot
+#    `rm -rf` an arbitrary path.
+OUTSIDE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/swift-mk-clean-outside.XXXXXX")" || exit 1
+touch "$OUTSIDE_DIR/sentinel"
+guard_log="$WORK_DIR/guard.log"
+if ! make -C "$WORK_DIR" clean SWIFT_MK_DERIVED_DATA="$OUTSIDE_DIR" > "$guard_log" 2>&1; then
+    cat "$guard_log" >&2
+    fail "guarded clean exited non-zero"
+fi
+
+if [[ ! -e "$OUTSIDE_DIR/sentinel" ]]; then
+    fail "clean removed an out-of-checkout SWIFT_MK_DERIVED_DATA (guard failed)"
+fi
+
+if ! grep -q 'refusing to remove SWIFT_MK_DERIVED_DATA' "$guard_log"; then
+    cat "$guard_log" >&2
+    fail "clean did not print the refusal for an out-of-checkout override"
+fi
+
+# 3. Guard: a build goal must NOT take the fast path, so parsing fetches swift.mk.
 #    A dry run (-n) still evaluates the parse-time fetch without running recipes.
 build_log="$WORK_DIR/build.log"
 if ! make -C "$WORK_DIR" -n build > "$build_log" 2>&1; then
