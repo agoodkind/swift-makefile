@@ -167,6 +167,11 @@ enum BrewLockScriptTests {
           "FAKE_BREW_COUNT_FILE": countFile.path,
           "FAKE_BREW_ENV_FILE": environmentFile.path,
           "FAKE_BREW_MODE": mode,
+          // The runner inherits the ambient environment, and GitHub's hosted
+          // macOS images export HOMEBREW_NO_AUTO_UPDATE=1 globally. Pin it empty
+          // so the fake brew records what swift_mk_run_brew sets per command
+          // (empty for update, 1 for install/upgrade), not the runner's value.
+          "HOMEBREW_NO_AUTO_UPDATE": "",
           "PATH": binDirectory.path + ":" + ProcessInfo.processInfo.environment["PATH", default: ""],
           "SWIFT_MK_BREW_LOCK_DIR": lockDirectory.path,
           "SWIFT_MK_BREW_RETRY_BASE_SECONDS": "0",
