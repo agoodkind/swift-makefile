@@ -56,7 +56,7 @@ public enum Logging {
         ensureStartedLocked()
         return
       }
-      let adopted = Correlation.fromTraceparent(Env.get("TRACEPARENT"))
+      let adopted = Correlation.fromEnvironment()
       let current = adopted ?? Correlation.new()
       started = true
       correlationValue = current
@@ -166,7 +166,7 @@ public enum Logging {
   }
 
   private static func resolveCorrelation() -> Correlation {
-    if let adopted = Correlation.fromTraceparent(Env.get("TRACEPARENT")) {
+    if let adopted = Correlation.fromEnvironment() {
       exportCorrelation(adopted)
       return adopted
     }

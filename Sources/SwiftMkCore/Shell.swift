@@ -18,9 +18,10 @@ public enum Shell {
 
   /// Number of launch attempts before a spawn failure is treated as terminal.
   private static let maxLaunchAttempts = 5
-  private static let traceEnvironmentKeys = [
-    "TRACEPARENT", "TRACE_ID", "SPAN_ID", "SWIFT_MK_TRACE_ID", "SWIFT_MK_SPAN_ID",
-  ]
+  /// The live trace/span keys re-applied over a child's environment overrides so a
+  /// subprocess joins the run trace, driven from the one Correlation.environmentKeys
+  /// list the test suites also share.
+  private static let traceEnvironmentKeys = Correlation.environmentKeys
 
   /// Build and start a process, retrying a spurious launch failure with a fresh
   /// `Process` each attempt. An `NSTask` cannot be relaunched (a second `run()`
