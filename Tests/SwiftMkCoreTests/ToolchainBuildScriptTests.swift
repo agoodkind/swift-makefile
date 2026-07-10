@@ -233,7 +233,12 @@ enum ToolchainBuildScriptTests {
         ofItemAtPath: fakeSwiftPath.path)
 
       let scriptPath = repoRoot().appendingPathComponent("scripts/swift-mk-build.sh").path
-      let command = #"source "${SCRIPT_PATH}" path >/dev/null; swift_mk_build_from_repo"#
+      // Pin the subprocess to the package directory. Shell.run inherits the
+      // test process's global working directory, which a parallel test's
+      // temporary-directory cleanup can remove, so bash would otherwise fail at
+      // startup with "getcwd: cannot access parent directories".
+      let command =
+        #"cd "${SWIFT_MK_BUILD_REPO}"; source "${SCRIPT_PATH}" path >/dev/null; swift_mk_build_from_repo"#
       let existingPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
       return Shell.run(
         "/bin/bash",
