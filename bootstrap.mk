@@ -87,10 +87,20 @@ ifeq ($(strip $(SWIFT_MK_CLEAN_ONLY)),1)
 # never compiles a dev tool. The trace header already printed above.
 SWIFT_MK_DERIVED_DATA ?= $(CURDIR)/.derived-data
 
+# SWIFT_MK_DERIVED_DATA is an override (`?=`, and swift.mk uses `override`), so a
+# stray `make clean SWIFT_MK_DERIVED_DATA=/some/path` would otherwise `rm -rf` an
+# arbitrary path. Resolve it lexically with `abspath` (collapses `..`, absolutizes a
+# relative value against the checkout) and only remove it when it resolves to a real
+# subpath of $(CURDIR); anything else refuses loudly instead of deleting.
 .PHONY: clean
 clean:
 	@if [ -f Package.swift ]; then swift package clean >/dev/null 2>&1 || true; fi; \
-		rm -rf .build "$(SWIFT_MK_DERIVED_DATA)"
+		rm -rf .build; \
+		dd="$(abspath $(SWIFT_MK_DERIVED_DATA))"; \
+		case "$$dd" in \
+			"$(CURDIR)"/?*) rm -rf "$$dd" ;; \
+			*) printf 'swift-mk: refusing to remove SWIFT_MK_DERIVED_DATA=%s (resolves outside the checkout)\n' "$(SWIFT_MK_DERIVED_DATA)" >&2 ;; \
+		esac
 
 else
 
