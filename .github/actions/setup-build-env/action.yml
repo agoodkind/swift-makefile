@@ -71,6 +71,59 @@ runs:
             git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
         fi
 
+    - name: Resolve dependency hash
+      id: dependency-hash
+      shell: bash
+      env:
+        DEPENDENCY_HASH: ${{ hashFiles('**/Package.swift', '**/Package.resolved', '**/Project.swift', '**/Workspace.swift', '**/Tuist.swift', '**/project.yml', '**/*.xcodeproj/project.pbxproj', '**/*.xcworkspace/contents.xcworkspacedata', '**/*.xcworkspace/xcshareddata/swiftpm/Package.resolved', '**/*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+      run: |
+        set -euo pipefail
+
+        if [[ -z "${DEPENDENCY_HASH}" ]]; then
+            dependency_hash_files=$(mktemp)
+            if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+                while IFS= read -r -d '' path; do
+                    case "${path}" in
+                        Package.swift|*/Package.swift|Package.resolved|*/Package.resolved|Project.swift|*/Project.swift|Workspace.swift|*/Workspace.swift|Tuist.swift|*/Tuist.swift|project.yml|*/project.yml|*.xcodeproj/project.pbxproj|*.xcworkspace/contents.xcworkspacedata|*.xcworkspace/xcshareddata/swiftpm/Package.resolved|*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved)
+                            printf '%s\0' "${path}" >> "${dependency_hash_files}"
+                            ;;
+                    esac
+                done < <(git ls-files -z)
+            fi
+            if [[ -s "${dependency_hash_files}" ]]; then
+                DEPENDENCY_HASH=$(xargs -0 shasum < "${dependency_hash_files}" | awk '{ print $1 }' | LC_ALL=C sort | shasum | awk '{ print $1 }')
+            else
+                DEPENDENCY_HASH=$(printf '%s\n' "${GITHUB_SHA:-$(git rev-parse HEAD)}" | shasum | awk '{ print $1 }')
+            fi
+            rm -f "${dependency_hash_files}"
+        fi
+        printf 'value=%s\n' "${DEPENDENCY_HASH}" >> "${GITHUB_OUTPUT}"
+
+    - name: Configure self-hosted pool cache
+      shell: bash
+      env:
+        DEPENDENCY_HASH: ${{ steps.dependency-hash.outputs.value }}
+      run: |
+        set -euo pipefail
+
+        POOL_CACHE_ROOT="/Volumes/My Shared Files/cache"
+        if [[ ! -d "${POOL_CACHE_ROOT}" ]]; then
+            echo "pool cache mount absent at ${POOL_CACHE_ROOT}; falling back to actions/cache"
+            exit 0
+        fi
+
+        # The write-heavy package-support cache, module cache, and CAS stores stay
+        # off the shared mount. Concurrent writers corrupt them, so the shared pool
+        # mount carries only the immutable SourcePackages checkout cache.
+        pool_local_cache="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/swift-mk/pool-cache"
+        spm_cache="${POOL_CACHE_ROOT}/spm/${DEPENDENCY_HASH}/SourcePackages"
+        mkdir -p "${pool_local_cache}" "${spm_cache}"
+        {
+            printf 'SWIFT_MK_POOL=1\n'
+            printf 'SWIFT_MK_POOL_LOCAL_CACHE=%s\n' "${pool_local_cache}"
+            printf 'SWIFT_MK_SPM_CACHE=%s\n' "${spm_cache}"
+        } >> "${GITHUB_ENV}"
+
     # The cache plan (keys plus the cacheable path list) lives in the swift-mk
     # engine (`swift-mk cache plan`), so CI and local share one cache model. The
     # engine must be built before it can emit the plan that warms the build, so a
@@ -124,6 +177,7 @@ runs:
 
     - name: Restore swift-mk toolchain
       id: swift-mk-toolchain
+      if: env.SWIFT_MK_POOL != '1'
       uses: actions/cache@v5
       with:
         path: ~/.swift-mk-ci-toolchain
@@ -141,7 +195,7 @@ runs:
         CACHE_PROFILE: ${{ inputs.cache-profile }}
         CACHE_VERSION: ${{ inputs.cache-version }}
         SWIFT_MK_CI_GATE: ${{ inputs.gate }}
-        DEPENDENCY_HASH: ${{ hashFiles('Package.swift', 'Package.resolved', 'Tuist/Package.swift', 'Tuist/Package.resolved', 'Tools/Package.swift', 'Tools/Package.resolved', 'swiftcheck/Package.swift', 'swiftcheck/Package.resolved', '.tool-versions', 'mise.toml', '.config/mise/conf.d/*.toml', 'project.yml') }}
+        DEPENDENCY_HASH: ${{ steps.dependency-hash.outputs.value }}
         BUILD_HASH: ${{ hashFiles('Package.swift', 'Package.resolved', 'Project.swift', 'Workspace.swift', 'Tuist.swift', 'Tuist/Package.swift', 'Tuist/Package.resolved', 'Tools/Package.swift', 'Tools/Package.resolved', 'swiftcheck/Package.swift', 'swiftcheck/Package.resolved', 'project.yml', 'Makefile') }}
         EXTRA_CACHE_PATHS: ${{ inputs.extra-cache-paths }}
       run: |
@@ -185,7 +239,7 @@ runs:
         "${bin}" cache plan
 
     - name: Restore dependency cache
-      if: steps.cache-plan.outputs.dependency-cache-enabled == 'true'
+      if: steps.cache-plan.outputs.dependency-cache-enabled == 'true' && env.SWIFT_MK_POOL != '1'
       uses: actions/cache@v5
       with:
         path: ${{ steps.cache-plan.outputs.dependency-paths }}
@@ -193,7 +247,7 @@ runs:
         restore-keys: ${{ steps.cache-plan.outputs.dependency-restore-keys }}
 
     - name: Restore build intermediate cache
-      if: steps.cache-plan.outputs.build-cache-enabled == 'true'
+      if: steps.cache-plan.outputs.build-cache-enabled == 'true' && env.SWIFT_MK_POOL != '1'
       uses: actions/cache@v5
       with:
         path: ${{ steps.cache-plan.outputs.build-paths }}
@@ -207,7 +261,7 @@ runs:
     # an empty pile over a full one. Restore-keys prefer this gate's own latest pile,
     # then any sibling gate's pile for the same dependencies.
     - name: Restore and roll compile cache
-      if: steps.cache-plan.outputs.compile-cache-enabled == 'true'
+      if: steps.cache-plan.outputs.compile-cache-enabled == 'true' && env.SWIFT_MK_POOL != '1'
       uses: actions/cache@v5
       with:
         path: ${{ steps.cache-plan.outputs.compile-paths }}
@@ -222,7 +276,7 @@ runs:
     # manifests and any local mise config rather than a root pin file, and the
     # shared config is materialized here before `mise install` runs.
     - name: Install mise and Tuist
-      if: ${{ inputs.install-tuist == 'true' || (inputs.install-tuist == 'auto' && hashFiles('.tool-versions', 'mise.toml', 'Project.swift', 'Workspace.swift', 'Tuist.swift') != '') }}
+      if: ${{ env.SWIFT_MK_POOL != '1' && (inputs.install-tuist == 'true' || (inputs.install-tuist == 'auto' && hashFiles('.tool-versions', 'mise.toml', 'Project.swift', 'Workspace.swift', 'Tuist.swift') != '')) }}
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
@@ -252,7 +306,7 @@ runs:
         tuist version
 
     - name: Install XcodeGen
-      if: ${{ inputs.install-xcodegen == 'true' || (inputs.install-xcodegen == 'auto' && hashFiles('project.yml') != '') }}
+      if: ${{ env.SWIFT_MK_POOL != '1' && (inputs.install-xcodegen == 'true' || (inputs.install-xcodegen == 'auto' && hashFiles('project.yml') != '')) }}
       shell: bash
       run: |
         set -euo pipefail
@@ -264,6 +318,9 @@ runs:
         xcodegen --version
 
     - name: Install Swift lint and analysis tools
+      # Runs on the pool too: the golden image ships Xcode but not the lint and
+      # analysis tools. The command -v check makes this a fast skip when a
+      # future image preinstalls them.
       if: ${{ inputs.install-lint-tools == 'true' }}
       shell: bash
       run: |
