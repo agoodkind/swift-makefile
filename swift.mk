@@ -261,6 +261,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/SwiftPM.swift \
 	Tests/SwiftMkRenderCoreTests/TemplateRendererTests.swift \
 	Tests/SwiftMkCoreTests/SwiftMkCoreTests.swift \
+	Tests/SwiftMkCoreTests/BrewLockScriptTests.swift \
 	Tests/SwiftMkCoreTests/BuildTests.swift \
 	Tests/SwiftMkCoreTests/GateProofTests.swift \
 	Tests/SwiftMkCoreTests/GitIgnoreBatchTests.swift \

@@ -311,8 +311,11 @@ runs:
       run: |
         set -euo pipefail
 
+        # shellcheck source=.github/actions/brew-lock/brew-lock.sh
+        source "${GITHUB_ACTION_PATH}/../brew-lock/brew-lock.sh"
+
         if ! command -v xcodegen >/dev/null 2>&1; then
-            brew install xcodegen
+            brew_locked install xcodegen
         fi
 
         xcodegen --version
@@ -330,13 +333,19 @@ runs:
         # bottles lag the current formulae and CI lints with a different tool
         # version than the fleet's local machines (a one-patch SwiftLint skew
         # produced 153 phantom findings). Update once, then upgrade or install.
-        brew update --quiet
+        # On the pool the VM boot already refreshed the index once, so
+        # brew_locked_update skips the refresh there (marker) and co-tenant slots
+        # never run a contending `brew update`; hosted runners still refresh.
+        # shellcheck source=.github/actions/brew-lock/brew-lock.sh
+        source "${GITHUB_ACTION_PATH}/../brew-lock/brew-lock.sh"
+
+        brew_locked_update
 
         for tool in swift-format swiftlint periphery osv-scanner; do
             if command -v "$tool" >/dev/null 2>&1; then
-                brew upgrade "$tool" 2>/dev/null || true
+                brew_locked upgrade "$tool" 2>/dev/null || true
             else
-                brew install "$tool"
+                brew_locked install "$tool"
             fi
         done
 
