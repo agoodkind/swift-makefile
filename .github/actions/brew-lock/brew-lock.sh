@@ -77,6 +77,9 @@ swift_mk_brew_with_retries() {
     max_wait_seconds=${SWIFT_MK_BREW_RETRY_MAX_WAIT_SECONDS:-180}
     start_seconds=${SECONDS}
     attempt=1
+    # Default the status so a non-positive max_attempts (loop never runs) does
+    # not return an unbound variable under set -u.
+    brew_status=0
 
     while ((attempt <= max_attempts)); do
         brew_status=0
