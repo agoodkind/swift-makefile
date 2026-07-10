@@ -552,7 +552,9 @@ extension Toolchain {
       .path
   }
 
-  static func sharedSourcePackagesCheckoutIsPopulated(_ sourcePackagesPath: String) -> Bool {
+  private static func sharedSourcePackagesCheckoutIsPopulated(
+    _ sourcePackagesPath: String
+  ) -> Bool {
     let checkoutsURL = URL(fileURLWithPath: sourcePackagesPath, isDirectory: true)
       .appendingPathComponent("checkouts", isDirectory: true)
     var isDirectory: ObjCBool = false
