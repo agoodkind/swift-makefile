@@ -132,3 +132,18 @@ brew_locked() {
     swift_mk_release_brew_lock
     return "${brew_status}"
 }
+
+# brew_locked_update refreshes the Homebrew index, but skips the refresh when a
+# VM-boot marker says the pool already refreshed it once at prep time. The pool
+# broker's clone-runner-slots.sh runs `brew update` once per VM boot and drops
+# the marker, so co-tenant slot jobs never run a contending `brew update`.
+# Hosted runners have no marker, so they refresh here as before.
+brew_locked_update() {
+    local marker
+    marker="${SWIFT_MK_BREW_BOOT_REFRESH_MARKER:-/tmp/swift-mk-brew-boot-refreshed}"
+    if [[ -f "${marker}" ]]; then
+        printf 'swift-mk: Homebrew index refreshed at VM boot (%s); skipping brew update\n' "${marker}" >&2
+        return 0
+    fi
+    brew_locked update --quiet
+}

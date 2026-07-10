@@ -61,6 +61,42 @@ enum BrewLockScriptTests {
     }
   }
 
+  @Test(.timeLimit(.minutes(1)))
+  static func skipsBrewUpdateWhenBootRefreshMarkerPresent() throws {
+    try withBrewLockHarness(mode: "success") { harness in
+      let marker = harness.directory.appendingPathComponent("boot-refreshed").path
+      let result = harness.run(
+        """
+        export SWIFT_MK_BREW_BOOT_REFRESH_MARKER="\(marker)"
+        : > "${SWIFT_MK_BREW_BOOT_REFRESH_MARKER}"
+        brew_locked_update
+        """)
+      let invocationCount = try harness.invocationCount()
+
+      #expect(result.status == 0)
+      #expect(result.stderr.contains("skipping brew update"))
+      #expect(invocationCount == 0)
+    }
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  static func runsBrewUpdateWhenBootRefreshMarkerAbsent() throws {
+    try withBrewLockHarness(mode: "success") { harness in
+      let marker = harness.directory.appendingPathComponent("absent-marker").path
+      let result = harness.run(
+        """
+        export SWIFT_MK_BREW_BOOT_REFRESH_MARKER="\(marker)"
+        brew_locked_update
+        """)
+      let invocationCount = try harness.invocationCount()
+      let environmentLines = try harness.environmentLines()
+
+      #expect(result.status == 0)
+      #expect(invocationCount == 1)
+      #expect(environmentLines == ["update="])
+    }
+  }
+
   private static func withBrewLockHarness(
     mode: String,
     _ run: (BrewLockHarness) throws -> Void
