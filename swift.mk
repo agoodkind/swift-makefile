@@ -272,8 +272,11 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/SigningVerificationTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainPrebuildTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainTests.swift \
+	Tests/SwiftMkCoreTests/ToolchainPoolCacheTests.swift \
+	Tests/SwiftMkCoreTests/ToolchainSharedCacheTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainCoverageTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainBuildCoverageTests.swift \
+	Tests/SwiftMkCoreTests/ToolchainBuildScriptTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainReceiptTests.swift \
 	Tests/SwiftMkCoreTests/GatedBuildHarness.swift \
 	Tests/SwiftMkCoreTests/GatedBuildTests.swift \
@@ -504,17 +507,19 @@ SWIFT_MK_DERIVED_DATA ?= $(CURDIR)/.derived-data
 # at the same physical dir the consumer cwd already implied, so packaging that reads
 # BUILD_DIR is unaffected.
 override SWIFT_MK_DERIVED_DATA := $(abspath $(if $(strip $(SWIFT_MK_DERIVED_DATA)),$(SWIFT_MK_DERIVED_DATA),$(CURDIR)/.derived-data))
-# Shared, content-addressed build caches reused across every worktree and clone.
-# DerivedData stays per checkout (above) so concurrent builds never collide, but the
-# Clang module cache and the SPM clone dir are keyed by content and revision, so one
-# shared copy is safe and avoids a multi-GB ModuleCache per worktree. Set either to
-# `off` to opt out. The `swift-mk toolchain` primitive reads these from the
-# environment, so they are exported to the recipe shell.
+# Shared build caches reused across every worktree and clone. DerivedData stays
+# per checkout (above) so concurrent builds never collide. On hosted and local
+# checkouts, the Clang module cache and SPM clone dir can both live under the
+# shared cache root. Pool builds keep the SPM clone dir on the shared mount but
+# move write-heavy package support and module-cache state under
+# SWIFT_MK_POOL_LOCAL_CACHE.
 SWIFT_MK_CACHE_ROOT ?= $(HOME)/Library/Caches/swift-mk
 SWIFT_MK_MODULE_CACHE ?= $(SWIFT_MK_CACHE_ROOT)/ModuleCache
 SWIFT_MK_SPM_CACHE ?= $(SWIFT_MK_CACHE_ROOT)/SourcePackages
 export SWIFT_MK_MODULE_CACHE
 export SWIFT_MK_SPM_CACHE
+export SWIFT_MK_POOL
+export SWIFT_MK_POOL_LOCAL_CACHE
 # The LLVM compilation-cache (CAS) store. Kept OUTSIDE per-checkout DerivedData,
 # unlike Xcode's default of $(SWIFT_MK_DERIVED_DATA)/CompilationCache.noindex, so the
 # dead-code coverage build's `rm -rf $(SWIFT_MK_DERIVED_DATA)` cannot destroy it, and
