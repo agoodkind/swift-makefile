@@ -175,6 +175,9 @@ enum BrewLockScriptTests {
     }
 
     func invocationCount() throws -> Int {
+      guard FileManager.default.fileExists(atPath: countFile.path) else {
+        return 0
+      }
       let contents = try String(contentsOf: countFile, encoding: .utf8)
       return Int(contents.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
     }
