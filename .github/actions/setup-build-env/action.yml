@@ -75,12 +75,27 @@ runs:
       id: dependency-hash
       shell: bash
       env:
-        DEPENDENCY_HASH: ${{ hashFiles('Package.swift', 'Package.resolved', 'Project.swift', 'Workspace.swift', 'Tuist.swift', 'Tuist/Package.swift', 'Tuist/Package.resolved', 'Tools/Package.swift', 'Tools/Package.resolved', 'swiftcheck/Package.swift', 'swiftcheck/Package.resolved', 'project.yml') }}
+        DEPENDENCY_HASH: ${{ hashFiles('**/Package.swift', '**/Package.resolved', '**/Project.swift', '**/Workspace.swift', '**/Tuist.swift', '**/project.yml', '**/*.xcodeproj/project.pbxproj', '**/*.xcworkspace/contents.xcworkspacedata', '**/*.xcworkspace/xcshareddata/swiftpm/Package.resolved', '**/*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
       run: |
         set -euo pipefail
 
         if [[ -z "${DEPENDENCY_HASH}" ]]; then
-            DEPENDENCY_HASH="no-deps"
+            dependency_hash_files=$(mktemp)
+            if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+                while IFS= read -r -d '' path; do
+                    case "${path}" in
+                        Package.swift|*/Package.swift|Package.resolved|*/Package.resolved|Project.swift|*/Project.swift|Workspace.swift|*/Workspace.swift|Tuist.swift|*/Tuist.swift|project.yml|*/project.yml|*.xcodeproj/project.pbxproj|*.xcworkspace/contents.xcworkspacedata|*.xcworkspace/xcshareddata/swiftpm/Package.resolved|*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved)
+                            printf '%s\0' "${path}" >> "${dependency_hash_files}"
+                            ;;
+                    esac
+                done < <(git ls-files -z)
+            fi
+            if [[ -s "${dependency_hash_files}" ]]; then
+                DEPENDENCY_HASH=$(xargs -0 shasum < "${dependency_hash_files}" | awk '{ print $1 }' | LC_ALL=C sort | shasum | awk '{ print $1 }')
+            else
+                DEPENDENCY_HASH=$(printf '%s\n' "${GITHUB_SHA:-$(git rev-parse HEAD)}" | shasum | awk '{ print $1 }')
+            fi
+            rm -f "${dependency_hash_files}"
         fi
         printf 'value=%s\n' "${DEPENDENCY_HASH}" >> "${GITHUB_OUTPUT}"
 

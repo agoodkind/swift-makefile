@@ -4,8 +4,6 @@ set -eo pipefail
 # Build and cache the swift-mk tooling binary. Runs before the binary exists, so
 # it stays shell. Modeled on swift-mk-swiftcheck-extra.sh.
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-
 swift_mk_output_path() {
     printf "%s\n" "${SWIFT_MK_BIN:-${SWIFT_MK_ROOT:-${PWD}}/.make/swift-mk}"
 }
@@ -26,10 +24,12 @@ swift_mk_dependency_hash() {
     local manifest_path
     local package_path
     local resolved_path
+    local swiftpm_resolved_path
 
     package_path="$1"
     manifest_path="${package_path}/Package.swift"
     resolved_path="${package_path}/Package.resolved"
+    swiftpm_resolved_path="${package_path}/.swiftpm/configuration/Package.resolved"
     if [[ ! -f "${manifest_path}" ]]; then
         printf "%s\n" "swift-mk-missing-package"
         return
@@ -38,6 +38,8 @@ swift_mk_dependency_hash() {
         shasum "${manifest_path}"
         if [[ -f "${resolved_path}" ]]; then
             shasum "${resolved_path}"
+        elif [[ -f "${swiftpm_resolved_path}" ]]; then
+            shasum "${swiftpm_resolved_path}"
         fi
     } | awk '{ print $1 }' | LC_ALL=C sort | shasum | awk '{ print $1 }'
 }
@@ -75,6 +77,8 @@ swift_mk_build_from_repo() {
     local package_path
     local config
     local bin_dir
+    local bin_dir_output
+    local bin_dir_status
     local bin_path
     local scratch_path
     local -a pool_cache_args
@@ -99,13 +103,18 @@ swift_mk_build_from_repo() {
         pool_cache_args+=("${arg}")
     done < <(swift_mk_pool_cache_args "${package_path}")
     swift build --package-path "${package_path}" --scratch-path "${scratch_path}" "${pool_cache_args[@]}" -c "${config}" --product swift-mk
-    bin_dir=$(
-        swift build --package-path "${package_path}" --scratch-path "${scratch_path}" "${pool_cache_args[@]}" -c "${config}" --show-bin-path \
-            | tr -d '\r' \
-            | awk 'NF { line = $0 } END { print line }'
-    )
-    if [[ -z "${bin_dir}" ]]; then
+    set +e
+    bin_dir_output=$(swift build --package-path "${package_path}" --scratch-path "${scratch_path}" "${pool_cache_args[@]}" -c "${config}" --show-bin-path 2>&1)
+    bin_dir_status=$?
+    set -e
+    bin_dir=$(printf "%s\n" "${bin_dir_output}" | tr -d '\r' | awk 'NF { line = $0 } END { print line }')
+    if [[ "${bin_dir_status}" -ne 0 || -z "${bin_dir}" ]]; then
         printf "swift-mk: could not resolve SwiftPM binary output path\n" >&2
+        if [[ -n "${bin_dir_output//[[:space:]]/}" ]]; then
+            printf "swift-mk: swift build --show-bin-path output:\n%s\n" "${bin_dir_output}" >&2
+        else
+            printf "swift-mk: swift build --show-bin-path produced no output\n" >&2
+        fi
         return 1
     fi
     bin_path="${bin_dir}/swift-mk"
