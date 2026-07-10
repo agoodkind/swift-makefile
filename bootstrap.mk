@@ -71,39 +71,6 @@ SWIFT_MK_SPAN_ID := $(SPAN_ID)
 export TRACEPARENT TRACE_ID SPAN_ID SWIFT_MK_TRACE_ID SWIFT_MK_SPAN_ID
 endif
 
-# Clean-only fast path. When every requested goal is `clean`, skip fetching and
-# including swift.mk (no network, no swift-mk build, no consumer dev tool) and run
-# an engine-owned trivial clean. Any goal list that also names a build, lint, or
-# test goal falls through to the full engine below, so the gates are never
-# skipped. MAKECMDGOALS must be non-empty (the default goal is never clean-only)
-# and contain nothing but `clean`.
-SWIFT_MK_CLEAN_ONLY := $(if $(strip $(MAKECMDGOALS)),$(if $(strip $(filter-out clean,$(MAKECMDGOALS))),,1),)
-
-ifeq ($(strip $(SWIFT_MK_CLEAN_ONLY)),1)
-
-# Engine-owned trivial clean, self-contained so it needs no fetched module. It
-# removes the SwiftPM build dir and the engine-managed DerivedData and runs
-# `swift package clean`, ignoring any consumer SWIFT_CLEAN_CMD so `make clean`
-# never compiles a dev tool. The trace header already printed above.
-SWIFT_MK_DERIVED_DATA ?= $(CURDIR)/.derived-data
-
-# SWIFT_MK_DERIVED_DATA is an override (`?=`, and swift.mk uses `override`), so a
-# stray `make clean SWIFT_MK_DERIVED_DATA=/some/path` would otherwise `rm -rf` an
-# arbitrary path. Resolve it lexically with `abspath` (collapses `..`, absolutizes a
-# relative value against the checkout) and only remove it when it resolves to a real
-# subpath of $(CURDIR); anything else refuses loudly instead of deleting.
-.PHONY: clean
-clean:
-	@if [ -f Package.swift ]; then swift package clean >/dev/null 2>&1 || true; fi; \
-		rm -rf .build; \
-		dd="$(abspath $(SWIFT_MK_DERIVED_DATA))"; \
-		case "$$dd" in \
-			"$(CURDIR)"/?*) rm -rf "$$dd" ;; \
-			*) printf 'swift-mk: refusing to remove SWIFT_MK_DERIVED_DATA=%s (resolves outside the checkout)\n' "$(SWIFT_MK_DERIVED_DATA)" >&2 ;; \
-		esac
-
-else
-
 ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
 $(if $(wildcard $(SWIFT_MK)),,$(error swift-makefile expected $(SWIFT_MK); rerun without SWIFT_MK_SKIP_FETCH))
 else
@@ -111,5 +78,3 @@ $(if $(filter ok,$(shell mkdir -p .make && if $(call _swift_mk_fetch,swift.mk,$(
 endif
 
 -include $(SWIFT_MK)
-
-endif
