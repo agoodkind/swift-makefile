@@ -59,67 +59,68 @@ func shellRunSeparatesSmallStdoutAndStderr() {
 
 // MARK: - ShellEnvironmentTests
 
-@Suite(.serialized)
-enum ShellEnvironmentTests {
-  private static let traceKeys = [
-    "TRACEPARENT", "TRACE_ID", "SPAN_ID", "SWIFT_MK_TRACE_ID", "SWIFT_MK_SPAN_ID",
-  ]
+extension EnvironmentSerialized {
+  @Suite enum ShellEnvironmentTests {
+    private static let traceKeys = [
+      "TRACEPARENT", "TRACE_ID", "SPAN_ID", "SWIFT_MK_TRACE_ID", "SWIFT_MK_SPAN_ID",
+    ]
 
-  @Test
-  static func runWithOverridesInheritsLiveTraceEnvironment() {
-    let saved = savedTraceEnvironment()
-    _ = ProcessInfo.processInfo.environment
-    setenv("TRACEPARENT", "00-11111111111111111111111111111111-2222222222222222-01", 1)
-    setenv("TRACE_ID", "11111111111111111111111111111111", 1)
-    setenv("SPAN_ID", "2222222222222222", 1)
-    setenv("SWIFT_MK_TRACE_ID", "11111111111111111111111111111111", 1)
-    setenv("SWIFT_MK_SPAN_ID", "2222222222222222", 1)
-    defer {
-      restoreTraceEnvironment(saved)
+    @Test
+    static func runWithOverridesInheritsLiveTraceEnvironment() {
+      let saved = savedTraceEnvironment()
+      _ = ProcessInfo.processInfo.environment
+      setenv("TRACEPARENT", "00-11111111111111111111111111111111-2222222222222222-01", 1)
+      setenv("TRACE_ID", "11111111111111111111111111111111", 1)
+      setenv("SPAN_ID", "2222222222222222", 1)
+      setenv("SWIFT_MK_TRACE_ID", "11111111111111111111111111111111", 1)
+      setenv("SWIFT_MK_SPAN_ID", "2222222222222222", 1)
+      defer {
+        restoreTraceEnvironment(saved)
+      }
+
+      let result = Shell.run(
+        "/usr/bin/env",
+        environment: [
+          "SPAN_ID": "stale",
+          "SWIFT_MK_SPAN_ID": "stale",
+          "SWIFT_MK_TEST_OVERRIDE": "1",
+          "SWIFT_MK_TRACE_ID": "stale",
+          "TRACEPARENT": "stale",
+          "TRACE_ID": "stale",
+        ])
+
+      #expect(result.status == 0)
+      let expectedTraceparent = """
+        TRACEPARENT=00-11111111111111111111111111111111-2222222222222222-01
+
+        """
+      #expect(result.stdout.contains(expectedTraceparent))
+      #expect(result.stdout.contains("TRACE_ID=11111111111111111111111111111111\n"))
+      #expect(result.stdout.contains("SPAN_ID=2222222222222222\n"))
+      #expect(result.stdout.contains("SWIFT_MK_TRACE_ID=11111111111111111111111111111111\n"))
+      #expect(result.stdout.contains("SWIFT_MK_SPAN_ID=2222222222222222\n"))
     }
 
-    let result = Shell.run(
-      "/usr/bin/env",
-      environment: [
-        "SPAN_ID": "stale",
-        "SWIFT_MK_SPAN_ID": "stale",
-        "SWIFT_MK_TEST_OVERRIDE": "1",
-        "SWIFT_MK_TRACE_ID": "stale",
-        "TRACEPARENT": "stale",
-        "TRACE_ID": "stale",
-      ])
-
-    #expect(result.status == 0)
-    let expectedTraceparent = """
-      TRACEPARENT=00-11111111111111111111111111111111-2222222222222222-01
-
-      """
-    #expect(result.stdout.contains(expectedTraceparent))
-    #expect(result.stdout.contains("TRACE_ID=11111111111111111111111111111111\n"))
-    #expect(result.stdout.contains("SPAN_ID=2222222222222222\n"))
-    #expect(result.stdout.contains("SWIFT_MK_TRACE_ID=11111111111111111111111111111111\n"))
-    #expect(result.stdout.contains("SWIFT_MK_SPAN_ID=2222222222222222\n"))
-  }
-
-  private static func savedTraceEnvironment() -> [String: String?] {
-    var saved: [String: String?] = [:]
-    for key in traceKeys {
-      saved[key] = getenv(key).map { String(cString: $0) }
+    private static func savedTraceEnvironment() -> [String: String?] {
+      var saved: [String: String?] = [:]
+      for key in traceKeys {
+        saved[key] = getenv(key).map { String(cString: $0) }
+      }
+      return saved
     }
-    return saved
-  }
 
-  private static func restoreTraceEnvironment(_ saved: [String: String?]) {
-    for key in traceKeys {
-      guard let savedValue = saved[key] else {
-        unsetenv(key)
-        continue
+    private static func restoreTraceEnvironment(_ saved: [String: String?]) {
+      for key in traceKeys {
+        guard let savedValue = saved[key] else {
+          unsetenv(key)
+          continue
+        }
+        guard let value = savedValue else {
+          unsetenv(key)
+          continue
+        }
+        setenv(key, value, 1)
       }
-      guard let value = savedValue else {
-        unsetenv(key)
-        continue
-      }
-      setenv(key, value, 1)
     }
   }
 }

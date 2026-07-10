@@ -55,92 +55,105 @@ enum CorrelationTests {
     #expect(Correlation.fromIDs(traceID: "short", spanID: spanID) == nil)
     #expect(Correlation.fromIDs(traceID: traceID, spanID: "") == nil)
   }
+
+  @Test
+  static func allZeroIDsAreRejected() {
+    // The all-zero trace-id and span-id are invalid per the W3C trace-context spec.
+    let zeroTrace = String(repeating: "0", count: 32)
+    let zeroSpan = String(repeating: "0", count: 16)
+    #expect(Correlation.fromTraceparent("00-\(zeroTrace)-\(spanID)-01") == nil)
+    #expect(Correlation.fromTraceparent("00-\(traceID)-\(zeroSpan)-01") == nil)
+    #expect(Correlation.fromIDs(traceID: zeroTrace, spanID: spanID) == nil)
+    #expect(Correlation.fromIDs(traceID: traceID, spanID: zeroSpan) == nil)
+  }
 }
 
 // MARK: - CorrelationEnvironmentTests
 
-/// `Correlation.fromEnvironment` reads process environment, so its cases run
-/// serialized and restore the keys they touch.
-@Suite(.serialized)
-enum CorrelationEnvironmentTests {
-  private static let traceID = "cccccccccccccccccccccccccccccccc"
-  private static let spanID = "dddddddddddddddd"
+/// `Correlation.fromEnvironment` reads process environment, so it is nested under
+/// `EnvironmentSerialized` and restores the keys it touches; the parent's
+/// `.serialized` trait keeps it from racing the other env-mutating suites.
+extension EnvironmentSerialized {
+  @Suite enum CorrelationEnvironmentTests {
+    private static let traceID = "cccccccccccccccccccccccccccccccc"
+    private static let spanID = "dddddddddddddddd"
 
-  @Test
-  static func fromEnvironmentAdoptsTraceparent() {
-    let saved = save()
-    defer { restore(saved) }
-    clear()
-    setenv("TRACEPARENT", "00-\(traceID)-\(spanID)-01", 1)
+    @Test
+    static func fromEnvironmentAdoptsTraceparent() {
+      let saved = save()
+      defer { restore(saved) }
+      clear()
+      setenv("TRACEPARENT", "00-\(traceID)-\(spanID)-01", 1)
 
-    let correlation = Correlation.fromEnvironment()
+      let correlation = Correlation.fromEnvironment()
 
-    #expect(correlation?.traceID == traceID)
-    #expect(correlation?.spanID == spanID)
-  }
-
-  @Test
-  static func fromEnvironmentAdoptsCanonicalIDPairWithoutTraceparent() {
-    let saved = save()
-    defer { restore(saved) }
-    clear()
-    setenv("TRACE_ID", traceID, 1)
-    setenv("SPAN_ID", spanID, 1)
-
-    let correlation = Correlation.fromEnvironment()
-
-    #expect(correlation?.traceID == traceID)
-    #expect(correlation?.spanID == spanID)
-  }
-
-  @Test
-  static func fromEnvironmentAdoptsSwiftMkAliasPairAsLastResort() {
-    let saved = save()
-    defer { restore(saved) }
-    clear()
-    setenv("SWIFT_MK_TRACE_ID", traceID, 1)
-    setenv("SWIFT_MK_SPAN_ID", spanID, 1)
-
-    let correlation = Correlation.fromEnvironment()
-
-    #expect(correlation?.traceID == traceID)
-    #expect(correlation?.spanID == spanID)
-  }
-
-  @Test
-  static func fromEnvironmentReturnsNilWhenNothingIsSet() {
-    let saved = save()
-    defer { restore(saved) }
-    clear()
-
-    #expect(Correlation.fromEnvironment() == nil)
-  }
-
-  private static func save() -> [String: String?] {
-    var saved: [String: String?] = [:]
-    for key in Correlation.environmentKeys {
-      saved[key] = getenv(key).map { String(cString: $0) }
+      #expect(correlation?.traceID == traceID)
+      #expect(correlation?.spanID == spanID)
     }
-    return saved
-  }
 
-  private static func clear() {
-    for key in Correlation.environmentKeys {
-      unsetenv(key)
+    @Test
+    static func fromEnvironmentAdoptsCanonicalIDPairWithoutTraceparent() {
+      let saved = save()
+      defer { restore(saved) }
+      clear()
+      setenv("TRACE_ID", traceID, 1)
+      setenv("SPAN_ID", spanID, 1)
+
+      let correlation = Correlation.fromEnvironment()
+
+      #expect(correlation?.traceID == traceID)
+      #expect(correlation?.spanID == spanID)
     }
-  }
 
-  private static func restore(_ saved: [String: String?]) {
-    for key in Correlation.environmentKeys {
-      guard let savedValue = saved[key] else {
-        unsetenv(key)
-        continue
+    @Test
+    static func fromEnvironmentAdoptsSwiftMkAliasPairAsLastResort() {
+      let saved = save()
+      defer { restore(saved) }
+      clear()
+      setenv("SWIFT_MK_TRACE_ID", traceID, 1)
+      setenv("SWIFT_MK_SPAN_ID", spanID, 1)
+
+      let correlation = Correlation.fromEnvironment()
+
+      #expect(correlation?.traceID == traceID)
+      #expect(correlation?.spanID == spanID)
+    }
+
+    @Test
+    static func fromEnvironmentReturnsNilWhenNothingIsSet() {
+      let saved = save()
+      defer { restore(saved) }
+      clear()
+
+      #expect(Correlation.fromEnvironment() == nil)
+    }
+
+    private static func save() -> [String: String?] {
+      var saved: [String: String?] = [:]
+      for key in Correlation.environmentKeys {
+        saved[key] = getenv(key).map { String(cString: $0) }
       }
-      guard let value = savedValue else {
+      return saved
+    }
+
+    private static func clear() {
+      for key in Correlation.environmentKeys {
         unsetenv(key)
-        continue
       }
-      setenv(key, value, 1)
+    }
+
+    private static func restore(_ saved: [String: String?]) {
+      for key in Correlation.environmentKeys {
+        guard let savedValue = saved[key] else {
+          unsetenv(key)
+          continue
+        }
+        guard let value = savedValue else {
+          unsetenv(key)
+          continue
+        }
+        setenv(key, value, 1)
+      }
     }
   }
 }

@@ -44,15 +44,15 @@ $(shell \
 	tp="$$TRACEPARENT"; trace=""; span=""; \
 	rest=$${tp#00-}; \
 	if [ "$$rest" != "$$tp" ]; then trace=$${rest%%-*}; tail=$${rest#*-}; span=$${tail%%-*}; fi; \
-	is_hex() { [ $${#1} -eq "$$2" ] && [ -z "`printf '%s' "$$1" | tr -d 0123456789abcdef`" ]; }; \
-	if ! is_hex "$$trace" 32 || ! is_hex "$$span" 16; then trace=""; span=""; fi; \
-	if [ -z "$$trace" ] && is_hex "$$TRACE_ID" 32 && is_hex "$$SPAN_ID" 16; then trace="$$TRACE_ID"; span="$$SPAN_ID"; fi; \
-	if [ -z "$$trace" ] && is_hex "$$SWIFT_MK_TRACE_ID" 32 && is_hex "$$SWIFT_MK_SPAN_ID" 16; then trace="$$SWIFT_MK_TRACE_ID"; span="$$SWIFT_MK_SPAN_ID"; fi; \
+	is_id() { [ $${#1} -eq "$$2" ] && [ -z "`printf '%s' "$$1" | tr -d 0123456789abcdef`" ] && [ -n "`printf '%s' "$$1" | tr -d 0`" ]; }; \
+	if ! is_id "$$trace" 32 || ! is_id "$$span" 16; then trace=""; span=""; fi; \
+	if [ -z "$$trace" ] && is_id "$$TRACE_ID" 32 && is_id "$$SPAN_ID" 16; then trace="$$TRACE_ID"; span="$$SPAN_ID"; fi; \
+	if [ -z "$$trace" ] && is_id "$$SWIFT_MK_TRACE_ID" 32 && is_id "$$SWIFT_MK_SPAN_ID" 16; then trace="$$SWIFT_MK_TRACE_ID"; span="$$SWIFT_MK_SPAN_ID"; fi; \
 	if [ -z "$$trace" ]; then \
 		trace=`od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d '[:space:]'`; \
 		span=`od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d '[:space:]'`; \
 	fi; \
-	if ! is_hex "$$trace" 32 || ! is_hex "$$span" 16; then exit 0; fi; \
+	if ! is_id "$$trace" 32 || ! is_id "$$span" 16; then exit 0; fi; \
 	tp="00-$$trace-$$span-01"; \
 	printf '%s\n' "$$tp" > "$$log_dir/.traceparent" || exit 1; \
 	prev=""; if [ -s "$$log_dir/.run" ]; then IFS= read -r prev < "$$log_dir/.run"; fi; \
