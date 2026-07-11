@@ -6,6 +6,7 @@
 //  Copyright © 2026, all rights reserved.
 //
 
+import Darwin
 import Foundation
 
 // MARK: - Shell
@@ -18,6 +19,8 @@ public enum Shell {
 
   /// Number of launch attempts before a spawn failure is treated as terminal.
   private static let maxLaunchAttempts = 5
+  private static let timeoutTerminationGraceSeconds = 2.0
+  private static let timeoutPollIntervalMicroseconds: useconds_t = 10_000
   /// The live trace/span keys re-applied over a child's environment overrides so a
   /// subprocess joins the run trace, driven from the one Correlation.environmentKeys
   /// list the test suites also share.
@@ -158,6 +161,162 @@ public enum Shell {
     return buffer
   }
 
+  private struct SpawnedStreamingProcess {
+    let processIdentifier: pid_t
+    let standardOutput: Pipe
+    let standardError: Pipe
+  }
+
+  private static func spawnStreamingProcessGroup(
+    _ executable: String,
+    _ arguments: [String],
+    environment: [String: String]
+  ) -> SpawnedStreamingProcess? {
+    let standardOutput = Pipe()
+    let standardError = Pipe()
+    let outputReadDescriptor = standardOutput.fileHandleForReading.fileDescriptor
+    let outputWriteDescriptor = standardOutput.fileHandleForWriting.fileDescriptor
+    let errorReadDescriptor = standardError.fileHandleForReading.fileDescriptor
+    let errorWriteDescriptor = standardError.fileHandleForWriting.fileDescriptor
+
+    var attributes: posix_spawnattr_t?
+    guard posix_spawnattr_init(&attributes) == 0 else {
+      return nil
+    }
+    defer { posix_spawnattr_destroy(&attributes) }
+
+    var fileActions: posix_spawn_file_actions_t?
+    guard posix_spawn_file_actions_init(&fileActions) == 0 else {
+      return nil
+    }
+    defer { posix_spawn_file_actions_destroy(&fileActions) }
+
+    let spawnFlags = Int16(POSIX_SPAWN_SETPGROUP)
+    guard posix_spawnattr_setflags(&attributes, spawnFlags) == 0,
+      posix_spawnattr_setpgroup(&attributes, 0) == 0,
+      posix_spawn_file_actions_adddup2(
+        &fileActions, outputWriteDescriptor, STDOUT_FILENO) == 0,
+      posix_spawn_file_actions_adddup2(
+        &fileActions, errorWriteDescriptor, STDERR_FILENO) == 0,
+      posix_spawn_file_actions_addclose(&fileActions, outputReadDescriptor) == 0,
+      posix_spawn_file_actions_addclose(&fileActions, errorReadDescriptor) == 0,
+      posix_spawn_file_actions_addclose(&fileActions, outputWriteDescriptor) == 0,
+      posix_spawn_file_actions_addclose(&fileActions, errorWriteDescriptor) == 0
+    else {
+      return nil
+    }
+
+    let argv = ["/usr/bin/env", executable] + arguments
+    let envpStrings = childEnvironment(environment).map { merged in
+      merged.map { "\($0.key)=\($0.value)" }
+    }
+    var processIdentifier: pid_t = -1
+    let spawnStatus = withCStringArray(argv) { argvPointer -> Int32 in
+      if let envpStrings {
+        return withCStringArray(envpStrings) { envpPointer in
+          posix_spawn(
+            &processIdentifier, "/usr/bin/env", &fileActions, &attributes, argvPointer,
+            envpPointer)
+        } ?? ENOMEM
+      }
+      return posix_spawn(
+        &processIdentifier, "/usr/bin/env", &fileActions, &attributes, argvPointer, environ)
+    }
+    guard let spawnStatus, spawnStatus == 0 else {
+      return nil
+    }
+    // The parent must drop its copies of the write ends so the read ends reach
+    // EOF once the whole child group exits; only the child holds them as fd 1/2.
+    standardOutput.fileHandleForWriting.closeFile()
+    standardError.fileHandleForWriting.closeFile()
+    return SpawnedStreamingProcess(
+      processIdentifier: processIdentifier,
+      standardOutput: standardOutput,
+      standardError: standardError)
+  }
+
+  /// Decode a `waitpid` status into a shell-style exit code: the exit status for
+  /// a normal exit, or 128 plus the signal number for a signalled child.
+  private static func decodeWaitStatus(_ status: Int32) -> Int32 {
+    if status & 0x7f == 0 {
+      return (status >> 8) & 0xff
+    }
+    let terminatingSignal = status & 0x7f
+    if terminatingSignal != 0x7f {
+      return 128 + terminatingSignal
+    }
+    return (status >> 8) & 0xff
+  }
+
+  private static func reapProcessNonBlocking(_ processIdentifier: pid_t) -> Int32? {
+    var status: Int32 = 0
+    if waitpid(processIdentifier, &status, WNOHANG) == processIdentifier {
+      return decodeWaitStatus(status)
+    }
+    return nil
+  }
+
+  private static func reapProcessBlocking(_ processIdentifier: pid_t) -> Int32 {
+    var status: Int32 = 0
+    while true {
+      let reaped = waitpid(processIdentifier, &status, 0)
+      if reaped == processIdentifier {
+        return decodeWaitStatus(status)
+      }
+      if reaped == -1, errno != EINTR {
+        return launchFailureStatus
+      }
+    }
+  }
+
+  /// Kill a timed-out child's whole process group and reap it. Send SIGTERM to
+  /// the group, wait a bounded grace for the tree to exit, then SIGKILL the group
+  /// so a child or grandchild that ignores SIGTERM cannot outlive the wrapper and
+  /// reparent to launchd as a runaway. Every wait here is bounded.
+  private static func terminateProcessGroupAndReap(
+    _ processIdentifier: pid_t, drainGroup: DispatchGroup
+  ) -> Int32 {
+    _ = kill(-processIdentifier, SIGTERM)
+    let deadline = Date().addingTimeInterval(timeoutTerminationGraceSeconds)
+    while Date() < deadline {
+      if let status = reapProcessNonBlocking(processIdentifier) {
+        _ = kill(-processIdentifier, SIGKILL)
+        drainGroup.wait()
+        return status
+      }
+      usleep(timeoutPollIntervalMicroseconds)
+    }
+    _ = kill(-processIdentifier, SIGKILL)
+    let status = reapProcessBlocking(processIdentifier)
+    drainGroup.wait()
+    return status
+  }
+
+  private static func withCStringArray<Value>(
+    _ strings: [String],
+    _ body: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) -> Value
+  ) -> Value? {
+    var pointers: [UnsafeMutablePointer<CChar>?] = []
+    for string in strings {
+      guard let pointer = strdup(string) else {
+        for pointer in pointers {
+          free(pointer)
+        }
+        return nil
+      }
+      pointers.append(pointer)
+    }
+    pointers.append(nil)
+    defer {
+      for pointer in pointers {
+        free(pointer)
+      }
+    }
+    return pointers.withUnsafeMutableBufferPointer { buffer in
+      body(buffer.baseAddress!)
+    }
+  }
+
   /// Run a program, capturing stdout in full while forwarding stderr live.
   @discardableResult
   public static func runStreamingStderr(
@@ -167,46 +326,41 @@ public enum Shell {
     timeoutSeconds: Double = 0
   ) -> StreamingResult {
     Output.debug("Shell.runStreamingStderr \(executable) \(arguments.joined(separator: " "))")
-    var launchError: Error?
-    let started = startWithRetry(
+    // Spawn the child in its OWN process group (see spawnStreamingProcessGroup)
+    // so a timeout can kill the whole tree with kill(-pid, ...) instead of only
+    // the direct child. A single SIGTERM to the child left grandchildren, or a
+    // child that ignored SIGTERM, running until an outer force-kill orphaned
+    // them to launchd as runaways.
+    var spawned: SpawnedStreamingProcess?
+    for attempt in 1...maxLaunchAttempts {
+      if let candidate = spawnStreamingProcessGroup(executable, arguments, environment: environment)
       {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [executable] + arguments
-        if let childEnv = childEnvironment(environment) {
-          process.environment = childEnv
-        }
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
-        return process
-      }, launchError: &launchError)
-    guard let process = started,
-      let outPipe = process.standardOutput as? Pipe,
-      let errPipe = process.standardError as? Pipe
-    else {
+        spawned = candidate
+        break
+      }
+      Output.debug(
+        "Shell.runStreamingStderr: spawn attempt \(attempt)/\(maxLaunchAttempts) failed, retrying")
+    }
+    guard let spawned else {
       return StreamingResult(status: launchFailureStatus, stdout: "", timedOut: false)
     }
 
     let group = DispatchGroup()
-    let outBuffer = drainAsync(outPipe.fileHandleForReading, into: group)
-    _ = drainAsync(errPipe.fileHandleForReading, into: group) { chunk in
+    let outBuffer = drainAsync(spawned.standardOutput.fileHandleForReading, into: group)
+    _ = drainAsync(spawned.standardError.fileHandleForReading, into: group) { chunk in
       FileHandle.standardError.write(chunk)
     }
     var timedOut = false
-    if timeoutSeconds > 0 {
-      let waitResult = group.wait(timeout: .now() + timeoutSeconds)
-      if waitResult == .timedOut {
-        timedOut = true
-        process.terminate()
-        group.wait()
-      }
-      process.waitUntilExit()
+    let status: Int32
+    if timeoutSeconds > 0, group.wait(timeout: .now() + timeoutSeconds) == .timedOut {
+      timedOut = true
+      status = terminateProcessGroupAndReap(spawned.processIdentifier, drainGroup: group)
     } else {
       group.wait()
-      process.waitUntilExit()
+      status = reapProcessBlocking(spawned.processIdentifier)
     }
     return StreamingResult(
-      status: process.terminationStatus,
+      status: status,
       stdout: String(bytes: outBuffer.snapshot(), encoding: .utf8) ?? "",
       timedOut: timedOut
     )
