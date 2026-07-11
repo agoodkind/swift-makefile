@@ -248,14 +248,6 @@ public enum Shell {
     return (status >> 8) & 0xff
   }
 
-  private static func reapProcessNonBlocking(_ processIdentifier: pid_t) -> Int32? {
-    var status: Int32 = 0
-    if waitpid(processIdentifier, &status, WNOHANG) == processIdentifier {
-      return decodeWaitStatus(status)
-    }
-    return nil
-  }
-
   private static func reapProcessBlocking(_ processIdentifier: pid_t) -> Int32 {
     var status: Int32 = 0
     while true {
@@ -269,27 +261,49 @@ public enum Shell {
     }
   }
 
-  /// Kill a timed-out child's whole process group and reap it. Send SIGTERM to
-  /// the group, wait a bounded grace for the tree to exit, then SIGKILL the group
-  /// so a child or grandchild that ignores SIGTERM cannot outlive the wrapper and
-  /// reparent to launchd as a runaway. Every wait here is bounded.
+  /// Kill a timed-out child's whole process group and reap it. Send SIGTERM to the
+  /// group, give it a bounded grace to exit, then SIGKILL the group and reap. The
+  /// SIGKILL goes out while the leader is still unreaped, so its PID cannot be
+  /// recycled into an unrelated group before the signal lands, and it clears any
+  /// grandchild that ignores SIGTERM so nothing outlives the wrapper and reparents
+  /// to launchd as a runaway. Every wait here is bounded, including the drain.
   private static func terminateProcessGroupAndReap(
-    _ processIdentifier: pid_t, drainGroup: DispatchGroup
+    _ process: SpawnedStreamingProcess, drainGroup: DispatchGroup
   ) -> Int32 {
+    let processIdentifier = process.processIdentifier
     _ = kill(-processIdentifier, SIGTERM)
+    // Wait for the group leader to exit WITHOUT reaping it (WNOWAIT), so its PID
+    // stays reserved while the group SIGKILL below is delivered.
     let deadline = Date().addingTimeInterval(timeoutTerminationGraceSeconds)
     while Date() < deadline {
-      if let status = reapProcessNonBlocking(processIdentifier) {
-        _ = kill(-processIdentifier, SIGKILL)
-        drainGroup.wait()
-        return status
+      var status: Int32 = 0
+      if waitpid(processIdentifier, &status, WNOHANG | WNOWAIT) == processIdentifier {
+        break
       }
       usleep(timeoutPollIntervalMicroseconds)
     }
     _ = kill(-processIdentifier, SIGKILL)
     let status = reapProcessBlocking(processIdentifier)
-    drainGroup.wait()
+    drainAndRelease(process, drainGroup: drainGroup)
     return status
+  }
+
+  /// Wait for the drain handlers to finish, bounded so a descendant that escaped
+  /// the process group and kept a pipe write end open cannot hang the wrapper. On
+  /// timeout, detach the readers and close the read ends; the captured stdout is
+  /// whatever arrived before then.
+  private static func drainAndRelease(
+    _ process: SpawnedStreamingProcess, drainGroup: DispatchGroup
+  ) {
+    if drainGroup.wait(timeout: .now() + timeoutTerminationGraceSeconds) == .timedOut {
+      for handle in [
+        process.standardOutput.fileHandleForReading,
+        process.standardError.fileHandleForReading,
+      ] {
+        handle.readabilityHandler = nil
+        try? handle.close()
+      }
+    }
   }
 
   private static func withCStringArray<Value>(
@@ -354,7 +368,7 @@ public enum Shell {
     let status: Int32
     if timeoutSeconds > 0, group.wait(timeout: .now() + timeoutSeconds) == .timedOut {
       timedOut = true
-      status = terminateProcessGroupAndReap(spawned.processIdentifier, drainGroup: group)
+      status = terminateProcessGroupAndReap(spawned, drainGroup: group)
     } else {
       group.wait()
       status = reapProcessBlocking(spawned.processIdentifier)
