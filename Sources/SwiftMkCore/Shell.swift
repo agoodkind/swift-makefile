@@ -6,6 +6,7 @@
 //  Copyright © 2026, all rights reserved.
 //
 
+import Darwin
 import Foundation
 
 // MARK: - Shell
@@ -13,8 +14,9 @@ import Foundation
 /// Run external programs and capture their output.
 public enum Shell {
   /// Exit status used when a program cannot be launched, matching the shell
-  /// convention for "command not found".
-  private static let launchFailureStatus: Int32 = 127
+  /// convention for "command not found". Internal so the process-group spawn in
+  /// `Shell+ProcessGroup.swift` reports the same launch-failure status.
+  static let launchFailureStatus: Int32 = 127
 
   /// Number of launch attempts before a spawn failure is treated as terminal.
   private static let maxLaunchAttempts = 5
@@ -52,8 +54,9 @@ public enum Shell {
   }
 
   /// The child environment for a spawned process: nil to inherit the parent
-  /// environment unchanged, or the parent merged with `overrides`.
-  private static func childEnvironment(_ overrides: [String: String]) -> [String: String]? {
+  /// environment unchanged, or the parent merged with `overrides`. Internal so the
+  /// process-group spawn in `Shell+ProcessGroup.swift` builds the same environment.
+  static func childEnvironment(_ overrides: [String: String]) -> [String: String]? {
     guard !overrides.isEmpty else {
       return nil
     }
@@ -167,46 +170,41 @@ public enum Shell {
     timeoutSeconds: Double = 0
   ) -> StreamingResult {
     Output.debug("Shell.runStreamingStderr \(executable) \(arguments.joined(separator: " "))")
-    var launchError: Error?
-    let started = startWithRetry(
+    // Spawn the child in its OWN process group (see spawnStreamingProcessGroup)
+    // so a timeout can kill the whole tree with kill(-pid, ...) instead of only
+    // the direct child. A single SIGTERM to the child left grandchildren, or a
+    // child that ignored SIGTERM, running until an outer force-kill orphaned
+    // them to launchd as runaways.
+    var spawned: SpawnedStreamingProcess?
+    for attempt in 1...maxLaunchAttempts {
+      if let candidate = spawnStreamingProcessGroup(executable, arguments, environment: environment)
       {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [executable] + arguments
-        if let childEnv = childEnvironment(environment) {
-          process.environment = childEnv
-        }
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
-        return process
-      }, launchError: &launchError)
-    guard let process = started,
-      let outPipe = process.standardOutput as? Pipe,
-      let errPipe = process.standardError as? Pipe
-    else {
+        spawned = candidate
+        break
+      }
+      Output.debug(
+        "Shell.runStreamingStderr: spawn attempt \(attempt)/\(maxLaunchAttempts) failed, retrying")
+    }
+    guard let spawned else {
       return StreamingResult(status: launchFailureStatus, stdout: "", timedOut: false)
     }
 
     let group = DispatchGroup()
-    let outBuffer = drainAsync(outPipe.fileHandleForReading, into: group)
-    _ = drainAsync(errPipe.fileHandleForReading, into: group) { chunk in
+    let outBuffer = drainAsync(spawned.standardOutput.fileHandleForReading, into: group)
+    _ = drainAsync(spawned.standardError.fileHandleForReading, into: group) { chunk in
       FileHandle.standardError.write(chunk)
     }
     var timedOut = false
-    if timeoutSeconds > 0 {
-      let waitResult = group.wait(timeout: .now() + timeoutSeconds)
-      if waitResult == .timedOut {
-        timedOut = true
-        process.terminate()
-        group.wait()
-      }
-      process.waitUntilExit()
+    let status: Int32
+    if timeoutSeconds > 0, group.wait(timeout: .now() + timeoutSeconds) == .timedOut {
+      timedOut = true
+      status = terminateProcessGroupAndReap(spawned, drainGroup: group)
     } else {
       group.wait()
-      process.waitUntilExit()
+      status = reapProcessBlocking(spawned.processIdentifier)
     }
     return StreamingResult(
-      status: process.terminationStatus,
+      status: status,
       stdout: String(bytes: outBuffer.snapshot(), encoding: .utf8) ?? "",
       timedOut: timedOut
     )

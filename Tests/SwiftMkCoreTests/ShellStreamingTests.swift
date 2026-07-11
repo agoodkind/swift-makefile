@@ -6,6 +6,7 @@
 //  Copyright © 2026, all rights reserved.
 //
 
+import Darwin
 import Foundation
 import Testing
 
@@ -45,4 +46,54 @@ func shellRunStreamingStderrTimesOut() {
   #expect(result.timedOut)
   #expect(result.status != 0)
   #expect(elapsedSeconds < 3)
+}
+
+@Test(.timeLimit(.minutes(1)))
+func shellRunStreamingStderrReapsProcessTreeOnTimeout() throws {
+  let temporaryDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "swift-mk-shell-timeout-\(UUID().uuidString)", isDirectory: true)
+  try FileManager.default.createDirectory(
+    at: temporaryDirectory, withIntermediateDirectories: true)
+
+  let parentPIDURL = temporaryDirectory.appendingPathComponent("parent.pid")
+  let childPIDURL = temporaryDirectory.appendingPathComponent("child.pid")
+  var recordedPIDs: [pid_t] = []
+  defer {
+    for pid in recordedPIDs {
+      _ = kill(pid, SIGKILL)
+    }
+    removeTemporary(temporaryDirectory.path)
+  }
+
+  let script = """
+    printf '%s' "$$" > "\(parentPIDURL.path)"
+    /bin/sh -c 'trap "" HUP TERM; printf '\''%s'\'' "$$" > "\(childPIDURL.path)"; while :; do :; done' \
+      </dev/null >/dev/null 2>&1 &
+    while :; do :; done
+    """
+  let result = Shell.runStreamingStderr(
+    "/bin/sh", ["-c", script], timeoutSeconds: 0.5)
+
+  #expect(result.timedOut)
+  recordedPIDs = try [parentPIDURL, childPIDURL].map { url in
+    let value = try String(contentsOf: url, encoding: .utf8)
+    return try #require(pid_t(value))
+  }
+  for pid in recordedPIDs {
+    #expect(processIsDead(pid, timeoutSeconds: 2))
+  }
+}
+
+private let deadProcessPollIntervalMicroseconds: useconds_t = 10_000
+
+private func processIsDead(_ pid: pid_t, timeoutSeconds: TimeInterval) -> Bool {
+  let deadline = Date().addingTimeInterval(timeoutSeconds)
+  repeat {
+    errno = 0
+    if kill(pid, 0) == -1, errno == ESRCH {
+      return true
+    }
+    usleep(deadProcessPollIntervalMicroseconds)
+  } while Date() < deadline
+  return false
 }
