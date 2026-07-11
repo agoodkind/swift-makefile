@@ -196,6 +196,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/Text.swift \
 	Sources/SwiftMkCore/Env.swift \
 	Sources/SwiftMkCore/Shell.swift \
+	Sources/SwiftMkCore/Shell+ProcessGroup.swift \
 	Sources/SwiftMkCore/Capture.swift \
 	Sources/SwiftMkCore/Baseline.swift \
 	Sources/SwiftMkCore/BaselineReport.swift \
