@@ -343,6 +343,57 @@ enum ToolchainBuildScriptTests {
   }
 }
 
+// MARK: - Toolchain reuse invariants
+
+extension ToolchainBuildScriptTests {
+  @Test
+  static func setupBuildEnvToolchainKeyFoldsSourceHashAndXcodeBundlePath() throws {
+    let action = try rootFile(".github/actions/setup-build-env/action.yml")
+
+    // The key output folds BOTH the engine source hash and the toolchain id.
+    // Keying on the source hash alone would drop the `-${toolchain_id}` suffix.
+    #expect(action.contains(#"source_hash=$("#))
+    #expect(action.contains(#"toolchain_id=$("#))
+    #expect(action.contains(#"echo "hash=${source_hash}-${toolchain_id}""#))
+
+    // The toolchain id folds the Xcode bundle path (`xcode-select -p`), the only
+    // dimension separating a release candidate from the final of the same version.
+    // Anchor on the command form so the comment above the block cannot satisfy it,
+    // and pin the command inside the toolchain_id capture (before the hash echo).
+    let toolchainStart = try #require(action.range(of: #"toolchain_id=$("#)).lowerBound
+    let xcodeSelect = try #require(action.range(of: "xcode-select -p 2>/dev/null")).lowerBound
+    let hashEcho = try #require(
+      action.range(of: #"echo "hash=${source_hash}-${toolchain_id}""#)
+    ).lowerBound
+    #expect(toolchainStart < xcodeSelect)
+    #expect(xcodeSelect < hashEcho)
+  }
+
+  @Test
+  static func setupBuildEnvCacheHitRunsHelpProbeAndRebuildsOnFailure() throws {
+    let action = try rootFile(".github/actions/setup-build-env/action.yml")
+
+    let cacheHitGuard = #"if [ "${TOOLCHAIN_CACHE_HIT}" = "true" ] && [ -x "${bin}" ]; then"#
+    let helpProbe = #""${bin}" --help >/dev/null 2>&1"#
+    let probeFailed = #"if [ "${probe_rc}" -ne 0 ]; then"#
+
+    #expect(action.contains("probe_rc=$?"))
+    #expect(action.contains(#"bash "${SWIFT_MK_SRC}/scripts/swift-mk-build.sh" resolve"#))
+
+    // The `--help` launch probe runs on the cache-hit path, and a non-zero exit
+    // reaches the rebuild (`build_engine`, which invokes the build script).
+    let guardIndex = try #require(action.range(of: cacheHitGuard)).lowerBound
+    let probeIndex = try #require(action.range(of: helpProbe)).lowerBound
+    let probeFailedRange = try #require(action.range(of: probeFailed))
+    let rebuildIndex = try #require(
+      action.range(of: "build_engine", range: probeFailedRange.upperBound..<action.endIndex)
+    ).lowerBound
+    #expect(guardIndex < probeIndex)
+    #expect(probeIndex < probeFailedRange.lowerBound)
+    #expect(probeFailedRange.lowerBound < rebuildIndex)
+  }
+}
+
 // MARK: - ScriptFailure
 
 private struct ScriptFailure: Error, CustomStringConvertible {
