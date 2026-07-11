@@ -26,6 +26,16 @@ on:
       local-pool-label:
         type: string
         default: agk-local-macos-26
+      # Seconds the planner waits on the free ubuntu runner for a pool slot
+      # before it gives up and routes to hosted. While the pool has no free slot
+      # and the broker reports hosted has no headroom, the planner keeps waiting
+      # so a job releases to hosted only when hosted is actually free, rather than
+      # piling onto a busy hosted queue. The wait costs no macOS minutes and holds
+      # no pool slot. A broker that does not report hosted_free is treated as
+      # hosted-free, so this collapses to the prior route-now behavior.
+      pool-wait-timeout:
+        type: number
+        default: 1800
     secrets:
       # Bearer token for the pool's guarded /capacity endpoint. When set (with a
       # non-empty local-pool-capacity-url) the check authenticates; absent or
@@ -56,7 +66,9 @@ jobs:
   plan:
     name: Plan runners
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Covers the default pool-wait-timeout (1800s) plus curl/jq overhead. The
+    # wait runs on this free ubuntu runner, so a long wait costs no macOS time.
+    timeout-minutes: 40
     permissions:
       contents: read
     outputs:
@@ -75,57 +87,90 @@ jobs:
           HOSTED_LABEL: ${{ inputs.runner }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
+          POOL_WAIT_TIMEOUT: ${{ inputs.pool-wait-timeout }}
+          # Seconds between capacity polls while waiting for the pool.
+          POLL_INTERVAL: "15"
           # Evaluates to "true" for fork PRs; everything else is trusted.
           IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
           set -euo pipefail
 
-          if [[ "${IS_FORK_PR}" == "true" ]]; then
-            # Untrusted event: never curl the internal capacity endpoint.
-            label="${HOSTED_LABEL}"
-          elif [[ -z "${CAPACITY_URL}" ]]; then
-            # No pool configured: route directly to hosted.
-            label="${HOSTED_LABEL}"
-          else
-            # Curl the capacity endpoint; any error (timeout, non-200, malformed
-            # body) falls through to hosted so the pool never blocks a gate.
-            # Pick the query separator so a capacity URL that already carries a
-            # query string stays valid instead of producing a double '?'.
-            sep='?'
-            case "${CAPACITY_URL}" in *\?*) sep='&' ;; esac
-            # Only send an Authorization header when a token is configured. The
-            # default public /capacity needs no token, and an empty "Bearer "
-            # can be rejected by a proxy in front of the endpoint, which would
-            # defeat the tokenless auto-routing. The quoted array expansion keeps
-            # the whole "Authorization: Bearer <token>" header as one argv entry
-            # (no word splitting), and an empty array expands to nothing under
-            # set -u on the runner's bash.
-            auth=()
-            if [[ -n "${CAPACITY_TOKEN}" ]]; then
-              auth+=(-H "Authorization: Bearer ${CAPACITY_TOKEN}")
+          # Emit the chosen label to every gate output. on_pool is true only when a
+          # pool label was chosen, so the hosted fallback never re-runs a gate that
+          # already ran on hosted.
+          emit() {
+            local label="$1" on_pool
+            if [[ "${label}" != "${HOSTED_LABEL}" ]]; then
+              on_pool=true
+            else
+              on_pool=false
             fi
+            {
+              printf 'build_label=%s\n' "${label}"
+              printf 'test_label=%s\n' "${label}"
+              printf 'quality_label=%s\n' "${label}"
+              printf 'extra_targets_label=%s\n' "${label}"
+              printf 'on_pool=%s\n' "${on_pool}"
+            } >> "${GITHUB_OUTPUT}"
+          }
+
+          # Untrusted event or no pool configured: never curl the internal
+          # endpoint; route straight to hosted.
+          if [[ "${IS_FORK_PR}" == "true" || -z "${CAPACITY_URL}" ]]; then
+            emit "${HOSTED_LABEL}"
+            exit 0
+          fi
+
+          # Pick the query separator so a capacity URL that already carries a query
+          # string stays valid instead of producing a double '?'.
+          sep='?'
+          case "${CAPACITY_URL}" in *\?*) sep='&' ;; esac
+          # Only send an Authorization header when a token is configured. The
+          # default public /capacity needs no token, and an empty "Bearer " can be
+          # rejected by a proxy in front of the endpoint, which would defeat the
+          # tokenless auto-routing. The quoted array expansion keeps the whole
+          # "Authorization: Bearer <token>" header as one argv entry (no word
+          # splitting), and an empty array expands to nothing under set -u.
+          auth=()
+          if [[ -n "${CAPACITY_TOKEN}" ]]; then
+            auth+=(-H "Authorization: Bearer ${CAPACITY_TOKEN}")
+          fi
+
+          # Prefer the pool. Wait on this free ubuntu runner while the pool has no
+          # free slot AND the broker reports hosted has no headroom, so a job
+          # releases to hosted only when hosted is actually free rather than piling
+          # onto a busy hosted queue. A broker that does not report hosted_free is
+          # treated as hosted-free (jq '// true'), collapsing this to the prior
+          # pool-if-available-else-hosted behavior. A curl error means the broker is
+          # unreachable, so fail open to hosted and never block CI.
+          started=$(date +%s)
+          deadline=$(( started + POOL_WAIT_TIMEOUT ))
+          while :; do
             response=$(curl -sf --max-time 5 "${auth[@]}" \
               "${CAPACITY_URL}${sep}repo=${REPO}&run_id=${RUN_ID}" 2>/dev/null || printf '')
-            available=$(printf '%s' "${response}" | jq -r '.available // false' 2>/dev/null || printf 'false')
-            if [[ "${available}" == "true" ]]; then
-              label="${POOL_LABEL}"
-            else
-              label="${HOSTED_LABEL}"
+            if [[ -z "${response}" ]]; then
+              echo "capacity endpoint unreachable; routing to hosted"
+              emit "${HOSTED_LABEL}"
+              exit 0
             fi
-          fi
-
-          # on_pool is true only when a pool label was actually chosen, so the
-          # hosted fallback never re-runs a gate that already ran on hosted.
-          if [[ "${label}" != "${HOSTED_LABEL}" ]]; then
-            on_pool=true
-          else
-            on_pool=false
-          fi
-
-          {
-            printf 'build_label=%s\n' "${label}"
-            printf 'test_label=%s\n' "${label}"
-            printf 'quality_label=%s\n' "${label}"
-            printf 'extra_targets_label=%s\n' "${label}"
-            printf 'on_pool=%s\n' "${on_pool}"
-          } >> "${GITHUB_OUTPUT}"
+            available=$(printf '%s' "${response}" | jq -r '.available // false' 2>/dev/null || printf 'false')
+            hosted_free=$(printf '%s' "${response}" | jq -r '.hosted_free // true' 2>/dev/null || printf 'true')
+            if [[ "${available}" == "true" ]]; then
+              echo "pool slot available; routing to pool"
+              emit "${POOL_LABEL}"
+              exit 0
+            fi
+            if [[ "${hosted_free}" == "true" ]]; then
+              echo "pool busy, hosted has headroom; routing to hosted"
+              emit "${HOSTED_LABEL}"
+              exit 0
+            fi
+            now=$(date +%s)
+            if (( now >= deadline )); then
+              echo "pool busy and hosted full for ${POOL_WAIT_TIMEOUT}s; routing to hosted as last resort"
+              emit "${HOSTED_LABEL}"
+              exit 0
+            fi
+            echo "pool busy and hosted full; waiting ${POLL_INTERVAL}s (elapsed $(( now - started ))s / ${POOL_WAIT_TIMEOUT}s)"
+            sleep "${POLL_INTERVAL}"
+          done
