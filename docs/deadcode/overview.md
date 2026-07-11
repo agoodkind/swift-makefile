@@ -11,6 +11,8 @@ The gate runs two scans, and the coverage check below requires every owned sourc
 
 A failing run labels each scan in both the terminal and the raw capture, so the package scan's "No unused code detected" never reads as contradicting an Xcode-scan failure. The labels and the classifying verdict line live in [`Lint+DeadcodeVerdict.swift`](../../Sources/SwiftMkCore/Lint+DeadcodeVerdict.swift).
 
+The package scan builds in the same module mode as the product build, so both can share one SwiftPM `.build`. Periphery runs its own `swift build` for the index, and the engine forwards the product build's compile-cache flags (explicit module build) to that scan build. A plain build and an explicit-module build leave `.swiftmodule` files the other cannot reuse, so a later product build fails to resolve their clang module dependencies. The forwarding lives in [Lint.swift](../../Sources/SwiftMkCore/Lint.swift), and [PeripheryPackageScanArgsTests](../../Tests/SwiftMkCoreTests/PeripheryPackageScanArgsTests.swift) pins it.
+
 ## The engine derives and owns the coverage build
 
 The Xcode scan needs an index store, and the engine builds one from the consumer's normal inputs. The consumer declares no dead-code coverage command and no scheme list. It sets its usual Xcode inputs (a workspace or project, a generator, and an optional coverage configuration and build settings), and the engine derives the rest. The driver is [`Toolchain.buildCoverage`](../../Sources/SwiftMkCore/Toolchain+Coverage.swift).
@@ -25,11 +27,17 @@ Each scheme builds on every platform it supports because the completeness check 
 
 The engine owns every setting that keeps the index complete, through a single xcconfig it points xcodebuild at with `XCODE_XCCONFIG_FILE`. Signing is disabled, since the gate needs the index, not a signed product, and a signed build can fail provisioning and leave a partial index. The compilation cache is disabled, since the index store is written only when the compiler compiles a file, and a cache hit replays a cached object and skips the compiler, so a warm cache would leave the index empty. The build stays on one architecture to avoid a cross-arch module-build race, `OBJROOT` sits under the cleared DerivedData so every coverage build recompiles, and `SYMROOT` is left alone. [`DeadcodeBuildConfig`](../../Sources/SwiftMkCore/DeadcodeBuildConfig.swift) writes the xcconfig and [`DeadcodeBuildConfigTests`](../../Tests/SwiftMkCoreTests/DeadcodeBuildConfigTests.swift) pins each setting.
 
+A relative derived-data path resolves against the consumer's working directory before the engine writes `OBJROOT`, so the coverage build puts its intermediates in the consumer's tree rather than in the shared SwiftPM clone. SwiftPM dependency targets that wrote into the shared clone would scatter their intermediates outside the coverage tree and leave the index incomplete. The anchoring lives in [DeadcodeBuildConfig](../../Sources/SwiftMkCore/DeadcodeBuildConfig.swift) and [DeadcodeScan](../../Sources/SwiftMkCore/DeadcodeScan.swift), and [deadcodeBuildConfigResolvesRelativeObjrootAgainstConsumerRoot](../../Tests/SwiftMkCoreTests/DeadcodeBuildConfigTests.swift) verifies it.
+
 A consumer whose build needs a native library before xcodebuild links it declares one command in `SWIFT_XCODE_PREBUILD_CMD`. [`ToolchainPrebuild`](../../Sources/SwiftMkCore/ToolchainPrebuild.swift) runs it before every xcodebuild the engine drives, so the prep is a normal-build concern the coverage build reuses rather than a dead-code input.
 
 ## A partial index is never scanned
 
 Periphery learns which files exist from the index alone, so an unindexed file looks like a symbol that is never referenced, and a real symbol reads as unused. [`IndexCompleteness`](../../Sources/SwiftMkCore/IndexCompleteness.swift) compares the indexed sources against the project's target sources and refuses to scan when any expected source is missing. The expected set comes from the Xcode project rather than the build, because the coverage build clears its tree and leaves no compiled-file list. The check scopes the expected set to the targets the index actually recorded, so a build that compiles a subset of targets is complete for what it built.
+
+## A protocol witness is not reported unused
+
+The gate keeps a protocol witness that runs only through the protocol, so a method called by dynamic dispatch does not read as dead. A witness reached only through its protocol has no direct reference in the index, and Periphery reports it unused even though a real call runs it. The engine reads the index facts, sees the witness overrides a requirement that other code references, and drops the finding. A witness whose requirement no code ever calls still reports, so a truly unused conformance member is not hidden. [WitnessFilter](../../Sources/SwiftMkCore/WitnessFilter.swift) applies the rule and [WitnessFilterTests](../../Tests/SwiftMkCoreTests/WitnessFilterTests.swift) covers both outcomes.
 
 ## Every owned source is covered by some scan
 
