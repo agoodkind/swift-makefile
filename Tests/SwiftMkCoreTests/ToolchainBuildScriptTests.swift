@@ -133,6 +133,45 @@ enum ToolchainBuildScriptTests {
   }
 
   @Test
+  static func poolBuildScriptCopiesRunnableAdHocSignedBinary() throws {
+    // A copied arm64 binary can carry a stale linker signature and a provenance
+    // xattr that make the kernel kill it on launch. The script clears the xattrs
+    // and re-signs ad-hoc after the cp; this proves the copied output actually
+    // launches and carries an ad-hoc signature, not just that the script text
+    // mentions xattr/codesign. Skips where either tool is unavailable.
+    guard commandAvailable("xattr"), commandAvailable("codesign") else {
+      return
+    }
+
+    try runBuildScript(
+      fakeSwift: """
+        #!/usr/bin/env bash
+        script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        bin_dir="${script_dir}/show-bin-path-output"
+        mkdir -p "${bin_dir}"
+        for arg in "$@"; do
+            if [[ "${arg}" == "--show-bin-path" ]]; then
+                printf "%s\\n" "${bin_dir}"
+                exit 0
+            fi
+        done
+        cp /bin/echo "${bin_dir}/swift-mk"
+        chmod +x "${bin_dir}/swift-mk"
+        exit 0
+        """
+    ) { result, outputPath in
+      #expect(result.status == 0)
+      #expect(FileManager.default.isExecutableFile(atPath: outputPath))
+
+      let launch = Shell.run(outputPath)
+      #expect(launch.status == 0)
+
+      let signature = Shell.run("/usr/bin/codesign", ["-dvv", outputPath])
+      #expect(signature.combined.contains("Signature=adhoc"))
+    }
+  }
+
+  @Test
   static func setupBuildEnvConfiguresPoolCacheByMountPresence() throws {
     let action = try rootFile(".github/actions/setup-build-env/action.yml")
 
@@ -214,6 +253,19 @@ enum ToolchainBuildScriptTests {
   }
 
   private static func buildScriptResult(fakeSwift: String) throws -> Shell.Result {
+    try runBuildScript(fakeSwift: fakeSwift) { result, _ in
+      result
+    }
+  }
+
+  /// Run `swift_mk_build_from_repo` against a fake `swift`, then invoke `body`
+  /// with the script result and the output binary path while the temporary
+  /// directory still exists, so a caller can inspect the copied binary before
+  /// cleanup removes it.
+  private static func runBuildScript<Value>(
+    fakeSwift: String,
+    _ body: (Shell.Result, String) throws -> Value
+  ) throws -> Value {
     try withTemporaryDirectory { directory in
       let packageDirectory = directory.appendingPathComponent("package", isDirectory: true)
       let fakeBinDirectory = directory.appendingPathComponent("bin", isDirectory: true)
@@ -240,7 +292,7 @@ enum ToolchainBuildScriptTests {
       let command =
         #"cd "${SWIFT_MK_BUILD_REPO}"; source "${SCRIPT_PATH}" path >/dev/null; swift_mk_build_from_repo"#
       let existingPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
-      return Shell.run(
+      let result = Shell.run(
         "/bin/bash",
         ["-c", command],
         environment: [
@@ -249,7 +301,12 @@ enum ToolchainBuildScriptTests {
           "SWIFT_MK_BIN": outputPath,
           "SWIFT_MK_BUILD_REPO": packageDirectory.path,
         ])
+      return try body(result, outputPath)
     }
+  }
+
+  private static func commandAvailable(_ command: String) -> Bool {
+    Shell.run("/bin/sh", ["-c", "command -v \(command)"]).status == 0
   }
 
   private static func isSHA1(_ value: String) -> Bool {
