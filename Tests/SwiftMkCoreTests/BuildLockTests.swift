@@ -40,4 +40,15 @@ enum BuildLockTests {
     #expect(!first.isEmpty)
     #expect(first == second)
   }
+
+  /// The load-bearing survival property: the lock file lives under `.make`, not inside
+  /// DerivedData, so the dead-code coverage build's `rm -rf` of DerivedData cannot delete
+  /// the lock out from under a held build. A change that relocates the lock into
+  /// DerivedData must fail this test.
+  @Test
+  static func lockPathResolvesUnderDotMake() {
+    let path = BuildLock.lockPath(root: "/some/worktree/root")
+    #expect(path == "/some/worktree/root/.make/build.lock")
+    #expect(path.hasSuffix("/.make/build.lock"))
+  }
 }
