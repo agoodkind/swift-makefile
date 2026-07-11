@@ -23,11 +23,9 @@ SWIFT_MK_TRACE_SCRIPT := $(firstword \
 	$(wildcard $(dir $(lastword $(MAKEFILE_LIST)))scripts/swift-mk-trace.sh) \
 	$(wildcard .make/scripts/swift-mk-trace.sh))
 ifneq ($(strip $(SWIFT_MK_TRACE_SCRIPT)),)
-# Export the inputs so the script reads them from the environment rather than
-# interpolating make values into the shell command, which a value containing a
-# quote could break. An env-origin or command-line value is already exported; the
-# explicit export also covers a plain makefile assignment.
-export TRACEPARENT TRACE_ID SPAN_ID SWIFT_MK_TRACE_ID SWIFT_MK_SPAN_ID SWIFT_MK_SKIP_FETCH
+ifeq ($(strip $(TRACEPARENT)),)
+# No inbound trace this run, so mint one via the script. TRACEPARENT is empty in
+# this branch, so no untrusted value is interpolated into this parse-time $(shell).
 SWIFT_MK_TRACE_RESULT := $(shell bash "$(SWIFT_MK_TRACE_SCRIPT)")
 ifeq ($(word 1,$(SWIFT_MK_TRACE_RESULT)),ok)
 TRACEPARENT := $(word 2,$(SWIFT_MK_TRACE_RESULT))
@@ -35,8 +33,20 @@ TRACE_ID := $(word 3,$(SWIFT_MK_TRACE_RESULT))
 SPAN_ID := $(word 4,$(SWIFT_MK_TRACE_RESULT))
 SWIFT_MK_TRACE_ID := $(TRACE_ID)
 SWIFT_MK_SPAN_ID := $(SPAN_ID)
-export TRACEPARENT TRACE_ID SPAN_ID SWIFT_MK_TRACE_ID SWIFT_MK_SPAN_ID
 endif
+else
+# bootstrap.mk already minted and printed the trace and set these make variables.
+# make's export does not reach a parse-time $(shell), so bootstrap's value cannot
+# arrive by env here; the make variable does. Adopt it directly, without re-running
+# the script, so no second header prints and no untrusted value is ever passed to a
+# shell (which would be a command-injection surface). Derive the ids from
+# TRACEPARENT only if a caller set TRACEPARENT on its own.
+TRACE_ID := $(if $(strip $(TRACE_ID)),$(TRACE_ID),$(word 2,$(subst -, ,$(TRACEPARENT))))
+SPAN_ID := $(if $(strip $(SPAN_ID)),$(SPAN_ID),$(word 3,$(subst -, ,$(TRACEPARENT))))
+SWIFT_MK_TRACE_ID := $(TRACE_ID)
+SWIFT_MK_SPAN_ID := $(SPAN_ID)
+endif
+export TRACEPARENT TRACE_ID SPAN_ID SWIFT_MK_TRACE_ID SWIFT_MK_SPAN_ID
 endif
 
 SWIFT_MK_ENTRY_MAKEFILE := $(firstword $(MAKEFILE_LIST))
