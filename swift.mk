@@ -606,7 +606,6 @@ SWIFT_BUILD_CMD ?= "$(SWIFT_MK_BIN)" toolchain swiftpm build
 SWIFT_TEST_CMD ?= "$(SWIFT_MK_BIN)" toolchain swiftpm test
 SWIFT_RUN_CMD ?=
 SWIFT_GENERATE_CMD ?=
-SWIFT_CLEAN_CMD ?= "$(SWIFT_MK_BIN)" toolchain swiftpm clean
 SWIFT_DEPLOY_CMD ?=
 SWIFT_ANALYZE_CMD ?=
 SWIFT_AUDIT_EXTRA_CMD ?=
@@ -725,7 +724,6 @@ export SWIFT_MK_XCODE_BUILD
 export SWIFT_TEST_CMD
 export SWIFT_RUN_CMD
 export SWIFT_GENERATE_CMD
-export SWIFT_CLEAN_CMD
 export SWIFT_DEPLOY_CMD
 export SWIFT_ANALYZE_CMD
 export SWIFT_AUDIT_EXTRA_CMD
@@ -753,7 +751,7 @@ help:
 	@printf '  %-40s %s\n' 'deploy' 'run build, then execute SWIFT_DEPLOY_CMD'
 	@printf '  %-40s %s\n' 'install' 'alias for deploy'
 	@printf '  %-40s %s\n' 'generate' 'execute SWIFT_GENERATE_CMD when configured'
-	@printf '  %-40s %s\n' 'clean' 'execute SWIFT_CLEAN_CMD when configured'
+	@printf '  %-40s %s\n' 'clean' 'remove .build and the engine DerivedData'
 	@printf '  %-40s %s\n' 'check' 'alias for lint'
 	@printf '  %-40s %s\n' 'lint' 'run every lint gate'
 	@printf '  %-40s %s\n' 'build-check' 'run lint and audit'
@@ -792,6 +790,31 @@ help:
 	@printf '  %-40s %s\n' 'smoke-fetch' 'force a fetch-path smoke run'
 	@printf '  %-40s %s\n' 'update-consumers' 'refresh every opted-in consumer repo'
 	@printf '  %-40s %s\n' 'update-consumers-dry-run' 'show fleet update work without writes'
+
+# SWIFT_MK_DERIVED_DATA is an override, so only rm a path that physically resolves
+# to a real subpath of the checkout; refuse anything outside so an override cannot
+# rm an arbitrary path. `abspath` is lexical (collapses `..`) but does not resolve
+# symlinks, so also resolve the physical path of the checkout root and of the
+# target's parent with `pwd -P`; a symlinked component then resolves to its real
+# location and is refused if that lands outside the root. Also refuse a target that
+# exists and is not a directory, so an override pointing at a tracked file (for
+# example $(CURDIR)/Package.swift) is not deleted.
+.PHONY: clean
+clean:
+	@if [ -f Package.swift ]; then swift package clean >/dev/null 2>&1 || true; fi; \
+		rm -rf .build; \
+		root=$$(cd "$(CURDIR)" 2>/dev/null && pwd -P) || root="$(CURDIR)"; \
+		dd="$(abspath $(SWIFT_MK_DERIVED_DATA))"; \
+		parent=$$(cd "$$(dirname "$$dd")" 2>/dev/null && pwd -P); \
+		if [ -n "$$parent" ]; then dd="$$parent/$$(basename "$$dd")"; fi; \
+		if [ -e "$$dd" ] && [ ! -d "$$dd" ]; then \
+			printf 'swift-mk: refusing to remove SWIFT_MK_DERIVED_DATA=%s (not a directory)\n' "$(SWIFT_MK_DERIVED_DATA)" >&2; \
+		else \
+			case "$$dd" in \
+				"$$root"/?*) rm -rf "$$dd" ;; \
+				*) printf 'swift-mk: refusing to remove SWIFT_MK_DERIVED_DATA=%s (resolves outside the checkout)\n' "$(SWIFT_MK_DERIVED_DATA)" >&2 ;; \
+			esac; \
+		fi
 
 swift-mk-bin:
 	@if [ -x "$(SWIFT_MK_BIN)" ]; then "$(SWIFT_MK_BIN)" trace begin 2>/dev/null || true; fi
