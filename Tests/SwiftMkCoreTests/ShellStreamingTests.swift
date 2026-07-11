@@ -62,7 +62,7 @@ func shellRunStreamingStderrReapsProcessTreeOnTimeout() throws {
     for pid in recordedPIDs {
       _ = kill(pid, SIGKILL)
     }
-    try? FileManager.default.removeItem(at: temporaryDirectory)
+    removeTemporary(temporaryDirectory.path)
   }
 
   let script = """
@@ -84,6 +84,8 @@ func shellRunStreamingStderrReapsProcessTreeOnTimeout() throws {
   }
 }
 
+private let deadProcessPollIntervalMicroseconds: useconds_t = 10_000
+
 private func processIsDead(_ pid: pid_t, timeoutSeconds: TimeInterval) -> Bool {
   let deadline = Date().addingTimeInterval(timeoutSeconds)
   repeat {
@@ -91,7 +93,7 @@ private func processIsDead(_ pid: pid_t, timeoutSeconds: TimeInterval) -> Bool {
     if kill(pid, 0) == -1, errno == ESRCH {
       return true
     }
-    usleep(10_000)
+    usleep(deadProcessPollIntervalMicroseconds)
   } while Date() < deadline
   return false
 }

@@ -14,13 +14,12 @@ import Foundation
 /// Run external programs and capture their output.
 public enum Shell {
   /// Exit status used when a program cannot be launched, matching the shell
-  /// convention for "command not found".
-  private static let launchFailureStatus: Int32 = 127
+  /// convention for "command not found". Internal so the process-group spawn in
+  /// `Shell+ProcessGroup.swift` reports the same launch-failure status.
+  static let launchFailureStatus: Int32 = 127
 
   /// Number of launch attempts before a spawn failure is treated as terminal.
   private static let maxLaunchAttempts = 5
-  private static let timeoutTerminationGraceSeconds = 2.0
-  private static let timeoutPollIntervalMicroseconds: useconds_t = 10_000
   /// The live trace/span keys re-applied over a child's environment overrides so a
   /// subprocess joins the run trace, driven from the one Correlation.environmentKeys
   /// list the test suites also share.
@@ -55,8 +54,9 @@ public enum Shell {
   }
 
   /// The child environment for a spawned process: nil to inherit the parent
-  /// environment unchanged, or the parent merged with `overrides`.
-  private static func childEnvironment(_ overrides: [String: String]) -> [String: String]? {
+  /// environment unchanged, or the parent merged with `overrides`. Internal so the
+  /// process-group spawn in `Shell+ProcessGroup.swift` builds the same environment.
+  static func childEnvironment(_ overrides: [String: String]) -> [String: String]? {
     guard !overrides.isEmpty else {
       return nil
     }
@@ -159,176 +159,6 @@ public enum Shell {
       }
     }
     return buffer
-  }
-
-  private struct SpawnedStreamingProcess {
-    let processIdentifier: pid_t
-    let standardOutput: Pipe
-    let standardError: Pipe
-  }
-
-  private static func spawnStreamingProcessGroup(
-    _ executable: String,
-    _ arguments: [String],
-    environment: [String: String]
-  ) -> SpawnedStreamingProcess? {
-    let standardOutput = Pipe()
-    let standardError = Pipe()
-    let outputReadDescriptor = standardOutput.fileHandleForReading.fileDescriptor
-    let outputWriteDescriptor = standardOutput.fileHandleForWriting.fileDescriptor
-    let errorReadDescriptor = standardError.fileHandleForReading.fileDescriptor
-    let errorWriteDescriptor = standardError.fileHandleForWriting.fileDescriptor
-
-    var attributes: posix_spawnattr_t?
-    guard posix_spawnattr_init(&attributes) == 0 else {
-      return nil
-    }
-    defer { posix_spawnattr_destroy(&attributes) }
-
-    var fileActions: posix_spawn_file_actions_t?
-    guard posix_spawn_file_actions_init(&fileActions) == 0 else {
-      return nil
-    }
-    defer { posix_spawn_file_actions_destroy(&fileActions) }
-
-    let spawnFlags = Int16(POSIX_SPAWN_SETPGROUP)
-    guard posix_spawnattr_setflags(&attributes, spawnFlags) == 0,
-      posix_spawnattr_setpgroup(&attributes, 0) == 0,
-      posix_spawn_file_actions_adddup2(
-        &fileActions, outputWriteDescriptor, STDOUT_FILENO) == 0,
-      posix_spawn_file_actions_adddup2(
-        &fileActions, errorWriteDescriptor, STDERR_FILENO) == 0,
-      posix_spawn_file_actions_addclose(&fileActions, outputReadDescriptor) == 0,
-      posix_spawn_file_actions_addclose(&fileActions, errorReadDescriptor) == 0,
-      posix_spawn_file_actions_addclose(&fileActions, outputWriteDescriptor) == 0,
-      posix_spawn_file_actions_addclose(&fileActions, errorWriteDescriptor) == 0
-    else {
-      return nil
-    }
-
-    let argv = ["/usr/bin/env", executable] + arguments
-    let envpStrings = childEnvironment(environment).map { merged in
-      merged.map { "\($0.key)=\($0.value)" }
-    }
-    var processIdentifier: pid_t = -1
-    let spawnStatus = withCStringArray(argv) { argvPointer -> Int32 in
-      if let envpStrings {
-        return withCStringArray(envpStrings) { envpPointer in
-          posix_spawn(
-            &processIdentifier, "/usr/bin/env", &fileActions, &attributes, argvPointer,
-            envpPointer)
-        } ?? ENOMEM
-      }
-      return posix_spawn(
-        &processIdentifier, "/usr/bin/env", &fileActions, &attributes, argvPointer, environ)
-    }
-    guard let spawnStatus, spawnStatus == 0 else {
-      return nil
-    }
-    // The parent must drop its copies of the write ends so the read ends reach
-    // EOF once the whole child group exits; only the child holds them as fd 1/2.
-    standardOutput.fileHandleForWriting.closeFile()
-    standardError.fileHandleForWriting.closeFile()
-    return SpawnedStreamingProcess(
-      processIdentifier: processIdentifier,
-      standardOutput: standardOutput,
-      standardError: standardError)
-  }
-
-  /// Decode a `waitpid` status into a shell-style exit code: the exit status for
-  /// a normal exit, or 128 plus the signal number for a signalled child.
-  private static func decodeWaitStatus(_ status: Int32) -> Int32 {
-    if status & 0x7f == 0 {
-      return (status >> 8) & 0xff
-    }
-    let terminatingSignal = status & 0x7f
-    if terminatingSignal != 0x7f {
-      return 128 + terminatingSignal
-    }
-    return (status >> 8) & 0xff
-  }
-
-  private static func reapProcessBlocking(_ processIdentifier: pid_t) -> Int32 {
-    var status: Int32 = 0
-    while true {
-      let reaped = waitpid(processIdentifier, &status, 0)
-      if reaped == processIdentifier {
-        return decodeWaitStatus(status)
-      }
-      if reaped == -1, errno != EINTR {
-        return launchFailureStatus
-      }
-    }
-  }
-
-  /// Kill a timed-out child's whole process group and reap it. Send SIGTERM to the
-  /// group, give it a bounded grace to exit, then SIGKILL the group and reap. The
-  /// SIGKILL goes out while the leader is still unreaped, so its PID cannot be
-  /// recycled into an unrelated group before the signal lands, and it clears any
-  /// grandchild that ignores SIGTERM so nothing outlives the wrapper and reparents
-  /// to launchd as a runaway. Every wait here is bounded, including the drain.
-  private static func terminateProcessGroupAndReap(
-    _ process: SpawnedStreamingProcess, drainGroup: DispatchGroup
-  ) -> Int32 {
-    let processIdentifier = process.processIdentifier
-    _ = kill(-processIdentifier, SIGTERM)
-    // Wait for the group leader to exit WITHOUT reaping it (WNOWAIT), so its PID
-    // stays reserved while the group SIGKILL below is delivered.
-    let deadline = Date().addingTimeInterval(timeoutTerminationGraceSeconds)
-    while Date() < deadline {
-      var status: Int32 = 0
-      if waitpid(processIdentifier, &status, WNOHANG | WNOWAIT) == processIdentifier {
-        break
-      }
-      usleep(timeoutPollIntervalMicroseconds)
-    }
-    _ = kill(-processIdentifier, SIGKILL)
-    let status = reapProcessBlocking(processIdentifier)
-    drainAndRelease(process, drainGroup: drainGroup)
-    return status
-  }
-
-  /// Wait for the drain handlers to finish, bounded so a descendant that escaped
-  /// the process group and kept a pipe write end open cannot hang the wrapper. On
-  /// timeout, detach the readers and close the read ends; the captured stdout is
-  /// whatever arrived before then.
-  private static func drainAndRelease(
-    _ process: SpawnedStreamingProcess, drainGroup: DispatchGroup
-  ) {
-    if drainGroup.wait(timeout: .now() + timeoutTerminationGraceSeconds) == .timedOut {
-      for handle in [
-        process.standardOutput.fileHandleForReading,
-        process.standardError.fileHandleForReading,
-      ] {
-        handle.readabilityHandler = nil
-        try? handle.close()
-      }
-    }
-  }
-
-  private static func withCStringArray<Value>(
-    _ strings: [String],
-    _ body: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) -> Value
-  ) -> Value? {
-    var pointers: [UnsafeMutablePointer<CChar>?] = []
-    for string in strings {
-      guard let pointer = strdup(string) else {
-        for pointer in pointers {
-          free(pointer)
-        }
-        return nil
-      }
-      pointers.append(pointer)
-    }
-    pointers.append(nil)
-    defer {
-      for pointer in pointers {
-        free(pointer)
-      }
-    }
-    return pointers.withUnsafeMutableBufferPointer { buffer in
-      body(buffer.baseAddress!)
-    }
   }
 
   /// Run a program, capturing stdout in full while forwarding stderr live.
