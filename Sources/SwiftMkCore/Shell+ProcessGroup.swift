@@ -34,9 +34,16 @@ extension Shell {
   }
 
   /// Configure the spawn attributes for a new process group and the file actions
-  /// that wire the child's stdout and stderr to the pipe write ends, closing every
-  /// inherited pipe descriptor in the child. Returns false if any configuration
-  /// call fails.
+  /// that wire the child's stdout and stderr to the pipe write ends. Returns false
+  /// if any configuration call fails.
+  ///
+  /// `POSIX_SPAWN_CLOEXEC_DEFAULT` makes the kernel treat every parent descriptor
+  /// as close-on-exec, so no unrelated fd leaks into the child. Foundation `Pipe`
+  /// does not mark its fds close-on-exec on Darwin, so without this flag a
+  /// concurrently spawning sibling's pipe write end could be inherited here and
+  /// hold that sibling's pipe open past EOF, hanging its drain. Only the fds named
+  /// in these file actions survive: the dup'd stdout and stderr, and stdin, which
+  /// `addinherit_np` preserves so a child that reads input still works.
   private static func configureProcessGroupSpawn(
     _ attributes: inout posix_spawnattr_t?,
     _ fileActions: inout posix_spawn_file_actions_t?,
@@ -47,9 +54,10 @@ extension Shell {
     let outputWrite = standardOutput.fileHandleForWriting.fileDescriptor
     let errorRead = standardError.fileHandleForReading.fileDescriptor
     let errorWrite = standardError.fileHandleForWriting.fileDescriptor
-    let spawnFlags = Int16(POSIX_SPAWN_SETPGROUP)
+    let spawnFlags = Int16(POSIX_SPAWN_SETPGROUP) | Int16(POSIX_SPAWN_CLOEXEC_DEFAULT)
     return posix_spawnattr_setflags(&attributes, spawnFlags) == 0
       && posix_spawnattr_setpgroup(&attributes, 0) == 0
+      && posix_spawn_file_actions_addinherit_np(&fileActions, STDIN_FILENO) == 0
       && posix_spawn_file_actions_adddup2(&fileActions, outputWrite, STDOUT_FILENO) == 0
       && posix_spawn_file_actions_adddup2(&fileActions, errorWrite, STDERR_FILENO) == 0
       && posix_spawn_file_actions_addclose(&fileActions, outputRead) == 0
