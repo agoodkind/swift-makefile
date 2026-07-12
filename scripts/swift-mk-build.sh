@@ -71,11 +71,19 @@ swift_mk_content_key() {
     elif [[ -f "${swiftpm_resolved_path}" ]]; then
         printf '%s\0' "${swiftpm_resolved_path}" >> "${file_list}"
     fi
-    # Every Swift source that compiles into the binary. find under pipefail must not
-    # abort when Sources is absent, and the null delimiter keeps a path containing
-    # whitespace from splitting a hash entry. Sort the per-file hashes (not the
-    # filenames) so the key is order- and whitespace-stable.
-    find "${package_path}/Sources" -type f -name '*.swift' -print0 >> "${file_list}" 2>/dev/null || true
+    # The build script itself helps produce the binary, and the CI toolchain-cache key
+    # folds it too, so a change to it rebuilds.
+    if [[ -f "${package_path}/scripts/swift-mk-build.sh" ]]; then
+        printf '%s\0' "${package_path}/scripts/swift-mk-build.sh" >> "${file_list}"
+    fi
+    # Every file under Sources, both the Swift sources and the bundled resources
+    # (Resources/*.yml, *.json, *.toml) that compile into the binary, so a resource
+    # edit rebuilds rather than reusing a binary that carries the stale config. This
+    # mirrors the CI toolchain-cache key, which hashes the same Sources tree. find
+    # under pipefail must not abort when Sources is absent, and the null delimiter
+    # keeps a path containing whitespace from splitting a hash entry. Sort the per-file
+    # hashes (not the filenames) so the key is order- and whitespace-stable.
+    find "${package_path}/Sources" -type f -print0 >> "${file_list}" 2>/dev/null || true
     source_hash=$(xargs -0 shasum < "${file_list}" | awk '{ print $1 }' | LC_ALL=C sort | shasum | awk '{ print $1 }')
     rm -f "${file_list}"
 
