@@ -108,16 +108,27 @@ SWIFT_MK_FRESH_FORCE := $(strip $(filter-out 0 false no off,$(FORCE)) $(filter 0
 # makefiles round out the set. POSIX find keeps this bootstrap-safe (no rg). The
 # pruned directories match the engine's digestExcludedDirectories, so make and the
 # binary agree on the file set and a large build output tree is never walked.
-SWIFT_MK_FRESH_INPUTS := $(shell find $(CURDIR) -type d \( -name .git -o -name .build -o -name .make -o -name .derived-data -o -name DerivedData -o -name Derived -o -name Products -o -name SourcePackages -o -name node_modules -o -name .swiftpm -o -name build -o -name .tuist -o -name Pods \) -prune -o \( -type d -o -type f \( -name '*.swift' -o -name '*.h' -o -name '*.m' -o -name '*.c' -o -name '*.metal' -o -name '*.mk' \) \) -print 2>/dev/null) $(wildcard Package.swift Package.resolved Project.swift Workspace.swift *.xcconfig Tuist/*) $(SWIFT_MK_BIN) $(MAKEFILE_LIST)
+#
+# This is a recursive (`=`) variable, not simply-expanded (`:=`), so the find does
+# not run while parsing the makefile. Paired with .SECONDEXPANSION on the record
+# rule below, the walk runs only when make is evaluating whether the record needs to
+# rebuild, so make clean, make lint, and make test never pay for it.
+SWIFT_MK_FRESH_INPUTS = $(shell find $(CURDIR) -type d \( -name .git -o -name .build -o -name .make -o -name .derived-data -o -name DerivedData -o -name Derived -o -name Products -o -name SourcePackages -o -name node_modules -o -name .swiftpm -o -name build -o -name .tuist -o -name Pods \) -prune -o \( -type d -o -type f \( -name '*.swift' -o -name '*.h' -o -name '*.m' -o -name '*.c' -o -name '*.metal' -o -name '*.mk' \) \) -print 2>/dev/null) $(wildcard Package.swift Package.resolved Project.swift Workspace.swift *.xcconfig Tuist/*) $(SWIFT_MK_BIN) $(MAKEFILE_LIST)
 
 build: $(SWIFT_MK_FRESH_RECORD)
 
+# Defer SWIFT_MK_FRESH_INPUTS to the second prerequisite-expansion pass, which make
+# runs only when it considers this target as part of a requested goal. The find then
+# runs for make build and make run, not for every make invocation. Secondary
+# expansion is a no-op for the sibling rules below, since their prerequisites hold no
+# literal `$` after the first pass.
+.SECONDEXPANSION:
 # swift-mk-bin is an ORDER-ONLY prerequisite (after the `|`). It still ensures the
 # engine binary is current before the recipe runs, but as a phony target it is always
 # considered out of date; a normal prerequisite on it would force this record to
 # rebuild on every invocation and defeat the whole gate. The order-only form runs it
 # without letting its perpetual out-of-dateness propagate to the stamp.
-$(SWIFT_MK_FRESH_RECORD): $(SWIFT_MK_FRESH_INPUTS) | swift-mk-bin
+$(SWIFT_MK_FRESH_RECORD): $$(SWIFT_MK_FRESH_INPUTS) | swift-mk-bin
 	@if [ -z "$(SWIFT_MK_FRESH_FORCE)" ] && "$(SWIFT_MK_BIN)" build-fresh check $(SWIFT_MK_FRESH_ARGS); then \
 		echo "swift-build.mk: build up to date, skipping (FORCE=1 to rebuild)"; \
 		touch "$@"; \
