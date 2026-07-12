@@ -81,7 +81,7 @@ public enum Toolchain {
     switch generator {
     case .tuist:
       Output.info("toolchain: tuist install")
-      return Shell.runForwardingOutput("tuist", ["install"])
+      return runTuistResolve(["install"])
     case .xcodegen:
       Output.info("toolchain: xcodegen has no dependency install step")
       return 0

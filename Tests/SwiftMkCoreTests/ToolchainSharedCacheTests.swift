@@ -94,50 +94,56 @@ enum ToolchainSharedCacheTests {
 
   @Test
   static func withSharedCacheEnvRestoresLiveEnvironmentValues() {
-    let savedModule = currentEnv("SWIFT_MK_MODULE_CACHE")
-    let savedSpm = currentEnv("SWIFT_MK_SPM_CACHE")
-    let savedCas = currentEnv("SWIFT_MK_XCODE_CACHE_PATH")
-    let savedPool = currentEnv("SWIFT_MK_POOL")
-    _ = ProcessInfo.processInfo.environment
-    setOrUnset("SWIFT_MK_MODULE_CACHE", "/tmp/live-module")
-    setOrUnset("SWIFT_MK_SPM_CACHE", "/tmp/live-spm")
-    setOrUnset("SWIFT_MK_XCODE_CACHE_PATH", "/tmp/live-cas")
-    setOrUnset("SWIFT_MK_POOL", "1")
-    defer {
-      setOrUnset("SWIFT_MK_MODULE_CACHE", savedModule)
-      setOrUnset("SWIFT_MK_SPM_CACHE", savedSpm)
-      setOrUnset("SWIFT_MK_XCODE_CACHE_PATH", savedCas)
-      setOrUnset("SWIFT_MK_POOL", savedPool)
-    }
+    TestGlobalLock.withLock {
+      let savedModule = currentEnv("SWIFT_MK_MODULE_CACHE")
+      let savedSpm = currentEnv("SWIFT_MK_SPM_CACHE")
+      let savedCas = currentEnv("SWIFT_MK_XCODE_CACHE_PATH")
+      let savedPool = currentEnv("SWIFT_MK_POOL")
+      _ = ProcessInfo.processInfo.environment
+      setOrUnset("SWIFT_MK_MODULE_CACHE", "/tmp/live-module")
+      setOrUnset("SWIFT_MK_SPM_CACHE", "/tmp/live-spm")
+      setOrUnset("SWIFT_MK_XCODE_CACHE_PATH", "/tmp/live-cas")
+      setOrUnset("SWIFT_MK_POOL", "1")
+      defer {
+        setOrUnset("SWIFT_MK_MODULE_CACHE", savedModule)
+        setOrUnset("SWIFT_MK_SPM_CACHE", savedSpm)
+        setOrUnset("SWIFT_MK_XCODE_CACHE_PATH", savedCas)
+        setOrUnset("SWIFT_MK_POOL", savedPool)
+      }
 
-    withSharedCacheEnv(module: "off", spm: "none", cas: "off", pool: nil) {
-      #expect(Toolchain.sharedCacheArguments().isEmpty)
-    }
+      withSharedCacheEnv(module: "off", spm: "none", cas: "off", pool: nil) {
+        #expect(Toolchain.sharedCacheArguments().isEmpty)
+      }
 
-    #expect(currentEnv("SWIFT_MK_MODULE_CACHE") == "/tmp/live-module")
-    #expect(currentEnv("SWIFT_MK_SPM_CACHE") == "/tmp/live-spm")
-    #expect(currentEnv("SWIFT_MK_XCODE_CACHE_PATH") == "/tmp/live-cas")
-    #expect(currentEnv("SWIFT_MK_POOL") == "1")
+      #expect(currentEnv("SWIFT_MK_MODULE_CACHE") == "/tmp/live-module")
+      #expect(currentEnv("SWIFT_MK_SPM_CACHE") == "/tmp/live-spm")
+      #expect(currentEnv("SWIFT_MK_XCODE_CACHE_PATH") == "/tmp/live-cas")
+      #expect(currentEnv("SWIFT_MK_POOL") == "1")
+    }
   }
 
+  // Serialize on the shared process-wide lock so a suite reading SWIFT_MK_POOL live
+  // (ToolchainTuistCacheTests) never observes this suite's env mutations mid-read.
   private static func withSharedCacheEnv(
     module: String?, spm: String?, cas: String?, pool: String? = nil, _ run: () -> Void
   ) {
-    let priorModule = currentEnv("SWIFT_MK_MODULE_CACHE")
-    let priorSpm = currentEnv("SWIFT_MK_SPM_CACHE")
-    let priorCas = currentEnv("SWIFT_MK_XCODE_CACHE_PATH")
-    let priorPool = currentEnv("SWIFT_MK_POOL")
-    setOrUnset("SWIFT_MK_MODULE_CACHE", module)
-    setOrUnset("SWIFT_MK_SPM_CACHE", spm)
-    setOrUnset("SWIFT_MK_XCODE_CACHE_PATH", cas)
-    setOrUnset("SWIFT_MK_POOL", pool)
-    defer {
-      setOrUnset("SWIFT_MK_MODULE_CACHE", priorModule)
-      setOrUnset("SWIFT_MK_SPM_CACHE", priorSpm)
-      setOrUnset("SWIFT_MK_XCODE_CACHE_PATH", priorCas)
-      setOrUnset("SWIFT_MK_POOL", priorPool)
+    TestGlobalLock.withLock {
+      let priorModule = currentEnv("SWIFT_MK_MODULE_CACHE")
+      let priorSpm = currentEnv("SWIFT_MK_SPM_CACHE")
+      let priorCas = currentEnv("SWIFT_MK_XCODE_CACHE_PATH")
+      let priorPool = currentEnv("SWIFT_MK_POOL")
+      setOrUnset("SWIFT_MK_MODULE_CACHE", module)
+      setOrUnset("SWIFT_MK_SPM_CACHE", spm)
+      setOrUnset("SWIFT_MK_XCODE_CACHE_PATH", cas)
+      setOrUnset("SWIFT_MK_POOL", pool)
+      defer {
+        setOrUnset("SWIFT_MK_MODULE_CACHE", priorModule)
+        setOrUnset("SWIFT_MK_SPM_CACHE", priorSpm)
+        setOrUnset("SWIFT_MK_XCODE_CACHE_PATH", priorCas)
+        setOrUnset("SWIFT_MK_POOL", priorPool)
+      }
+      run()
     }
-    run()
   }
 
   private static func currentEnv(_ name: String) -> String? {
