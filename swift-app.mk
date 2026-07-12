@@ -53,6 +53,14 @@ SWIFT_APP_PRODUCTS_DIR ?= Products
 SWIFT_APP_XCODE_PRODUCTS_DIR ?= $(SWIFT_APP_BUILD_DIR)/Build/Products/$(SWIFT_APP_CONFIGURATION)
 SWIFT_APP_BUILT_APP_PATH ?= $(SWIFT_APP_XCODE_PRODUCTS_DIR)/$(SWIFT_APP_BUNDLE_NAME).app
 SWIFT_APP_DEST ?= $(SWIFT_APP_PRODUCTS_DIR)/$(SWIFT_APP_BUNDLE_NAME).app
+
+# Feed the built .app to the build-freshness check (swift-build.mk) so an app
+# consumer rebuilds when the bundle is gone, not just when a source changes. Guarded
+# on the app path being set so a misconfigured consumer does not record an empty
+# product.
+ifneq ($(strip $(SWIFT_APP_BUILT_APP_PATH)),)
+SWIFT_MK_FRESH_PRODUCTS := $(SWIFT_APP_BUILT_APP_PATH)
+endif
 SWIFT_APP_SIGN_IDENTITY ?=
 SWIFT_APP_SPARKLE_FRAMEWORK ?= $(SWIFT_APP_DEST)/Contents/Frameworks/Sparkle.framework
 

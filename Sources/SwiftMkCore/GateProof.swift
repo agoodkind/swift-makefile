@@ -286,84 +286,6 @@ public enum GateProof {
     return Stamp.parse(text)
   }
 
-  // MARK: Source digest
-
-  /// Source file extensions whose content binds the proof to the working tree.
-  static let sourceExtensions: Set<String> = ["swift", "mk", "h", "m", "c", "metal"]
-
-  /// Directory names that never contribute to the source digest: build output,
-  /// caches, vcs metadata, and vendored package checkouts.
-  static let digestExcludedDirectories: Set<String> = [
-    ".git", ".build", ".make", "DerivedData", "Derived", "Products",
-    "SourcePackages", "node_modules", ".swiftpm", "build", ".tuist", "Pods",
-  ]
-
-  /// A stable digest of the tracked source set under the repo root: for each
-  /// source file, its repo-relative path, size, and modification time. Recomputed
-  /// identically at mark and verify, so a source edited between the gate and the
-  /// compile flips the digest and fails the freshness factor. Fast: it stats
-  /// files, never reads their contents.
-  static func sourceDigest(context: PathContext) -> String {
-    let root = URL(fileURLWithPath: context.cwd, isDirectory: true)
-    let rootPath = root.standardizedFileURL.path
-    var entries: [String] = []
-    let manager = FileManager.default
-    guard
-      let enumerator = manager.enumerator(
-        at: root,
-        includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey],
-        options: [.skipsHiddenFiles])
-    else {
-      return "empty"
-    }
-    for case let item as URL in enumerator {
-      let values: URLResourceValues?
-      do {
-        values = try item.resourceValues(forKeys: [
-          .isDirectoryKey, .fileSizeKey, .contentModificationDateKey,
-        ])
-      } catch {
-        // A file that cannot be stat'd does not contribute to the digest; the
-        // digest is a best-effort change signal, not enforced.
-        Output.warning("gate-proof: skipping unreadable source \(item.path): \(error)")
-        values = nil
-      }
-      if values?.isDirectory == true {
-        if digestExcludedDirectories.contains(item.lastPathComponent) {
-          enumerator.skipDescendants()
-        }
-        continue
-      }
-      guard sourceExtensions.contains(item.pathExtension) else {
-        continue
-      }
-      let path = item.standardizedFileURL.path
-      let relative =
-        path.hasPrefix(rootPath + "/")
-        ? String(path.dropFirst(rootPath.count + 1)) : path
-      let size = values?.fileSize ?? 0
-      let mtime = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
-      entries.append("\(relative)\u{0}\(size)\u{0}\(mtime)")
-    }
-    entries.sort()
-    return fnv1aHex(entries.joined(separator: "\n"))
-  }
-
-  /// A fast, deterministic 64-bit FNV-1a digest as lowercase hex. Used to detect
-  /// a source change between the gate and the compile, not as a cryptographic
-  /// boundary, so a non-cryptographic hash is the right tool: the proof's
-  /// forgery resistance is the live-ancestor factor, not this digest.
-  static func fnv1aHex(_ text: String) -> String {
-    let offsetBasis: UInt64 = 0xcbf2_9ce4_8422_2325
-    let prime: UInt64 = 0x0000_0100_0000_01b3
-    var hash = offsetBasis
-    for byte in text.utf8 {
-      hash ^= UInt64(byte)
-      hash = hash &* prime
-    }
-    return String(format: "%016llx", hash)
-  }
-
   // MARK: Process ancestry (Darwin)
 
   /// The pid chain from this process up to the root, this process first. Walks
@@ -489,4 +411,173 @@ public enum GateProof {
   // Track the pid this process marked, so `mark` is idempotent across nested
   // gated entries within one process.
   nonisolated(unsafe) private static var markedPid: Int32 = -1
+}
+
+// MARK: - Source digest
+
+/// The tracked-source walk and the digest primitives it feeds. These live in an
+/// extension so the primary `GateProof` body stays focused on the proof, while the
+/// walk and hashes stay callable as `GateProof.*` by the proof itself and by
+/// `BuildFreshness`, which shares the same file set and exclusions.
+extension GateProof {
+  /// Source file extensions whose content binds the proof to the working tree.
+  static let sourceExtensions: Set<String> = ["swift", "mk", "h", "m", "c", "metal"]
+
+  /// Directory names that never contribute to the source digest: build output,
+  /// caches, vcs metadata, and vendored package checkouts. `.derived-data` is the
+  /// engine's default DerivedData path; excluding it keeps a build's own generated
+  /// Swift under DerivedSources out of the digest, so an Xcode consumer's build does
+  /// not churn its own freshness signal. This set matches the make freshness input
+  /// prune list in swift-build.mk.
+  static let digestExcludedDirectories: Set<String> = [
+    ".git", ".build", ".make", ".derived-data", "DerivedData", "Derived",
+    "Products", "SourcePackages", "node_modules", ".swiftpm", "build", ".tuist",
+    "Pods",
+  ]
+
+  /// Walk the tracked source set under the repo root, invoking `body` once per
+  /// source file with its repo-relative path and URL. Applies the same directory
+  /// pruning (`digestExcludedDirectories`) and extension filter (`sourceExtensions`)
+  /// that the digests depend on, so the mtime digest and the content digest see a
+  /// byte-identical file set. The walk order is unspecified, so a caller that
+  /// needs a stable digest sorts its own entries. Returns false only when the
+  /// enumerator could not be created, letting a caller preserve its "empty"
+  /// sentinel distinct from a tree that simply has no source files.
+  @discardableResult
+  static func forEachTrackedSource(
+    context: PathContext,
+    _ body: (_ relativePath: String, _ url: URL) -> Void
+  ) -> Bool {
+    let root = URL(fileURLWithPath: context.cwd, isDirectory: true)
+    let rootPath = root.standardizedFileURL.path
+    let manager = FileManager.default
+    guard
+      let enumerator = manager.enumerator(
+        at: root,
+        includingPropertiesForKeys: [.isDirectoryKey],
+        options: [.skipsHiddenFiles])
+    else {
+      return false
+    }
+    for case let item as URL in enumerator {
+      // A file that cannot be stat'd is treated as a non-directory, so it falls
+      // through to the extension check and is still considered, matching the
+      // prior best-effort behavior.
+      var isDirectory = false
+      do {
+        isDirectory = try item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory ?? false
+      } catch {
+        // Treat an unreadable entry as a non-directory so it still reaches the
+        // extension check, matching the prior best-effort behavior.
+        Output.warning("gate-proof: could not stat \(item.path) for directory check: \(error)")
+      }
+      if isDirectory {
+        if digestExcludedDirectories.contains(item.lastPathComponent) {
+          enumerator.skipDescendants()
+        }
+        continue
+      }
+      guard sourceExtensions.contains(item.pathExtension) else {
+        continue
+      }
+      let path = item.standardizedFileURL.path
+      let relative =
+        path.hasPrefix(rootPath + "/")
+        ? String(path.dropFirst(rootPath.count + 1)) : path
+      body(relative, item)
+    }
+    return true
+  }
+
+  /// A stable digest of the tracked source set under the repo root: for each
+  /// source file, its repo-relative path, size, and modification time. Recomputed
+  /// identically at mark and verify, so a source edited between the gate and the
+  /// compile flips the digest and fails the freshness factor. Fast: it stats
+  /// files, never reads their contents.
+  static func sourceDigest(context: PathContext) -> String {
+    var entries: [String] = []
+    let started = forEachTrackedSource(context: context) { relative, url in
+      let values: URLResourceValues?
+      do {
+        values = try url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+      } catch {
+        // A file that cannot be stat'd does not contribute to the digest; the
+        // digest is a best-effort change signal, not enforced.
+        Output.warning("gate-proof: skipping unreadable source \(url.path): \(error)")
+        values = nil
+      }
+      let size = values?.fileSize ?? 0
+      let mtime = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
+      entries.append("\(relative)\u{0}\(size)\u{0}\(mtime)")
+    }
+    guard started else {
+      return "empty"
+    }
+    entries.sort()
+    return fnv1aHex(entries.joined(separator: "\n"))
+  }
+
+  /// The FNV-1a 64-bit offset basis, shared by the string and file digests.
+  static let fnv1aOffsetBasis: UInt64 = 0xcbf2_9ce4_8422_2325
+
+  /// The FNV-1a 64-bit prime, shared by the string and file digests.
+  static let fnv1aPrime: UInt64 = 0x0000_0100_0000_01b3
+
+  /// A fast, deterministic 64-bit FNV-1a digest as lowercase hex. Used to detect
+  /// a source change between the gate and the compile, not as a cryptographic
+  /// boundary, so a non-cryptographic hash is the right tool: the proof's
+  /// forgery resistance is the live-ancestor factor, not this digest.
+  static func fnv1aHex(_ text: String) -> String {
+    var hash = fnv1aOffsetBasis
+    for byte in text.utf8 {
+      hash ^= UInt64(byte)
+      hash = hash &* fnv1aPrime
+    }
+    return String(format: "%016llx", hash)
+  }
+
+  /// A 64-bit FNV-1a digest of a file's contents as lowercase hex, streamed in
+  /// fixed-size chunks so a large source never loads into memory at once. Binds a
+  /// content-based freshness check to the bytes on disk rather than mtime, so it
+  /// survives an mtime-only churn. An unreadable file returns a stable sentinel,
+  /// distinct from any real content digest, keeping the enclosing digest
+  /// deterministic without letting absent content silently match present content.
+  static func fnv1aHexOfFile(at url: URL) -> String {
+    let handle: FileHandle
+    do {
+      handle = try FileHandle(forReadingFrom: url)
+    } catch {
+      return "unreadable"
+    }
+    defer {
+      do {
+        try handle.close()
+      } catch {
+        Output.warning("gate-proof: could not close \(url.path): \(error)")
+      }
+    }
+    var hash = fnv1aOffsetBasis
+    while true {
+      let chunk: Data?
+      do {
+        chunk = try handle.read(upToCount: fileDigestChunkBytes)
+      } catch {
+        // A read error mid-file returns the same sentinel as an open failure, so
+        // a partially read file never yields a content digest that could match.
+        return "unreadable"
+      }
+      guard let chunk, !chunk.isEmpty else {
+        break
+      }
+      for byte in chunk {
+        hash ^= UInt64(byte)
+        hash = hash &* fnv1aPrime
+      }
+    }
+    return String(format: "%016llx", hash)
+  }
+
+  /// Read granularity for the streaming file digest. 64 KiB keeps the per-file
+  /// working set bounded while amortizing read syscalls over many bytes.
+  static let fileDigestChunkBytes = 1 << 16
 }

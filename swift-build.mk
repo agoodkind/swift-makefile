@@ -70,16 +70,82 @@ SWIFT_MK_POST_BUILD_SIGN_CMD = $(if $(SWIFT_MK_HAS_SIGN_WORK),$(if $(strip $(COD
 
 # `swift-mk build` is the chokepoint: it runs the lint gates in-process and then
 # the configured SWIFT_BUILD_CMD, so there is no separate recipe step that compiles
-# without gating. It depends only on the binary; the gates run inside it, not as a
-# make prerequisite.
-build: swift-mk-bin
-	@$(SWIFT_MK_SIGNING_PRELUDE) \
-		$(if $(SWIFT_MK_SIGNING_REQUIRED),$(SWIFT_MK_SIGNING_PREFLIGHT) && ,) \
-		$(if $(strip $(SWIFT_GENERATE_CMD)),$(SWIFT_GENERATE_CMD) &&,) \
-		$(SWIFT_MK_VERIFY_SETTINGS_CMD) \
-		"$(SWIFT_MK_BIN)" build \
-		$(SWIFT_MK_POST_BUILD_SIGN_CMD) \
-		&& $(SWIFT_MK_VERIFY_ARTIFACTS_CMD)
+# without gating. The gates run inside it, not as a make prerequisite.
+#
+# Freshness gate. `make build` no-ops when the tracked inputs and the built product
+# are unchanged since the last successful build. The engine (swift-mk build-fresh)
+# owns the freshness decision; this target is the make-level guard that ships that
+# behavior to every consumer with no consumer edit.
+#
+# The record file is the stamp: make rebuilds it only when an input is newer, and
+# the recipe itself decides between a no-op and the full build chain.
+SWIFT_MK_FRESH_RECORD := $(CURDIR)/.make/.build/last-success
+# Opaque fingerprint of the build inputs that are not source files, so a change to
+# the build command, generate command, configuration, or any signing knob is itself
+# a rebuild trigger even when no tracked source changed. The post-build signing
+# variables are folded in too, so changing only what gets signed rebuilds and
+# re-signs rather than skipping as fresh.
+SWIFT_MK_FRESH_CONFIG_KEY := $(SWIFT_BUILD_CMD)|$(SWIFT_GENERATE_CMD)|$(SWIFT_XCODE_CONFIGURATION)|$(DEVELOPMENT_TEAM)|$(CODE_SIGN_IDENTITY)|$(CODE_SIGN_STYLE)|$(CODE_SIGN_KEYCHAIN)|$(SWIFT_MK_SIGN_PRODUCTS)|$(SWIFT_MK_SIGN_BUNDLES_DIR)|$(SWIFT_MK_SIGN_IDENTIFIER)|$(SWIFT_MK_SIGN_IDENTIFIER_PREFIX)|$(SWIFT_MK_SIGN_IDENTITY)
+# Export the key so the recipe passes it through the environment rather than a
+# shell-quoted argument. make hands an exported variable to the recipe verbatim, so
+# a folded value containing an apostrophe (a signing identity like O'Brien, a path)
+# cannot break the build command's shell parse. build-fresh reads it from here.
+export SWIFT_MK_FRESH_CONFIG_KEY
+# Product paths the freshness check confirms still exist. Empty by default so a
+# plain SwiftPM consumer relies on the source digest alone; swift-app.mk sets the
+# built .app so an app consumer also rebuilds when the bundle is gone.
+SWIFT_MK_FRESH_PRODUCTS ?=
+SWIFT_MK_FRESH_ARGS = $(foreach p,$(SWIFT_MK_FRESH_PRODUCTS),--product '$(p)')
+# Escape hatch: FORCE with a truthy value, or SWIFT_MK_BUILD_FRESH with a falsy
+# value, makes this non-empty, so the guard skips the freshness check and always
+# runs the build chain. FORCE=0 is filtered out so it does not force a build.
+SWIFT_MK_FRESH_FORCE := $(strip $(filter-out 0 false no off,$(FORCE)) $(filter 0 false no off,$(SWIFT_MK_BUILD_FRESH)))
+# The make-level input list that decides whether the stamp is out of date. It lists
+# source FILES and every non-pruned DIRECTORY. A directory is a prerequisite because
+# adding, deleting, or renaming a child bumps that directory's mtime, so a pure
+# deletion (which a file-only list cannot see, the deleted file simply vanishes from
+# the list) still re-runs the recipe. Config files, the engine binary, and the
+# makefiles round out the set. POSIX find keeps this bootstrap-safe (no rg). The
+# pruned directories match the engine's digestExcludedDirectories, so make and the
+# binary agree on the file set and a large build output tree is never walked.
+#
+# This is a recursive (`=`) variable, not simply-expanded (`:=`), so the find does
+# not run while parsing the makefile. Paired with .SECONDEXPANSION on the record
+# rule below, the walk runs only when make is evaluating whether the record needs to
+# rebuild, so make clean, make lint, and make test never pay for it.
+SWIFT_MK_FRESH_INPUTS = $(shell find $(CURDIR) -type d \( -name .git -o -name .build -o -name .make -o -name .derived-data -o -name DerivedData -o -name Derived -o -name Products -o -name SourcePackages -o -name node_modules -o -name .swiftpm -o -name build -o -name .tuist -o -name Pods \) -prune -o \( -type d -o -type f \( -name '*.swift' -o -name '*.h' -o -name '*.m' -o -name '*.c' -o -name '*.metal' -o -name '*.mk' \) \) -print 2>/dev/null) $(wildcard Package.swift Package.resolved Project.swift Workspace.swift *.xcconfig Tuist/*) $(SWIFT_MK_BIN) $(MAKEFILE_LIST)
+
+build: $(SWIFT_MK_FRESH_RECORD)
+
+# Defer SWIFT_MK_FRESH_INPUTS to the second prerequisite-expansion pass, which make
+# runs only when it considers this target as part of a requested goal. The find then
+# runs for make build and make run, not for every make invocation. Secondary
+# expansion is a no-op for the sibling rules below, since their prerequisites hold no
+# literal `$` after the first pass.
+.SECONDEXPANSION:
+# swift-mk-bin is an ORDER-ONLY prerequisite (after the `|`). It still ensures the
+# engine binary is current before the recipe runs, but as a phony target it is always
+# considered out of date; a normal prerequisite on it would force this record to
+# rebuild on every invocation and defeat the whole gate. The order-only form runs it
+# without letting its perpetual out-of-dateness propagate to the stamp.
+$(SWIFT_MK_FRESH_RECORD): $$(SWIFT_MK_FRESH_INPUTS) | swift-mk-bin
+	@if [ -z "$(SWIFT_MK_FRESH_FORCE)" ] && "$(SWIFT_MK_BIN)" build-fresh check $(SWIFT_MK_FRESH_ARGS); then \
+		echo "swift-build.mk: build up to date, skipping (FORCE=1 to rebuild)"; \
+		touch "$@"; \
+	else \
+		$(SWIFT_MK_SIGNING_PRELUDE) \
+			$(if $(SWIFT_MK_SIGNING_REQUIRED),$(SWIFT_MK_SIGNING_PREFLIGHT) && ,) \
+			$(if $(strip $(SWIFT_GENERATE_CMD)),$(SWIFT_GENERATE_CMD) &&,) \
+			$(SWIFT_MK_VERIFY_SETTINGS_CMD) \
+			"$(SWIFT_MK_BIN)" build \
+			$(SWIFT_MK_POST_BUILD_SIGN_CMD) \
+			&& $(SWIFT_MK_VERIFY_ARTIFACTS_CMD) \
+			&& "$(SWIFT_MK_BIN)" build-fresh record $(SWIFT_MK_FRESH_ARGS) \
+			&& touch "$@"; \
+	fi
+# The fresh branch touches the stamp so a content-identical mtime churn (a checkout
+# or a no-op formatter pass that flips file mtimes but not bytes) resets the stamp
+# past the inputs; the next make run then hits make's own no-op with no recipe at all.
 
 # Consumers that define their own `run` set SWIFT_MK_OWN_RUN := 1 before include,
 # so this default does not collide and Make does not warn about overriding it.

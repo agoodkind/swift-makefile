@@ -171,6 +171,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkRenderCLI/main.swift \
 	Sources/SwiftMkCLI/SwiftMk.swift \
 	Sources/SwiftMkCLI/GateProofCommand.swift \
+	Sources/SwiftMkCLI/BuildFreshCommand.swift \
 	Sources/SwiftMkCLI/CodesignRun.swift \
 	Sources/SwiftMkCLI/NotarizeCommand.swift \
 	Sources/SwiftMkCLI/ToolchainCommand.swift \
@@ -255,6 +256,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/BuildToolingAudit.swift \
 	Sources/SwiftMkCore/Build.swift \
 	Sources/SwiftMkCore/GateProof.swift \
+	Sources/SwiftMkCore/BuildFreshness.swift \
 	Sources/SwiftMkCore/AdHocSigningAllowlist.swift \
 	Sources/SwiftMkCore/Lint.swift \
 	Sources/SwiftMkCore/Lint+GitIgnore.swift \
@@ -276,6 +278,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/BrewLockScriptTests.swift \
 	Tests/SwiftMkCoreTests/BuildTests.swift \
 	Tests/SwiftMkCoreTests/GateProofTests.swift \
+	Tests/SwiftMkCoreTests/BuildFreshnessTests.swift \
 	Tests/SwiftMkCoreTests/GitIgnoreBatchTests.swift \
 	Tests/SwiftMkCoreTests/DeadcodeBuildConfigTests.swift \
 	Tests/SwiftMkCoreTests/IndexCompletenessTests.swift \
@@ -761,6 +764,8 @@ export SWIFT_MK_UPDATE_DRY_RUN
 help:
 	@printf '%s\n' 'Canonical entry points:'
 	@printf '  %-40s %s\n' 'build' 'run build-check, then execute SWIFT_BUILD_CMD'
+	@printf '  %-40s %s\n' 'build FORCE=1' 'force a full build, skipping the freshness no-op'
+	@printf '  %-40s %s\n' 'build SWIFT_MK_BUILD_FRESH=0' 'disable the freshness no-op for this run'
 	@printf '  %-40s %s\n' 'run' 'run build, then execute SWIFT_RUN_CMD'
 	@printf '  %-40s %s\n' 'deploy' 'run build, then execute SWIFT_DEPLOY_CMD'
 	@printf '  %-40s %s\n' 'install' 'alias for deploy'
@@ -817,6 +822,7 @@ help:
 clean:
 	@if [ -f Package.swift ]; then swift package clean >/dev/null 2>&1 || true; fi; \
 		rm -rf .build; \
+		rm -rf .make/.build; \
 		root=$$(cd "$(CURDIR)" 2>/dev/null && pwd -P) || root="$(CURDIR)"; \
 		dd="$(abspath $(SWIFT_MK_DERIVED_DATA))"; \
 		parent=$$(cd "$$(dirname "$$dd")" 2>/dev/null && pwd -P); \

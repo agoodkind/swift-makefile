@@ -16,6 +16,10 @@ Every chokepoint compile proves it is authorized before it runs and holds the pe
 
 Each chokepoint applies the shared compile-cache flags, so a consumer sets nothing and the engine owns the cache with no opt-out. [caching](../caching/overview.md) owns the cache plan, the compile-cache stores, and the cross-runner behavior.
 
+## Freshness
+
+`make build` does no work when the tracked inputs and the built product are unchanged since the last successful build, so a repeated `make build` or `make run` returns at once. [freshness](freshness.md) owns the record, the source digest, and the make guard that ships the no-op to every consumer.
+
 ## Consumer contract
 
 A consumer routes build, test, and generate work through the `swift-mk` toolchain surface. The default SwiftPM commands call `swift-mk toolchain swiftpm build` and `swift-mk toolchain swiftpm test`; Xcode consumers set their normal project inputs and receive `swift-mk toolchain build`, `test`, `generate`, and `install` commands from `swift.mk`. The command a consumer provides is still its project build, but the engine owns the compiler boundary.
