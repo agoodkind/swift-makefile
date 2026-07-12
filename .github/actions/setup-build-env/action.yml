@@ -249,6 +249,16 @@ runs:
         fi
         "${bin}" cache plan
 
+        # The toolchain binary at ${bin} is now built or restored, re-signed, and
+        # proven to launch (the `--help` probe on the cache-hit path, and `cache plan`
+        # here). Export it so the later make-driven build reuses this exact binary
+        # instead of building a second copy at .make/swift-mk, and mark it verified so
+        # swift_mk_resolve_bin trusts it without recomputing its content key.
+        {
+            printf 'SWIFT_MK_BIN=%s\n' "${bin}"
+            printf 'SWIFT_MK_BIN_VERIFIED=1\n'
+        } >> "${GITHUB_ENV}"
+
     - name: Restore dependency cache
       if: steps.cache-plan.outputs.dependency-cache-enabled == 'true' && env.SWIFT_MK_POOL != '1'
       uses: actions/cache@v5
