@@ -171,6 +171,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkRenderCLI/main.swift \
 	Sources/SwiftMkCLI/SwiftMk.swift \
 	Sources/SwiftMkCLI/GateProofCommand.swift \
+	Sources/SwiftMkCLI/BuildFreshCommand.swift \
 	Sources/SwiftMkCLI/CodesignRun.swift \
 	Sources/SwiftMkCLI/NotarizeCommand.swift \
 	Sources/SwiftMkCLI/ToolchainCommand.swift \
