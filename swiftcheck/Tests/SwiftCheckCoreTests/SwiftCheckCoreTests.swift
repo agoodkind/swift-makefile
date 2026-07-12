@@ -236,6 +236,17 @@ func scanSkipsBoundaryLogInTestFile() throws {
   #expect(violations.isEmpty)
 }
 
+@Test
+func isTestPathAcceptsRepoRootRelativeTestsDirectory() {
+  // The gate scans repo-root-relative paths in CI, so a helper file under Tests/ whose
+  // name does not end in Tests.swift (a harness or support file) must still count as a
+  // test path. The embedded `/Tests/` match misses this leading-prefix form.
+  #expect(isTestPath("Tests/SwiftMkCoreTests/ResolveHarness.swift"))
+  #expect(isTestPath("/repo/Tests/SwiftMkCoreTests/ResolveHarness.swift"))
+  #expect(isTestPath("Tests/SwiftMkCoreTests/ToolchainBuildScriptTests.swift"))
+  #expect(!isTestPath("Sources/SwiftMkCore/Toolchain.swift"))
+}
+
 private func createTemporaryDirectory() throws -> URL {
   let directoryURL = FileManager.default.temporaryDirectory.appendingPathComponent(
     UUID().uuidString)
