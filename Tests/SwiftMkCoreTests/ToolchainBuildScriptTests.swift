@@ -138,8 +138,14 @@ enum ToolchainBuildScriptTests {
     // xattr that make the kernel kill it on launch. The script clears the xattrs
     // and re-signs ad-hoc after the cp; this proves the copied output actually
     // launches and carries an ad-hoc signature, not just that the script text
-    // mentions xattr/codesign. Skips where either tool is unavailable.
-    guard commandAvailable("xattr"), commandAvailable("codesign") else {
+    // mentions xattr/codesign. The fixture is a freshly compiled binary, not a
+    // copy of a system binary like /bin/echo: re-signing a copied system binary
+    // fails platform binary validation and is killed on launch on a clean macOS
+    // runner, which is a property of the fixture, not of the script under test.
+    // Skips where a required tool is unavailable.
+    guard
+      commandAvailable("xattr"), commandAvailable("codesign"), commandAvailable("clang")
+    else {
       return
     }
 
@@ -155,7 +161,7 @@ enum ToolchainBuildScriptTests {
                 exit 0
             fi
         done
-        cp /bin/echo "${bin_dir}/swift-mk"
+        printf 'int main(void){return 0;}\\n' | clang -x c - -o "${bin_dir}/swift-mk"
         chmod +x "${bin_dir}/swift-mk"
         exit 0
         """
