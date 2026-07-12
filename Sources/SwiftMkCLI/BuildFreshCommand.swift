@@ -47,12 +47,21 @@ struct BuildFreshCheck: ParsableCommand {
 
   func run() throws {
     let fresh = BuildFreshness.isFresh(
-      context: .current(), configKey: configKey, productPaths: productPaths)
+      context: .current(), configKey: resolvedConfigKey(configKey), productPaths: productPaths)
     guard fresh else {
       throw ExitCode.failure
     }
     Output.debug("build-fresh: fresh, skipping rebuild")
   }
+}
+
+/// Resolve the config key: an explicit `--config-key` wins, otherwise the value
+/// the Makefile exports as `SWIFT_MK_FRESH_CONFIG_KEY`. Reading it from the
+/// environment lets the make recipe pass the key without shell-quoting a folded
+/// value, so a signing identity or command with an apostrophe cannot break the
+/// build command.
+func resolvedConfigKey(_ flag: String) -> String {
+  flag.isEmpty ? Env.get("SWIFT_MK_FRESH_CONFIG_KEY") : flag
 }
 
 // MARK: - BuildFreshRecord
@@ -77,6 +86,6 @@ struct BuildFreshRecord: ParsableCommand {
 
   func run() {
     BuildFreshness.record(
-      context: .current(), configKey: configKey, productPaths: productPaths)
+      context: .current(), configKey: resolvedConfigKey(configKey), productPaths: productPaths)
   }
 }

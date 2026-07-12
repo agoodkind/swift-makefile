@@ -81,24 +81,34 @@ SWIFT_MK_POST_BUILD_SIGN_CMD = $(if $(SWIFT_MK_HAS_SIGN_WORK),$(if $(strip $(COD
 # the recipe itself decides between a no-op and the full build chain.
 SWIFT_MK_FRESH_RECORD := $(CURDIR)/.make/.build/last-success
 # Opaque fingerprint of the build inputs that are not source files, so a change to
-# the build command, generate command, configuration, or signing identity is itself
-# a rebuild trigger even when no tracked source changed.
-SWIFT_MK_FRESH_CONFIG_KEY := $(SWIFT_BUILD_CMD)|$(SWIFT_GENERATE_CMD)|$(SWIFT_XCODE_CONFIGURATION)|$(DEVELOPMENT_TEAM)|$(CODE_SIGN_IDENTITY)|$(CODE_SIGN_STYLE)
+# the build command, generate command, configuration, or any signing knob is itself
+# a rebuild trigger even when no tracked source changed. The post-build signing
+# variables are folded in too, so changing only what gets signed rebuilds and
+# re-signs rather than skipping as fresh.
+SWIFT_MK_FRESH_CONFIG_KEY := $(SWIFT_BUILD_CMD)|$(SWIFT_GENERATE_CMD)|$(SWIFT_XCODE_CONFIGURATION)|$(DEVELOPMENT_TEAM)|$(CODE_SIGN_IDENTITY)|$(CODE_SIGN_STYLE)|$(CODE_SIGN_KEYCHAIN)|$(SWIFT_MK_SIGN_PRODUCTS)|$(SWIFT_MK_SIGN_BUNDLES_DIR)|$(SWIFT_MK_SIGN_IDENTIFIER)|$(SWIFT_MK_SIGN_IDENTIFIER_PREFIX)|$(SWIFT_MK_SIGN_IDENTITY)
+# Export the key so the recipe passes it through the environment rather than a
+# shell-quoted argument. make hands an exported variable to the recipe verbatim, so
+# a folded value containing an apostrophe (a signing identity like O'Brien, a path)
+# cannot break the build command's shell parse. build-fresh reads it from here.
+export SWIFT_MK_FRESH_CONFIG_KEY
 # Product paths the freshness check confirms still exist. Empty by default so a
 # plain SwiftPM consumer relies on the source digest alone; swift-app.mk sets the
 # built .app so an app consumer also rebuilds when the bundle is gone.
 SWIFT_MK_FRESH_PRODUCTS ?=
-SWIFT_MK_FRESH_ARGS = --config-key '$(SWIFT_MK_FRESH_CONFIG_KEY)' $(foreach p,$(SWIFT_MK_FRESH_PRODUCTS),--product '$(p)')
-# Escape hatch: FORCE=1 or SWIFT_MK_BUILD_FRESH=0 makes this non-empty, so the guard
-# skips the freshness check and always runs the build chain.
-SWIFT_MK_FRESH_FORCE := $(strip $(FORCE)$(filter 0 false no,$(SWIFT_MK_BUILD_FRESH)))
+SWIFT_MK_FRESH_ARGS = $(foreach p,$(SWIFT_MK_FRESH_PRODUCTS),--product '$(p)')
+# Escape hatch: FORCE with a truthy value, or SWIFT_MK_BUILD_FRESH with a falsy
+# value, makes this non-empty, so the guard skips the freshness check and always
+# runs the build chain. FORCE=0 is filtered out so it does not force a build.
+SWIFT_MK_FRESH_FORCE := $(strip $(filter-out 0 false no off,$(FORCE)) $(filter 0 false no off,$(SWIFT_MK_BUILD_FRESH)))
 # The make-level input list that decides whether the stamp is out of date. It lists
 # source FILES and every non-pruned DIRECTORY. A directory is a prerequisite because
 # adding, deleting, or renaming a child bumps that directory's mtime, so a pure
 # deletion (which a file-only list cannot see, the deleted file simply vanishes from
 # the list) still re-runs the recipe. Config files, the engine binary, and the
-# makefiles round out the set. POSIX find keeps this bootstrap-safe (no rg).
-SWIFT_MK_FRESH_INPUTS := $(shell find $(CURDIR) -type d \( -name .git -o -name .build -o -name .make -o -name .derived-data -o -name DerivedData -o -name .tuist -o -name SourcePackages \) -prune -o \( -type d -o -type f \( -name '*.swift' -o -name '*.h' -o -name '*.m' -o -name '*.c' -o -name '*.metal' -o -name '*.mk' \) \) -print 2>/dev/null) $(wildcard Package.swift Package.resolved Project.swift Workspace.swift *.xcconfig Tuist/*) $(SWIFT_MK_BIN) $(MAKEFILE_LIST)
+# makefiles round out the set. POSIX find keeps this bootstrap-safe (no rg). The
+# pruned directories match the engine's digestExcludedDirectories, so make and the
+# binary agree on the file set and a large build output tree is never walked.
+SWIFT_MK_FRESH_INPUTS := $(shell find $(CURDIR) -type d \( -name .git -o -name .build -o -name .make -o -name .derived-data -o -name DerivedData -o -name Derived -o -name Products -o -name SourcePackages -o -name node_modules -o -name .swiftpm -o -name build -o -name .tuist -o -name Pods \) -prune -o \( -type d -o -type f \( -name '*.swift' -o -name '*.h' -o -name '*.m' -o -name '*.c' -o -name '*.metal' -o -name '*.mk' \) \) -print 2>/dev/null) $(wildcard Package.swift Package.resolved Project.swift Workspace.swift *.xcconfig Tuist/*) $(SWIFT_MK_BIN) $(MAKEFILE_LIST)
 
 build: $(SWIFT_MK_FRESH_RECORD)
 
