@@ -248,6 +248,62 @@ public enum Shell {
     return process.terminationStatus
   }
 
+  /// Run a program forwarding its stdout and stderr live to this process's streams
+  /// while also capturing them, returning the full `Result`. Use when a streaming
+  /// subprocess must show its output live AND the caller needs to inspect that output
+  /// afterward, such as detecting a cache-corruption signature in a dependency
+  /// resolve. `runForwardingOutput` forwards but returns only the status, and
+  /// `runStreamingStderr` captures only stdout, so neither can both stream and be
+  /// inspected. An empty `environment` inherits the current process environment
+  /// unchanged; a non-empty one is merged over it.
+  @discardableResult
+  public static func runForwardingAndCapturing(
+    _ executable: String,
+    _ arguments: [String] = [],
+    environment: [String: String] = [:]
+  ) -> Result {
+    Output.debug(
+      "Shell.runForwardingAndCapturing \(executable) \(arguments.joined(separator: " "))")
+    var launchError: Error?
+    let started = startWithRetry(
+      {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = [executable] + arguments
+        if let childEnv = childEnvironment(environment) {
+          process.environment = childEnv
+        }
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        return process
+      }, launchError: &launchError)
+    guard let process = started,
+      let outPipe = process.standardOutput as? Pipe,
+      let errPipe = process.standardError as? Pipe
+    else {
+      let message = launchError.map { "\($0)" } ?? "Shell.runForwardingAndCapturing: launch failed"
+      return Result(status: launchFailureStatus, stdout: "", stderr: "\(message)\n")
+    }
+    // Forward each chunk live to the matching stream while retaining it, so the
+    // user sees resolve output as it happens and the caller can still grep the
+    // combined text. Both streams are drained concurrently for the same
+    // pipe-buffer-deadlock reason documented on `run`.
+    let group = DispatchGroup()
+    let outBuffer = drainAsync(outPipe.fileHandleForReading, into: group) { chunk in
+      FileHandle.standardOutput.write(chunk)
+    }
+    let errBuffer = drainAsync(errPipe.fileHandleForReading, into: group) { chunk in
+      FileHandle.standardError.write(chunk)
+    }
+    group.wait()
+    process.waitUntilExit()
+    return Result(
+      status: process.terminationStatus,
+      stdout: String(bytes: outBuffer.snapshot(), encoding: .utf8) ?? "",
+      stderr: String(bytes: errBuffer.snapshot(), encoding: .utf8) ?? ""
+    )
+  }
+
   /// Run a program writing its combined stdout and stderr to a file, returning the
   /// exit status. Use when a later step reads the full output from disk, such as the
   /// swiftlint analyze compiler-log build that feeds `swiftlint analyze`. An empty

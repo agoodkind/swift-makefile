@@ -117,11 +117,22 @@ runs:
         # mount carries only the immutable SourcePackages checkout cache.
         pool_local_cache="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/swift-mk/pool-cache"
         spm_cache="${POOL_CACHE_ROOT}/spm/${DEPENDENCY_HASH}/SourcePackages"
-        mkdir -p "${pool_local_cache}" "${spm_cache}"
+
+        # The Tuist dependency resolve writes the SwiftPM binary-artifact and git
+        # mirror caches, which SwiftPM locates through the account home (getpwuid),
+        # not $HOME, so two co-tenant slots would race on the one default cache and
+        # collide ("already exists in file system"). Give each slot its own persistent
+        # cache, keyed by runner name, that swift-mk passes to `tuist install
+        # --cache-path`. It lives under the swift-mk Caches root so it survives across
+        # a slot's jobs (warm) and stays a cache-clean safe root.
+        runner_slug="$(printf '%s' "${RUNNER_NAME:-default}" | tr -c 'A-Za-z0-9._-' '_')"
+        tuist_spm_cache="${HOME}/Library/Caches/swift-mk/tuist-spm/${runner_slug}"
+        mkdir -p "${pool_local_cache}" "${spm_cache}" "${tuist_spm_cache}"
         {
             printf 'SWIFT_MK_POOL=1\n'
             printf 'SWIFT_MK_POOL_LOCAL_CACHE=%s\n' "${pool_local_cache}"
             printf 'SWIFT_MK_SPM_CACHE=%s\n' "${spm_cache}"
+            printf 'SWIFT_MK_TUIST_SPM_CACHE=%s\n' "${tuist_spm_cache}"
         } >> "${GITHUB_ENV}"
 
     # The cache plan (keys plus the cacheable path list) lives in the swift-mk

@@ -239,6 +239,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/Toolchain+Generate.swift \
 	Sources/SwiftMkCore/Toolchain+Coverage.swift \
 	Sources/SwiftMkCore/Toolchain+GatedCompile.swift \
+	Sources/SwiftMkCore/Toolchain+TuistCache.swift \
 	Sources/SwiftMkCore/GatedBuild.swift \
 	Sources/SwiftMkCore/GateDisplay.swift \
 	Sources/SwiftMkCore/GateReport.swift \
@@ -284,6 +285,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/ToolchainPrebuildTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainPoolCacheTests.swift \
+	Tests/SwiftMkCoreTests/ToolchainTuistCacheTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainSharedCacheTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainCoverageTests.swift \
 	Tests/SwiftMkCoreTests/ToolchainBuildCoverageTests.swift \
@@ -327,6 +329,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/PreflightTests.swift \
 	Tests/SwiftMkCoreTests/ShellStreamingTests.swift \
 	Tests/SwiftMkCoreTests/ShellTests.swift \
+	Tests/SwiftMkCoreTests/ShellForwardingCaptureTests.swift \
 	Tests/SwiftMkCoreTests/StructuredGateTests.swift \
 	Tests/SwiftMkCoreTests/SwiftcheckTests.swift \
 	Tests/SwiftMkCoreTests/XCResultTests.swift \

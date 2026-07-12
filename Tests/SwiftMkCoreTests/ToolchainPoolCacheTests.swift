@@ -160,24 +160,29 @@ enum ToolchainPoolCacheTests {
     }
   }
 
+  // Serialize on the same process-wide lock the other env-mutating suites hold, so a
+  // suite that reads SWIFT_MK_POOL live (ToolchainTuistCacheTests) never sees this
+  // suite's `pool: nil` unset land mid-read.
   private static func withSharedCacheEnv(
     module: String?, spm: String?, cas: String?, pool: String?, _ run: () -> Void
   ) {
-    let priorModule = currentEnv("SWIFT_MK_MODULE_CACHE")
-    let priorSpm = currentEnv("SWIFT_MK_SPM_CACHE")
-    let priorCas = currentEnv("SWIFT_MK_XCODE_CACHE_PATH")
-    let priorPool = currentEnv("SWIFT_MK_POOL")
-    setOrUnset("SWIFT_MK_MODULE_CACHE", module)
-    setOrUnset("SWIFT_MK_SPM_CACHE", spm)
-    setOrUnset("SWIFT_MK_XCODE_CACHE_PATH", cas)
-    setOrUnset("SWIFT_MK_POOL", pool)
-    defer {
-      setOrUnset("SWIFT_MK_MODULE_CACHE", priorModule)
-      setOrUnset("SWIFT_MK_SPM_CACHE", priorSpm)
-      setOrUnset("SWIFT_MK_XCODE_CACHE_PATH", priorCas)
-      setOrUnset("SWIFT_MK_POOL", priorPool)
+    TestGlobalLock.withLock {
+      let priorModule = currentEnv("SWIFT_MK_MODULE_CACHE")
+      let priorSpm = currentEnv("SWIFT_MK_SPM_CACHE")
+      let priorCas = currentEnv("SWIFT_MK_XCODE_CACHE_PATH")
+      let priorPool = currentEnv("SWIFT_MK_POOL")
+      setOrUnset("SWIFT_MK_MODULE_CACHE", module)
+      setOrUnset("SWIFT_MK_SPM_CACHE", spm)
+      setOrUnset("SWIFT_MK_XCODE_CACHE_PATH", cas)
+      setOrUnset("SWIFT_MK_POOL", pool)
+      defer {
+        setOrUnset("SWIFT_MK_MODULE_CACHE", priorModule)
+        setOrUnset("SWIFT_MK_SPM_CACHE", priorSpm)
+        setOrUnset("SWIFT_MK_XCODE_CACHE_PATH", priorCas)
+        setOrUnset("SWIFT_MK_POOL", priorPool)
+      }
+      run()
     }
-    run()
   }
 
   private static func argument(after flag: String, in arguments: [String]) -> String? {
