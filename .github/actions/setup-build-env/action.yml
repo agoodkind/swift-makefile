@@ -277,8 +277,8 @@ runs:
                 set -e
                 if [ "${probe_rc}" -ne 0 ]; then
                     echo "pooled swift-mk failed to launch (exit ${probe_rc}); rebuilding into the keyed path"
-                    # Remove just this keyed binary so swift-mk-build.sh's mtime check cannot
-                    # skip the rebuild, then rebuild into the same keyed path.
+                    # Remove just this keyed binary so swift-mk-build.sh's content-key
+                    # check cannot reuse the failed binary, then rebuild into the same keyed path.
                     rm -f "${bin}"
                     build_pool_bin
                 fi
