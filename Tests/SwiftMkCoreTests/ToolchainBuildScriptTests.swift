@@ -411,6 +411,24 @@ extension ToolchainBuildScriptTests {
   }
 
   @Test
+  static func setupBuildEnvPoolReusesKeyedBinaryWithoutBlanketWipe() throws {
+    let action = try rootFile(".github/actions/setup-build-env/action.yml")
+    // The pool binary path is content-keyed by the engine source hash, so a new source or
+    // toolchain lands in its own keyed directory. Dropping the keyed path fails here.
+    let keyedBin = #"bin="${HOME}/.swift-mk-ci-toolchain/${SWIFT_MK_SRC_HASH}/swift-mk""#
+    // Slice the pool branch: it follows the keyed bin assignment, so the hosted `rm -rf`
+    // in build_engine stays out of `pool` while the pool probe, rebuild, and `rm -f` fall in.
+    let pool = String(action[try #require(action.range(of: keyedBin)).upperBound...])
+    #expect(action.contains("SWIFT_MK_SRC_HASH: ${{ steps.swift-mk-src.outputs.hash }}"))
+    #expect(pool.contains(#""${bin}" --help >/dev/null 2>&1"#))
+    #expect(pool.contains(#"if [ "${probe_rc}" -ne 0 ]; then"#))
+    #expect(pool.contains("build_pool_bin"))
+    #expect(pool.contains(#"rm -f "${bin}""#))
+    // Reintroducing any `rm -rf` on the pool path (the blanket toolchain-root wipe) fails.
+    #expect(!pool.contains("rm -rf"))
+  }
+
+  @Test
   static func toolchainContentKeyDrivesReuse() throws {
     try withTemporaryDirectory { directory in
       let harness = try ResolveHarness.make(in: directory)

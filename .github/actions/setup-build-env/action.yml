@@ -202,6 +202,7 @@ runs:
       shell: bash
       env:
         SWIFT_MK_SRC: ${{ steps.swift-mk-src.outputs.dir }}
+        SWIFT_MK_SRC_HASH: ${{ steps.swift-mk-src.outputs.hash }}
         TOOLCHAIN_CACHE_HIT: ${{ steps.swift-mk-toolchain.outputs.cache-hit }}
         CACHE_PROFILE: ${{ inputs.cache-profile }}
         CACHE_VERSION: ${{ inputs.cache-version }}
@@ -221,31 +222,69 @@ runs:
                 bash "${SWIFT_MK_SRC}/scripts/swift-mk-build.sh" resolve
         }
 
-        if [ "${TOOLCHAIN_CACHE_HIT}" = "true" ] && [ -x "${bin}" ]; then
-            # Real cache hit (the key pins the engine source and Xcode bundle, so the
-            # cached binary matches). Clear the provenance xattr and re-sign so a restored
-            # arm64 binary is not killed on launch.
-            xattr -c "${bin}" 2>/dev/null || true
-            codesign --force --sign - "${bin}" >/dev/null 2>&1 || true
-            # Verify the restored binary actually launches under the active toolchain.
-            # A binary built against a different Xcode bundle links libIndexStore by
-            # @rpath into that bundle and aborts on launch (SIGABRT, exit 134). The key
-            # already folds the bundle path in to prevent that, so this is the safety
-            # net: if a cached binary ever cannot launch, discard it and rebuild rather
-            # than aborting the whole run. `swift-mk --help` is an ArgumentParser
-            # built-in that exits 0 whenever the process launches, so treat ANY non-zero
-            # (a dyld abort, an exec-format or arch mismatch, or any launch failure) as a
-            # failed probe and rebuild.
-            set +e
-            "${bin}" --help >/dev/null 2>&1
-            probe_rc=$?
-            set -e
-            if [ "${probe_rc}" -ne 0 ]; then
-                echo "cached swift-mk failed to launch (exit ${probe_rc}); rebuilding against the active toolchain"
+        if [ "${SWIFT_MK_POOL:-}" != "1" ]; then
+            # HOSTED: the actions/cache toolchain restore is active, so a warm run
+            # restores ~/.swift-mk-ci-toolchain and TOOLCHAIN_CACHE_HIT is "true".
+            if [ "${TOOLCHAIN_CACHE_HIT}" = "true" ] && [ -x "${bin}" ]; then
+                # Real cache hit (the key pins the engine source and Xcode bundle, so the
+                # cached binary matches). Clear the provenance xattr and re-sign so a restored
+                # arm64 binary is not killed on launch.
+                xattr -c "${bin}" 2>/dev/null || true
+                codesign --force --sign - "${bin}" >/dev/null 2>&1 || true
+                # Verify the restored binary actually launches under the active toolchain.
+                # A binary built against a different Xcode bundle links libIndexStore by
+                # @rpath into that bundle and aborts on launch (SIGABRT, exit 134). The key
+                # already folds the bundle path in to prevent that, so this is the safety
+                # net: if a cached binary ever cannot launch, discard it and rebuild rather
+                # than aborting the whole run. `swift-mk --help` is an ArgumentParser
+                # built-in that exits 0 whenever the process launches, so treat ANY non-zero
+                # (a dyld abort, an exec-format or arch mismatch, or any launch failure) as a
+                # failed probe and rebuild.
+                set +e
+                "${bin}" --help >/dev/null 2>&1
+                probe_rc=$?
+                set -e
+                if [ "${probe_rc}" -ne 0 ]; then
+                    echo "cached swift-mk failed to launch (exit ${probe_rc}); rebuilding against the active toolchain"
+                    build_engine
+                fi
+            else
                 build_engine
             fi
         else
-            build_engine
+            # POOL: the actions/cache restore is disabled, so TOOLCHAIN_CACHE_HIT is never
+            # set. The persistent VM keeps a prior gate's binary at a path keyed by the
+            # engine source hash, so reuse it VM-locally instead of wiping and rebuilding
+            # every gate. A new source or toolchain gets a distinct keyed directory, so no
+            # blanket wipe of the whole ${HOME}/.swift-mk-ci-toolchain root is needed; each
+            # VM writes only its own keyed path, never the shared mount, keeping the reuse
+            # single-writer.
+            bin="${HOME}/.swift-mk-ci-toolchain/${SWIFT_MK_SRC_HASH}/swift-mk"
+            build_pool_bin() {
+                mkdir -p "$(dirname "${bin}")"
+                SWIFT_MK_BIN="${bin}" SWIFT_MK_BUILD_REPO="${SWIFT_MK_SRC}" \
+                    bash "${SWIFT_MK_SRC}/scripts/swift-mk-build.sh" resolve
+            }
+            if [ -x "${bin}" ]; then
+                # A prior gate on this VM built the keyed binary. Clear the provenance
+                # xattr and re-sign so the ad-hoc arm64 binary is not killed on launch,
+                # then run the same `swift-mk --help` launch probe as the hosted path.
+                xattr -c "${bin}" 2>/dev/null || true
+                codesign --force --sign - "${bin}" >/dev/null 2>&1 || true
+                set +e
+                "${bin}" --help >/dev/null 2>&1
+                probe_rc=$?
+                set -e
+                if [ "${probe_rc}" -ne 0 ]; then
+                    echo "pooled swift-mk failed to launch (exit ${probe_rc}); rebuilding into the keyed path"
+                    # Remove just this keyed binary so swift-mk-build.sh's mtime check cannot
+                    # skip the rebuild, then rebuild into the same keyed path.
+                    rm -f "${bin}"
+                    build_pool_bin
+                fi
+            else
+                build_pool_bin
+            fi
         fi
         "${bin}" cache plan
 
