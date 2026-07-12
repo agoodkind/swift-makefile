@@ -8,7 +8,7 @@ The last successful build writes a record at `.make/.build/last-success`, and th
 
 The source set is compared with a two-tier digest. The fast path hashes each tracked file's path, size, and modification time, so an untouched tree is judged fresh without reading any file body. When mtimes have changed but the bytes have not, a second digest reads the contents and still reports fresh, so a checkout or a no-op formatter pass that only flips mtimes does not force a rebuild.
 
-A config key folds in the build command, the generate command, the configuration, and every signing knob, so changing one of those rebuilds even when no source changed. The make recipe passes the key through an exported environment variable, so a value with an apostrophe cannot break the build command's shell parse.
+A config key folds in the build command, the generate command, the configuration, and every signing knob, so changing one through a tracked file such as a local xcconfig or the Makefile rebuilds even when no other source changed. The make recipe passes the key through an exported environment variable, so a value with an apostrophe cannot break the build command's shell parse.
 
 Every declared product path must still exist on disk, so a deleted app bundle rebuilds. [`swift-app.mk`](../../swift-app.mk) declares the built `.app`. A plain SwiftPM consumer declares no product and relies on the source digest alone.
 
@@ -27,6 +27,10 @@ When the recipe runs, it consults `swift-mk build-fresh check`. On a fresh verdi
 `make build FORCE=1` always runs the full build. `make build SWIFT_MK_BUILD_FRESH=0` disables the no-op for that run. `make clean` removes the record, so the next build always runs.
 
 ## Known limits
+
+A config value passed only on the make command line, such as `make build CODE_SIGN_IDENTITY=...` with no file edited, is not detected on its own. The record is compared only when a tracked file or directory changes, and a command-line variable changes nothing on disk. The same value set in a tracked xcconfig or Makefile, or a following `make clean`, rebuilds. Continuous integration is unaffected, since a fresh checkout has no record.
+
+A tracked source path that contains a space is not supported by the freshness input list, because make separates prerequisites on spaces. A repo with such a path sets `SWIFT_MK_BUILD_FRESH=0`.
 
 A content change that preserves both a file's size and its modification time is judged fresh, because the content digest runs only when the mtime digest differs. This is the standard make freshness model.
 

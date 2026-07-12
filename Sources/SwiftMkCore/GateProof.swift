@@ -424,10 +424,15 @@ extension GateProof {
   static let sourceExtensions: Set<String> = ["swift", "mk", "h", "m", "c", "metal"]
 
   /// Directory names that never contribute to the source digest: build output,
-  /// caches, vcs metadata, and vendored package checkouts.
+  /// caches, vcs metadata, and vendored package checkouts. `.derived-data` is the
+  /// engine's default DerivedData path; excluding it keeps a build's own generated
+  /// Swift under DerivedSources out of the digest, so an Xcode consumer's build does
+  /// not churn its own freshness signal. This set matches the make freshness input
+  /// prune list in swift-build.mk.
   static let digestExcludedDirectories: Set<String> = [
-    ".git", ".build", ".make", "DerivedData", "Derived", "Products",
-    "SourcePackages", "node_modules", ".swiftpm", "build", ".tuist", "Pods",
+    ".git", ".build", ".make", ".derived-data", "DerivedData", "Derived",
+    "Products", "SourcePackages", "node_modules", ".swiftpm", "build", ".tuist",
+    "Pods",
   ]
 
   /// Walk the tracked source set under the repo root, invoking `body` once per
