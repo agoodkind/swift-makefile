@@ -1,0 +1,90 @@
+name: Setup Linux swift-mk
+description: Build and cache the Linux swift-mk change-detection binary from the swift-makefile engine checkout, with no Xcode or macOS tooling.
+
+runs:
+  using: composite
+  steps:
+    # Build swift-mk from the action's own checkout, so the action YAML and the
+    # engine binary it builds always come from the same commit, and a consumer
+    # needs no separate helper checkout for the toolchain build. This mirrors
+    # setup-build-env's swift-mk build path, minus everything Xcode: no
+    # setup-xcode, no cache plan, no signing, no mise/tuist/xcodegen, no pool.
+    - name: Resolve swift-mk source
+      id: swift-mk-src
+      shell: bash
+      run: |
+        set -euo pipefail
+        # GITHUB_ACTION_PATH is the action directory; three levels up is the
+        # swift-makefile repo root, for both the local ./.github/... use and a
+        # pinned @ref consumer use.
+        src=$(cd "${GITHUB_ACTION_PATH}/../../.." && pwd)
+        echo "dir=${src}" >> "${GITHUB_OUTPUT}"
+        # Key the toolchain cache on the engine source content, so it invalidates
+        # on an engine change and hits otherwise. Build the file list defensively:
+        # Sources always exists, but Package.resolved is gitignored in
+        # swift-makefile's own repo, so listing missing paths under pipefail must
+        # not abort the step. Null-delimit the list so a path containing whitespace
+        # cannot corrupt the hash, and sort the per-file hashes (not the filenames)
+        # so the key is order- and whitespace-stable.
+        file_list=$(mktemp)
+        find "${src}/Sources" -type f -print0 >> "${file_list}" 2>/dev/null || true
+        for manifest in Package.swift Package.resolved scripts/swift-mk-build.sh; do
+            if [ -f "${src}/${manifest}" ]; then
+                printf '%s\0' "${src}/${manifest}" >> "${file_list}"
+            fi
+        done
+        source_hash=$(xargs -0 shasum < "${file_list}" | awk '{ print $1 }' | LC_ALL=C sort | shasum | awk '{ print $1 }')
+        rm -f "${file_list}"
+        # Fold the active Swift toolchain into the key so a cached binary is only
+        # ever reused under the identical Swift it was built against. On Linux the
+        # binary carries no @rpath into an Xcode bundle, so the toolchain id is just
+        # the `swift --version` string.
+        toolchain_id=$(swift --version 2>/dev/null | shasum | awk '{ print $1 }')
+        echo "hash=${source_hash}-${toolchain_id}" >> "${GITHUB_OUTPUT}"
+
+    - name: Restore swift-mk toolchain
+      id: swift-mk-toolchain
+      uses: actions/cache@v5
+      with:
+        path: ~/.swift-mk-ci-toolchain
+        # The key includes runner.os, so the Linux binary caches independently from
+        # the macOS one, plus the engine source hash and the active Swift toolchain.
+        key: swift-mk-ci-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-mk-src.outputs.hash }}
+
+    - name: Build swift-mk
+      id: build
+      shell: bash
+      env:
+        SWIFT_MK_SRC: ${{ steps.swift-mk-src.outputs.dir }}
+        TOOLCHAIN_CACHE_HIT: ${{ steps.swift-mk-toolchain.outputs.cache-hit }}
+      run: |
+        set -euo pipefail
+        bin="${HOME}/.swift-mk-ci-toolchain/swift-mk"
+
+        build_engine() {
+            # Remove any stale binary a non-clean runner or a poisoned cache left, so
+            # the rebuild cannot be skipped by swift-mk-build.sh's mtime check.
+            rm -rf "${HOME}/.swift-mk-ci-toolchain"
+            SWIFT_MK_BIN="${bin}" SWIFT_MK_BUILD_REPO="${SWIFT_MK_SRC}" \
+                bash "${SWIFT_MK_SRC}/scripts/swift-mk-build.sh" resolve
+        }
+
+        if [ "${TOOLCHAIN_CACHE_HIT}" = "true" ] && [ -x "${bin}" ]; then
+            # Safety net: a cached binary that cannot launch under the active
+            # toolchain is discarded and rebuilt rather than aborting the run.
+            # `swift-mk --help` is an ArgumentParser built-in that exits 0 whenever
+            # the process launches, so treat ANY non-zero as a failed probe.
+            set +e
+            "${bin}" --help >/dev/null 2>&1
+            probe_rc=$?
+            set -e
+            if [ "${probe_rc}" -ne 0 ]; then
+                echo "cached swift-mk failed to launch (exit ${probe_rc}); rebuilding against the active toolchain"
+                build_engine
+            fi
+        else
+            build_engine
+        fi
+        # The Detect changes step falls back to this path when SWIFT_MK_BIN is
+        # unset, but export it explicitly so the binary location is unambiguous.
+        printf 'SWIFT_MK_BIN=%s\n' "${bin}" >> "${GITHUB_ENV}"
