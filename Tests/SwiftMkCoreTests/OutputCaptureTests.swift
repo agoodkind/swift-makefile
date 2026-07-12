@@ -53,7 +53,10 @@ enum OutputCaptureTests {
     let original = dup(STDOUT_FILENO)
     try #require(original >= 0)
     let pipe = Pipe()
-    fflush(stdout)
+    // Flush all buffered output streams before redirecting fd 1. Passing nil
+    // (flush every stream) avoids referencing the libc `stdout` global, which
+    // Glibc exports as shared mutable state that Swift 6 rejects in this context.
+    fflush(nil)
     dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
     do {
       try body()

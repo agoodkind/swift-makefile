@@ -6,11 +6,16 @@
 //  Copyright © 2026, all rights reserved.
 //
 
-import Darwin
 import Foundation
 import Testing
 
 @testable import SwiftMkCore
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
 
 // MARK: - ShellStreamingTests
 
