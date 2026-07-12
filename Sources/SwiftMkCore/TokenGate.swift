@@ -8,6 +8,10 @@
 
 import Foundation
 
+#if canImport(FoundationNetworking)
+  import FoundationNetworking
+#endif
+
 // MARK: - DailyTokenFetch
 
 /// Thread-safe holder for the daily-token HTTP result. The URLSession completion

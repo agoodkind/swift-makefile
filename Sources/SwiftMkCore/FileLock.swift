@@ -8,6 +8,12 @@
 
 import Foundation
 
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
+
 // MARK: - FileLock
 
 /// An advisory exclusive lock on a file, used to serialize the dead-code coverage

@@ -6,8 +6,17 @@
 //  Copyright © 2026, all rights reserved.
 //
 
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
+
+#if canImport(FoundationNetworking)
+  import FoundationNetworking
+#endif
 
 // MARK: - ReleaseHTTPClient
 

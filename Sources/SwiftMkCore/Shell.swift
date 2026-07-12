@@ -6,8 +6,13 @@
 //  Copyright © 2026, all rights reserved.
 //
 
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
 
 // MARK: - Shell
 

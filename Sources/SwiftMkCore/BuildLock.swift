@@ -8,6 +8,12 @@
 
 import Foundation
 
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
+
 // MARK: - BuildLock
 
 /// A re-entrant, per-worktree build lock. Two heavy builds in one worktree share the
