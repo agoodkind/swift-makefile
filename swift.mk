@@ -254,6 +254,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/BuildToolingAudit.swift \
 	Sources/SwiftMkCore/Build.swift \
 	Sources/SwiftMkCore/GateProof.swift \
+	Sources/SwiftMkCore/BuildFreshness.swift \
 	Sources/SwiftMkCore/AdHocSigningAllowlist.swift \
 	Sources/SwiftMkCore/Lint.swift \
 	Sources/SwiftMkCore/Lint+GitIgnore.swift \
@@ -275,6 +276,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/BrewLockScriptTests.swift \
 	Tests/SwiftMkCoreTests/BuildTests.swift \
 	Tests/SwiftMkCoreTests/GateProofTests.swift \
+	Tests/SwiftMkCoreTests/BuildFreshnessTests.swift \
 	Tests/SwiftMkCoreTests/GitIgnoreBatchTests.swift \
 	Tests/SwiftMkCoreTests/DeadcodeBuildConfigTests.swift \
 	Tests/SwiftMkCoreTests/IndexCompletenessTests.swift \
