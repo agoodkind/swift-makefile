@@ -6,8 +6,24 @@
 //  Copyright © 2026, all rights reserved.
 //
 
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
+
+// Darwin imports `posix_spawnattr_t` and `posix_spawn_file_actions_t` as optional
+// opaque pointers, while glibc imports them as concrete structs. The spawn helpers
+// take these by `inout`, so the parameter type has to follow the platform's import.
+#if canImport(Darwin)
+  private typealias SpawnAttributes = posix_spawnattr_t?
+  private typealias SpawnFileActions = posix_spawn_file_actions_t?
+#else
+  private typealias SpawnAttributes = posix_spawnattr_t
+  private typealias SpawnFileActions = posix_spawn_file_actions_t
+#endif
 
 // MARK: - Timeout process-group spawn and reap
 
@@ -37,16 +53,23 @@ extension Shell {
   /// that wire the child's stdout and stderr to the pipe write ends. Returns false
   /// if any configuration call fails.
   ///
-  /// `POSIX_SPAWN_CLOEXEC_DEFAULT` makes the kernel treat every parent descriptor
-  /// as close-on-exec, so no unrelated fd leaks into the child. Foundation `Pipe`
-  /// does not mark its fds close-on-exec on Darwin, so without this flag a
-  /// concurrently spawning sibling's pipe write end could be inherited here and
-  /// hold that sibling's pipe open past EOF, hanging its drain. Only the fds named
-  /// in these file actions survive: the dup'd stdout and stderr, and stdin, which
-  /// `addinherit_np` preserves so a child that reads input still works.
+  /// On Darwin, `POSIX_SPAWN_CLOEXEC_DEFAULT` makes the kernel treat every parent
+  /// descriptor as close-on-exec, so no unrelated fd leaks into the child.
+  /// Foundation `Pipe` does not mark its fds close-on-exec on Darwin, so without
+  /// this flag a concurrently spawning sibling's pipe write end could be inherited
+  /// here and hold that sibling's pipe open past EOF, hanging its drain. Only the
+  /// fds named in these file actions survive: the dup'd stdout and stderr, and
+  /// stdin, which `addinherit_np` preserves so a child that reads input still works.
+  ///
+  /// glibc has neither flag. `POSIX_SPAWN_CLOEXEC_DEFAULT` does not exist, so the
+  /// read ends the parent keeps are flagged close-on-exec explicitly, and the
+  /// `_np` inherit action does not exist, so stdin (fd 0) is simply left untouched
+  /// and inherited by default. The four `addclose` actions still drop every pipe
+  /// fd in the child, so its stdout and stderr reach the pipes only through the
+  /// dup2 duplicates at fd 1 and 2.
   private static func configureProcessGroupSpawn(
-    _ attributes: inout posix_spawnattr_t?,
-    _ fileActions: inout posix_spawn_file_actions_t?,
+    _ attributes: inout SpawnAttributes,
+    _ fileActions: inout SpawnFileActions,
     standardOutput: Pipe,
     standardError: Pipe
   ) -> Bool {
@@ -54,10 +77,21 @@ extension Shell {
     let outputWrite = standardOutput.fileHandleForWriting.fileDescriptor
     let errorRead = standardError.fileHandleForReading.fileDescriptor
     let errorWrite = standardError.fileHandleForWriting.fileDescriptor
-    let spawnFlags = Int16(POSIX_SPAWN_SETPGROUP) | Int16(POSIX_SPAWN_CLOEXEC_DEFAULT)
-    return posix_spawnattr_setflags(&attributes, spawnFlags) == 0
-      && posix_spawnattr_setpgroup(&attributes, 0) == 0
-      && posix_spawn_file_actions_addinherit_np(&fileActions, STDIN_FILENO) == 0
+    #if canImport(Darwin)
+      let spawnFlags = Int16(POSIX_SPAWN_SETPGROUP) | Int16(POSIX_SPAWN_CLOEXEC_DEFAULT)
+      let attributesConfigured =
+        posix_spawnattr_setflags(&attributes, spawnFlags) == 0
+        && posix_spawnattr_setpgroup(&attributes, 0) == 0
+        && posix_spawn_file_actions_addinherit_np(&fileActions, STDIN_FILENO) == 0
+    #else
+      let spawnFlags = Int16(POSIX_SPAWN_SETPGROUP)
+      let attributesConfigured =
+        setCloseOnExec(outputRead)
+        && setCloseOnExec(errorRead)
+        && posix_spawnattr_setflags(&attributes, spawnFlags) == 0
+        && posix_spawnattr_setpgroup(&attributes, 0) == 0
+    #endif
+    return attributesConfigured
       && posix_spawn_file_actions_adddup2(&fileActions, outputWrite, STDOUT_FILENO) == 0
       && posix_spawn_file_actions_adddup2(&fileActions, errorWrite, STDERR_FILENO) == 0
       && posix_spawn_file_actions_addclose(&fileActions, outputRead) == 0
@@ -66,14 +100,27 @@ extension Shell {
       && posix_spawn_file_actions_addclose(&fileActions, errorWrite) == 0
   }
 
+  #if !canImport(Darwin)
+    /// Mark a descriptor close-on-exec. glibc lacks `POSIX_SPAWN_CLOEXEC_DEFAULT`,
+    /// so the pipe read ends the parent keeps are flagged here to keep them out of
+    /// the spawned child and any concurrently spawning sibling.
+    private static func setCloseOnExec(_ fileDescriptor: Int32) -> Bool {
+      let flags = fcntl(fileDescriptor, F_GETFD)
+      if flags == -1 {
+        return false
+      }
+      return fcntl(fileDescriptor, F_SETFD, flags | FD_CLOEXEC) != -1
+    }
+  #endif
+
   /// Build argv and envp and invoke `posix_spawn`, returning the child pid or nil
   /// on failure. envp inherits the parent environment when no overrides are set.
   private static func performProcessGroupSpawn(
     _ executable: String,
     _ arguments: [String],
     _ environment: [String: String],
-    fileActions: inout posix_spawn_file_actions_t?,
-    attributes: inout posix_spawnattr_t?
+    fileActions: inout SpawnFileActions,
+    attributes: inout SpawnAttributes
   ) -> pid_t? {
     let argv = ["/usr/bin/env", executable] + arguments
     let envpStrings = childEnvironment(environment).map { merged in
@@ -109,13 +156,21 @@ extension Shell {
     let standardOutput = Pipe()
     let standardError = Pipe()
 
-    var attributes: posix_spawnattr_t?
+    #if canImport(Darwin)
+      var attributes: SpawnAttributes = nil
+    #else
+      var attributes = SpawnAttributes()
+    #endif
     guard posix_spawnattr_init(&attributes) == 0 else {
       return nil
     }
     defer { posix_spawnattr_destroy(&attributes) }
 
-    var fileActions: posix_spawn_file_actions_t?
+    #if canImport(Darwin)
+      var fileActions: SpawnFileActions = nil
+    #else
+      var fileActions = SpawnFileActions()
+    #endif
     guard posix_spawn_file_actions_init(&fileActions) == 0 else {
       return nil
     }
