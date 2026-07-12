@@ -44,6 +44,52 @@ swift_mk_dependency_hash() {
     } | awk '{ print $1 }' | LC_ALL=C sort | shasum | awk '{ print $1 }'
 }
 
+# Content key for the built tool binary: fold the source that produces it and the
+# active toolchain identity into one stable string. Reuse keys on content, not file
+# mtimes, so a source or toolchain change rebuilds while a binary restored with any
+# mtime neither forces a spurious rebuild nor serves a stale binary.
+swift_mk_content_key() {
+    local package_path
+    local manifest_path
+    local resolved_path
+    local swiftpm_resolved_path
+    local file_list
+    local source_hash
+    local toolchain_id
+
+    package_path="$1"
+    manifest_path="${package_path}/Package.swift"
+    resolved_path="${package_path}/Package.resolved"
+    swiftpm_resolved_path="${package_path}/.swiftpm/configuration/Package.resolved"
+
+    file_list=$(mktemp)
+    if [[ -f "${manifest_path}" ]]; then
+        printf '%s\0' "${manifest_path}" >> "${file_list}"
+    fi
+    if [[ -f "${resolved_path}" ]]; then
+        printf '%s\0' "${resolved_path}" >> "${file_list}"
+    elif [[ -f "${swiftpm_resolved_path}" ]]; then
+        printf '%s\0' "${swiftpm_resolved_path}" >> "${file_list}"
+    fi
+    # Every Swift source that compiles into the binary. find under pipefail must not
+    # abort when Sources is absent, and the null delimiter keeps a path containing
+    # whitespace from splitting a hash entry. Sort the per-file hashes (not the
+    # filenames) so the key is order- and whitespace-stable.
+    find "${package_path}/Sources" -type f -name '*.swift' -print0 >> "${file_list}" 2>/dev/null || true
+    source_hash=$(xargs -0 shasum < "${file_list}" | awk '{ print $1 }' | LC_ALL=C sort | shasum | awk '{ print $1 }')
+    rm -f "${file_list}"
+
+    # Fold the active toolchain identity so a compiler or Xcode-bundle change rebuilds
+    # even when no source changed.
+    toolchain_id=$(
+        {
+            xcode-select -p 2>/dev/null || true
+            swift --version 2>/dev/null || true
+        } | shasum | awk '{ print $1 }'
+    )
+    printf '%s-%s\n' "${source_hash}" "${toolchain_id}"
+}
+
 swift_mk_pool_cache_args() {
     local package_path
     local pool_cache_root
@@ -129,22 +175,43 @@ swift_mk_build_from_repo() {
     if command -v codesign >/dev/null 2>&1; then
         codesign --force --sign - "${output_path}" >/dev/null 2>&1 || true
     fi
+    # Record the content key next to the binary so a later resolve reuses it whenever
+    # the source and toolchain are unchanged, independent of file mtimes.
+    printf '%s\n' "$(swift_mk_content_key "${package_path}")" > "${output_path}.key"
 }
 
 swift_mk_resolve_bin() {
     local package_path
     local output_path
-    local newest_source
+    local key_path
+    local computed_key
+    local stored_key
 
     output_path=$(swift_mk_output_path)
+
+    # Trust a CI-provided binary that already launched under its probe. CI exports
+    # SWIFT_MK_BIN_VERIFIED=1 after building or restoring the toolchain binary and
+    # running its `--help` launch probe, so the make-driven resolve reuses it instead
+    # of building a second copy. SWIFT_MK_BIN being set is not itself the signal:
+    # swift.mk sets it on every invocation, so gating on it would never rebuild a
+    # stale local binary.
+    if [[ "${SWIFT_MK_BIN_VERIFIED:-}" == "1" && -x "${output_path}" ]]; then
+        return
+    fi
+
     package_path=$(swift_mk_package_path)
-    newest_source=""
-    if [[ -x "${output_path}" ]]; then
-        newest_source=$(find "${package_path}/Sources" "${package_path}/Package.swift" -name "*.swift" -newer "${output_path}" -print -quit 2>/dev/null || true)
+    key_path="${output_path}.key"
+    computed_key=$(swift_mk_content_key "${package_path}")
+    stored_key=""
+    if [[ -f "${key_path}" ]]; then
+        stored_key=$(cat "${key_path}")
     fi
-    if [[ ! -x "${output_path}" || -n "${newest_source}" ]]; then
-        swift_mk_build_from_repo
+    # Reuse the existing binary only when it is executable and its stored content key
+    # matches the freshly computed one; otherwise rebuild (which rewrites the key).
+    if [[ -x "${output_path}" && "${stored_key}" == "${computed_key}" ]]; then
+        return
     fi
+    swift_mk_build_from_repo
 }
 
 case "${1:-resolve}" in
