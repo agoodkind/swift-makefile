@@ -61,12 +61,14 @@ extension Shell {
   /// fds named in these file actions survive: the dup'd stdout and stderr, and
   /// stdin, which `addinherit_np` preserves so a child that reads input still works.
   ///
-  /// glibc has neither flag. `POSIX_SPAWN_CLOEXEC_DEFAULT` does not exist, so the
-  /// read ends the parent keeps are flagged close-on-exec explicitly, and the
-  /// `_np` inherit action does not exist, so stdin (fd 0) is simply left untouched
-  /// and inherited by default. The four `addclose` actions still drop every pipe
-  /// fd in the child, so its stdout and stderr reach the pipes only through the
-  /// dup2 duplicates at fd 1 and 2.
+  /// glibc has neither flag. `POSIX_SPAWN_CLOEXEC_DEFAULT` does not exist, so all
+  /// four pipe fds the parent holds are flagged close-on-exec explicitly, matching
+  /// Darwin's default so none leaks into this child or a concurrently spawning
+  /// sibling. The `_np` inherit action does not exist either, so stdin (fd 0) is
+  /// left untouched and inherited by default. The dup2 duplicates at fd 1 and 2
+  /// carry no close-on-exec flag, so the child's stdout and stderr survive exec and
+  /// reach the pipes, while the four `addclose` actions drop the originals in the
+  /// child.
   private static func configureProcessGroupSpawn(
     _ attributes: inout SpawnAttributes,
     _ fileActions: inout SpawnFileActions,
@@ -87,7 +89,9 @@ extension Shell {
       let spawnFlags = Int16(POSIX_SPAWN_SETPGROUP)
       let attributesConfigured =
         setCloseOnExec(outputRead)
+        && setCloseOnExec(outputWrite)
         && setCloseOnExec(errorRead)
+        && setCloseOnExec(errorWrite)
         && posix_spawnattr_setflags(&attributes, spawnFlags) == 0
         && posix_spawnattr_setpgroup(&attributes, 0) == 0
     #endif
@@ -102,8 +106,8 @@ extension Shell {
 
   #if !canImport(Darwin)
     /// Mark a descriptor close-on-exec. glibc lacks `POSIX_SPAWN_CLOEXEC_DEFAULT`,
-    /// so the pipe read ends the parent keeps are flagged here to keep them out of
-    /// the spawned child and any concurrently spawning sibling.
+    /// so every pipe fd the parent holds is flagged here to keep it out of the
+    /// spawned child and any concurrently spawning sibling.
     private static func setCloseOnExec(_ fileDescriptor: Int32) -> Bool {
       let flags = fcntl(fileDescriptor, F_GETFD)
       if flags == -1 {
