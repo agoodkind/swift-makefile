@@ -13,14 +13,37 @@ if [[ -n "${SWIFT_MK_DEV_DIR:-}" ]]; then
     SWIFT_MK_DEV_DIR_REAL="$(cd "${SWIFT_MK_DEV_DIR}" 2>/dev/null && pwd -P || true)"
 fi
 
+# Remove a prior snapshot's engine files from .make before laying down a new one, so
+# a ref change or a migration from the old per-file .make cannot leave an orphaned
+# source the new snapshot no longer defines (SwiftPM would then compile the orphan and
+# the build would break). Preserve the generated runtime files: the built binary and
+# its scratch and content key, the logs, the build lock, the dev symlinks, the
+# snapshot marker, and any *.log. Everything else in .make is engine content the
+# snapshot re-provides, so clearing it and re-extracting drops orphans while keeping
+# the runtime state a build depends on.
+snapshot_clear_engine() {
+    local make_dir="$1"
+    find "${make_dir}" -mindepth 1 -maxdepth 1 \
+        ! -name logs \
+        ! -name build.lock \
+        ! -name swift-mk \
+        ! -name swift-mk.key \
+        ! -name swift-mk-build \
+        ! -name dev \
+        ! -name .swift-mk-snapshot-ref \
+        ! -name swift.mk \
+        ! -name '*.log' \
+        -exec rm -rf {} +
+}
+
 # Extract the whole engine snapshot into .make so it becomes the flat SwiftPM
 # package the consumer builds. In dev-dir mode take the local working tree: stage
 # it into a throwaway index and archive that tree, so the extract includes a source
 # added on disk with no manifest to edit, drops a file removed on disk, and excludes
 # .git and the gitignored .make, all without touching the real index. Otherwise
 # download the pinned ref's archive from GitHub, gh first and a plain curl of the
-# public codeload archive as the fallback, so no auth is required. Either path lands
-# the same flat layout under .make.
+# public codeload archive as the fallback, so no auth is required. Either path clears
+# the prior snapshot's engine files first, then lands the same flat layout under .make.
 snapshot_extract() {
     local make_dir
     local dev_dir
@@ -39,6 +62,7 @@ snapshot_extract() {
         GIT_INDEX_FILE="${temp_index}" git -C "${dev_dir}" add -A
         tree="$(GIT_INDEX_FILE="${temp_index}" git -C "${dev_dir}" write-tree)"
         rm -f "${temp_index}"
+        snapshot_clear_engine "${make_dir}"
         git -C "${dev_dir}" archive --format=tar "${tree}" | tar -x -C "${make_dir}"
         printf "dev-%s\n" "$(git -C "${dev_dir}" rev-parse HEAD)" > "${make_dir}/.swift-mk-snapshot-ref"
         return 0
@@ -61,6 +85,7 @@ snapshot_extract() {
         rm -rf "${temp_dir}"
         return 1
     fi
+    snapshot_clear_engine "${make_dir}"
     tar -xz --strip-components=1 -C "${make_dir}" -f "${temp_dir}/snapshot.tar.gz"
     printf "%s\n" "${SWIFT_MK_API_REF}" > "${make_dir}/.swift-mk-snapshot-ref"
     rm -rf "${temp_dir}"
@@ -103,15 +128,19 @@ smoke_build_swiftcheck() {
     fi
 }
 
-case "${1:-}" in
-    update)
-        update_assets
-        ;;
-    smoke-fetch)
-        smoke_fetch
-        ;;
-    *)
-        printf "swift-mk-sync: unknown command %s\n" "${1:-}"
-        exit 2
-        ;;
-esac
+# Only dispatch when executed directly, so a test can source this file to exercise a
+# single function (snapshot_clear_engine) without triggering the unknown-command exit.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    case "${1:-}" in
+        update)
+            update_assets
+            ;;
+        smoke-fetch)
+            smoke_fetch
+            ;;
+        *)
+            printf "swift-mk-sync: unknown command %s\n" "${1:-}"
+            exit 2
+            ;;
+    esac
+fi

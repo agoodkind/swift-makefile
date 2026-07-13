@@ -159,9 +159,12 @@ SWIFT_MK_NOTICES_FILE := $(if $(wildcard $(SWIFT_MK_LOCAL_NOTICES)),$(SWIFT_MK_L
 # tar --strip-components=1, so the archive's top-level directory is dropped and the
 # engine tree lands flat under .make. gh streams the tarball first, and a plain curl
 # of the public codeload archive is the fallback, so no auth is required. A marker
-# records the resolved ref for the idempotency check at the call site. This runs
-# before the swift-mk binary or any fetched script exists, so it stays inline shell
-# with no fetched-script dependency.
+# records the resolved ref for the idempotency check at the call site. Before the
+# extract it clears the prior snapshot's engine files (keeping the generated logs,
+# build lock, dev symlinks, and built binary), so a ref change or a migration from an
+# old per-file .make cannot leave an orphaned source the new snapshot no longer
+# defines. This runs before the swift-mk binary or any fetched script exists, so it
+# stays inline shell with no fetched-script dependency.
 define _swift_mk_snapshot_commands
 	tmp=$$(mktemp -d) || exit 1; \
 	ok=""; \
@@ -171,6 +174,7 @@ define _swift_mk_snapshot_commands
 		ok=1; \
 	fi; \
 	if [ -z "$$ok" ]; then cat "$$tmp/err" >&2 2>/dev/null || true; rm -rf "$$tmp"; exit 1; fi; \
+	find .make -mindepth 1 -maxdepth 1 ! -name logs ! -name build.lock ! -name swift-mk ! -name swift-mk.key ! -name swift-mk-build ! -name dev ! -name .swift-mk-snapshot-ref ! -name swift.mk ! -name '*.log' -exec rm -rf {} + 2>>"$$tmp/err" || true; \
 	if ! tar -xz --strip-components=1 -C .make -f "$$tmp/snapshot.tar.gz" 2>>"$$tmp/err"; then cat "$$tmp/err" >&2 2>/dev/null || true; rm -rf "$$tmp"; exit 1; fi; \
 	printf '%s\n' "$(SWIFT_MK_API_REF)" > .make/.swift-mk-snapshot-ref; \
 	rm -rf "$$tmp"
@@ -196,8 +200,9 @@ endef
 # idempotent: the marker records the resolved ref, and a later run whose marker
 # matches the pinned ref with a present .make/Package.swift skips the re-extract, so
 # file mtimes stay stable and the tool-binary staleness guard does not force a
-# rebuild. The extract only adds files, so it never clears .make/logs,
-# .make/build.lock, or the built binary. Dev-dir mode is excluded here, because
+# rebuild. When a re-extract does run, it first clears the prior snapshot's engine
+# files while preserving .make/logs, .make/build.lock, and the built binary, so an
+# orphaned source cannot survive a ref change. Dev-dir mode is excluded here, because
 # SWIFT_MK_HELPER_DIR then resolves to the checkout rather than .make/scripts and the
 # build reads the checkout directly.
 SWIFT_MK_SNAPSHOT_CURRENT := $(shell if [ -f .make/Package.swift ] && [ -f .make/.swift-mk-snapshot-ref ] && [ "$$(cat .make/.swift-mk-snapshot-ref 2>/dev/null)" = "$(SWIFT_MK_API_REF)" ]; then printf 1; fi)
