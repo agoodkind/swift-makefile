@@ -99,6 +99,7 @@ private struct HelpFastPathHarness {
     arguments.append(contentsOf: goals)
     arguments.append("SWIFT_MK_DEV_DIR=\(repositoryRoot.path)")
     arguments.append("SWIFT_MK_BIN=\(swiftMkBinPath)")
+    arguments.append("SWIFT_MK_MODULES=swift-build.mk xcconfig.mk")
     return Shell.run("make", arguments, environment: environment)
   }
 
@@ -113,6 +114,7 @@ private struct HelpFastPathHarness {
       "help",
       "SWIFT_MK_DEV_DIR=\(repositoryRoot.path)",
       "SWIFT_MK_BIN=\(swiftMkBinPath)",
+      "SWIFT_MK_MODULES=swift-build.mk xcconfig.mk",
     ]
     return Shell.run("make", arguments, environment: environment)
   }
