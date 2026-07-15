@@ -137,12 +137,15 @@ enum ToolchainBuildScriptTests {
     // A copied arm64 binary can carry a stale linker signature and a provenance
     // xattr that make the kernel kill it on launch. The script clears the xattrs
     // and re-signs ad-hoc after the cp; this proves the copied output actually
-    // launches and carries an ad-hoc signature, not just that the script text
-    // mentions xattr/codesign. The fixture is a freshly compiled binary, not a
-    // copy of a system binary like /bin/echo: re-signing a copied system binary
-    // fails platform binary validation and is killed on launch on a clean macOS
-    // runner, which is a property of the fixture, not of the script under test.
-    // Skips where a required tool is unavailable.
+    // launches, carries an ad-hoc signature, and has its provenance xattr cleared,
+    // not just that the script text mentions xattr/codesign. The fixture seeds a
+    // com.apple.quarantine xattr on the compiled binary, which macOS `cp` carries
+    // to the output, so a regression that drops `xattr -c` leaves the xattr on the
+    // output and fails the residual-xattr assertion below. The fixture is a freshly
+    // compiled binary, not a copy of a system binary like /bin/echo: re-signing a
+    // copied system binary fails platform binary validation and is killed on launch
+    // on a clean macOS runner, which is a property of the fixture, not of the script
+    // under test. Skips where a required tool is unavailable.
     guard
       commandAvailable("xattr"), commandAvailable("codesign"), commandAvailable("clang")
     else {
@@ -163,6 +166,7 @@ enum ToolchainBuildScriptTests {
         done
         printf 'int main(void){return 0;}\\n' | clang -x c - -o "${bin_dir}/swift-mk"
         chmod +x "${bin_dir}/swift-mk"
+        xattr -w com.apple.quarantine '0081;00000000;SwiftMkTest;' "${bin_dir}/swift-mk"
         exit 0
         """
     ) { result, outputPath in
@@ -174,6 +178,13 @@ enum ToolchainBuildScriptTests {
 
       let signature = Shell.run("/usr/bin/codesign", ["-dvv", outputPath])
       #expect(signature.combined.contains("Signature=adhoc"))
+
+      // The seeded provenance xattr must be gone from the output, proving the
+      // script's `xattr -c` actually ran rather than the launch merely succeeding.
+      let residualXattr = Shell.run("/usr/bin/xattr", ["-l", outputPath])
+      #expect(
+        !residualXattr.combined.contains("com.apple.quarantine"),
+        "provenance xattr should be cleared from the output: \(residualXattr.combined)")
     }
   }
 
