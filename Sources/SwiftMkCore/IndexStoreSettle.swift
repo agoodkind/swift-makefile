@@ -93,10 +93,18 @@ public enum IndexStoreSettle {
             flags)
         else {
           Output.error("deadcode: could not watch index store for settling")
-          return false
+          // Treat a watch-setup failure as a timeout, not a settle: the store may
+          // still be mid-write, so the caller should scan the current state rather
+          // than trust a false "settled".
+          return true
         }
         FSEventStreamSetDispatchQueue(stream, queue)
-        FSEventStreamStart(stream)
+        guard FSEventStreamStart(stream) else {
+          Output.error("deadcode: could not start index store watch")
+          FSEventStreamInvalidate(stream)
+          FSEventStreamRelease(stream)
+          return true
+        }
         queue.async { [weak self] in self?.restartQuietWindow() }
 
         let outcome = settled.wait(timeout: .now() + maxSeconds)
@@ -122,8 +130,12 @@ public enum IndexStoreSettle {
     /// Watches a directory tree for writes and signals once they go quiet by
     /// polling. FSEvents is Darwin-only, so off Darwin the tree is fingerprinted on
     /// an interval and the wait returns once the fingerprint holds still across the
-    /// quiet window. The fingerprint is (file count, total size, newest mtime),
-    /// which moves whenever the indexer adds, grows, or rewrites a file.
+    /// quiet window. The fingerprint records every file's path, size, and
+    /// modification time, sorted by path, so it moves whenever the indexer adds,
+    /// removes, grows, or rewrites a file. Recording per-file state, not just an
+    /// aggregate of (file count, total size, newest mtime), catches a same-size
+    /// rewrite of a file that is not the newest in the tree, which an aggregate would
+    /// miss and read as settled while writes continue.
     final class Watcher {
       private let quietSeconds: Double
       private let pollIntervalSeconds: Double
@@ -138,11 +150,16 @@ public enum IndexStoreSettle {
 
       private static let minimumPollIntervalSeconds: Double = 0.05
 
-      /// A cheap, order-independent summary of a directory tree's write state.
-      private struct Fingerprint: Equatable {
-        let fileCount: Int
-        let totalSize: Int
-        let newestModification: Double
+      /// One file's contribution to the tree fingerprint.
+      struct FileState: Equatable {
+        let relativePath: String
+        let size: Int
+        let modification: Double
+      }
+
+      /// An order-independent, per-file summary of a directory tree's write state.
+      struct Fingerprint: Equatable {
+        let files: [FileState]
       }
 
       /// Returns true when the maximum wait elapsed before the writes went quiet.
@@ -163,14 +180,12 @@ public enum IndexStoreSettle {
         return true
       }
 
-      private func fingerprint(_ path: String) -> Fingerprint {
+      func fingerprint(_ path: String) -> Fingerprint {
         let fileManager = FileManager.default
         guard let enumerator = fileManager.enumerator(atPath: path) else {
-          return Fingerprint(fileCount: 0, totalSize: 0, newestModification: 0)
+          return Fingerprint(files: [])
         }
-        var fileCount = 0
-        var totalSize = 0
-        var newestModification = 0.0
+        var files: [FileState] = []
         for case let relativePath as String in enumerator {
           let fileURL = URL(
             fileURLWithPath: (path as NSString).appendingPathComponent(relativePath))
@@ -181,14 +196,14 @@ public enum IndexStoreSettle {
           } catch {
             continue
           }
-          fileCount += 1
-          totalSize += values.fileSize ?? 0
-          if let modified = values.contentModificationDate {
-            newestModification = max(newestModification, modified.timeIntervalSince1970)
-          }
+          files.append(
+            FileState(
+              relativePath: relativePath,
+              size: values.fileSize ?? 0,
+              modification: values.contentModificationDate?.timeIntervalSince1970 ?? 0))
         }
-        return Fingerprint(
-          fileCount: fileCount, totalSize: totalSize, newestModification: newestModification)
+        files.sort { $0.relativePath < $1.relativePath }
+        return Fingerprint(files: files)
       }
     }
   #endif

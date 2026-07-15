@@ -51,6 +51,42 @@ func indexStoreSettleTimesOutWhileWritesContinue() throws {
   #expect(timedOut)
 }
 
+#if !canImport(Darwin)
+  // The polling fingerprint only exists off Darwin (Darwin uses FSEvents), so this
+  // regression test compiles and runs on the Linux change-detection platform.
+  @Test
+  func indexStoreFingerprintDetectsSameSizeOlderRewrite() throws {
+    let directory = try makeSettleDirectory()
+    defer { removeTemporary(directory.path) }
+    let fileManager = FileManager.default
+    let older = directory.appendingPathComponent("older.idx")
+    let newest = directory.appendingPathComponent("newest.idx")
+    try Data("AAAA".utf8).write(to: older)
+    try Data("BBBB".utf8).write(to: newest)
+    // Hold `newest` as the tree's newest mtime so an aggregate fingerprint of
+    // (file count, total size, newest mtime) cannot see a same-size rewrite of
+    // `older`, the case a per-file fingerprint must still catch.
+    let base = Date()
+    try fileManager.setAttributes([.modificationDate: base], ofItemAtPath: newest.path)
+    try fileManager.setAttributes(
+      [.modificationDate: base.addingTimeInterval(-10)], ofItemAtPath: older.path)
+
+    let watcher = IndexStoreSettle.Watcher(quietSeconds: 1, latencySeconds: 0.1)
+    let before = watcher.fingerprint(directory.path)
+
+    // Rewrite `older` with an identical byte count and an even older mtime: the file
+    // count, total size, and newest mtime are all unchanged, so only per-file state
+    // moves. An aggregate fingerprint would call this settled; the per-file one must
+    // not.
+    try Data("ZZZZ".utf8).write(to: older)
+    try fileManager.setAttributes(
+      [.modificationDate: base.addingTimeInterval(-20)], ofItemAtPath: older.path)
+    let after = watcher.fingerprint(directory.path)
+
+    #expect(before != after)
+  }
+#endif
+
 private func makeSettleDirectory() throws -> URL {
   let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
     "swift-mk-index-settle-\(UUID().uuidString)", isDirectory: true)
