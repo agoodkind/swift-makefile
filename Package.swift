@@ -104,7 +104,8 @@ let package = Package(
     ),
     .testTarget(
       name: "SwiftMkCoreTests",
-      dependencies: ["SwiftMkCore"]
+      dependencies: ["SwiftMkCore"],
+      exclude: ["Fixtures"]
     ),
     .testTarget(
       name: "SwiftMkUpdateTests",

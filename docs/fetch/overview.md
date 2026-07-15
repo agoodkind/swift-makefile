@@ -6,7 +6,7 @@ A consumer does not clone the engine. It fetches a subset of engine files into i
 
 `bootstrap.mk` fetches only `swift.mk`. It reads `SWIFT_MK_DEV_DIR` first, so a consumer can test a local engine checkout without changing the committed bootstrap. When no local override supplies the file, it fetches `swift.mk` from the engine repository's `main` ref through `gh api` or `curl`.
 
-After `swift.mk` is present, it owns the rest of the fetch. The bootstrap stub stays thin, and consumers route through the same fetched engine surface whether the first file came from `SWIFT_MK_DEV_DIR` or from `main`.
+After `swift.mk` is present, it owns the rest of the fetch. A standalone `make help` is the exception: once the bootstrap has fetched `swift.mk`, the top-of-file `help` target prints immediately and skips the wider fetch, module load, and toolchain probes. Every other invocation continues through the normal fetch path, so the bootstrap stub stays thin and consumers route through the same fetched engine surface whether the first file came from `SWIFT_MK_DEV_DIR` or from `main`.
 
 ## The fetch manifest
 
