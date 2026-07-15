@@ -7,6 +7,57 @@
 	swift-mk-bin swift-mk-notice quality-guard lint-swiftlint-scope lint-swiftlint-baseline-scope lint-swiftlint-baseline-scope-accept-new \
 	swift-mk-sync update-swift-mk smoke-fetch update-consumers update-consumers-dry-run log-audit install-hooks xcode-file-header
 
+help:
+	@printf '%s\n' 'Canonical entry points:'
+	@printf '  %-40s %s\n' 'build' 'run build-check, then execute SWIFT_BUILD_CMD'
+	@printf '  %-40s %s\n' 'build FORCE=1' 'force a full build, skipping the freshness no-op'
+	@printf '  %-40s %s\n' 'build SWIFT_MK_BUILD_FRESH=0' 'disable the freshness no-op for this run'
+	@printf '  %-40s %s\n' 'run' 'run build, then execute SWIFT_RUN_CMD'
+	@printf '  %-40s %s\n' 'deploy' 'run build, then execute SWIFT_DEPLOY_CMD'
+	@printf '  %-40s %s\n' 'install' 'alias for deploy'
+	@printf '  %-40s %s\n' 'generate' 'execute SWIFT_GENERATE_CMD when configured'
+	@printf '  %-40s %s\n' 'clean' 'remove .build and the engine DerivedData'
+	@printf '  %-40s %s\n' 'check' 'alias for lint'
+	@printf '  %-40s %s\n' 'lint' 'run every lint gate'
+	@printf '  %-40s %s\n' 'build-check' 'run lint and audit'
+	@printf '  %-40s %s\n' 'fmt' 'apply swift-format in place'
+	@printf '  %-40s %s\n' 'test' 'execute SWIFT_TEST_CMD'
+	@printf '  %-40s %s\n' 'analyze' 'run deadcode analysis and SWIFT_ANALYZE_CMD'
+	@printf '  %-40s %s\n' 'audit' 'run dependency audit and SWIFT_AUDIT_EXTRA_CMD'
+	@printf '\n%s\n' 'Consumer preflight rail:'
+	@printf '  %-40s %s\n' 'SWIFT_PREFLIGHT_CHECK_CMD=...' 'assert a build requirement before the gate chain'
+	@printf '  %-40s %s\n' 'SWIFT_PREFLIGHT_ENSURE_CMD=...' 'establish the requirement when the check misses'
+	@printf '\n%s\n' 'Build caching:'
+	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFT_CACHE=auto|1|0' 'default local SwiftPM and Xcode cache policy'
+	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE=auto|1|0' 'override SwiftPM cache policy'
+	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE=auto|1|0' 'override local Xcode compilation cache policy'
+	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_PREFIX_MAP=auto|1|0' 'remap absolute paths for cross-runner cache hits'
+	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_PATH=...|off' 'shared CAS store path, kept outside DerivedData'
+	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_DIAGNOSTICS=1' 'emit Xcode compilation cache diagnostic remarks'
+	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE_PATH=...' 'relocate the swift build compilation cache store (on by default, no opt-out)'
+	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS=1' 'emit swift build compilation cache diagnostic remarks'
+	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE_ARGS=...' 'override shared SwiftPM cache flags'
+	@printf '  %-40s %s\n' 'ccache/sccache' 'C-family cache tools; not Swift compilation caches'
+	@printf '\n%s\n' 'Scoped iteration:'
+	@printf '  %-40s %s\n' 'lint-diff' 'run scoped lint against staged Swift files'
+	@printf '  %-40s %s\n' 'lint-files LINT_FILES=...' 'run scoped lint against listed files'
+	@printf '\n%s\n' 'Lint sub-targets:'
+	@printf '  %-40s %s\n' 'lint-tools' 'install or verify swift-format, SwiftLint, Periphery, and osv-scanner'
+	@printf '  %-40s %s\n' 'lint-swiftlint' 'SwiftLint with baseline gate'
+	@printf '  %-40s %s\n' 'lint-format' 'swift-format diff gate'
+	@printf '  %-40s %s\n' 'lint-complexity' 'SwiftLint metrics with baseline gate'
+	@printf '  %-40s %s\n' 'lint-deadcode' 'Periphery with baseline gate'
+	@printf '  %-40s %s\n' 'swiftcheck-extra' 'custom SwiftSyntax analyzers with baseline gate'
+	@printf '\n%s\n' 'Baseline maintenance (maintainer use, guarded by BASELINE_CONFIRM and BASELINE_TOKEN):'
+	@printf '  %-40s %s\n' 'baseline' 'refresh the recorded baselines'
+	@printf '\n%s\n' 'Pipeline maintenance:'
+	@printf '  %-40s %s\n' 'swift-mk-sync / update-swift-mk' 'refresh swift.mk, helper scripts, configs, modules, and swiftcheck source'
+	@printf '  %-40s %s\n' 'smoke-fetch' 'force a fetch-path smoke run'
+	@printf '  %-40s %s\n' 'update-consumers' 'refresh every opted-in consumer repo'
+	@printf '  %-40s %s\n' 'update-consumers-dry-run' 'show fleet update work without writes'
+
+ifneq ($(strip $(MAKECMDGOALS)),help)
+
 SWIFT_MK_BASE_URL ?= https://raw.githubusercontent.com/agoodkind/swift-makefile/main
 SWIFT_MK_API_REPO ?= agoodkind/swift-makefile
 SWIFT_MK_API_REF ?= main
@@ -275,6 +326,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Sources/SwiftMkCore/SwiftPM.swift \
 	Tests/SwiftMkRenderCoreTests/TemplateRendererTests.swift \
 	Tests/SwiftMkCoreTests/SwiftMkCoreTests.swift \
+	Tests/SwiftMkCoreTests/HelpFastPathTests.swift \
 	Tests/SwiftMkCoreTests/BrewLockScriptTests.swift \
 	Tests/SwiftMkCoreTests/BuildTests.swift \
 	Tests/SwiftMkCoreTests/GateProofTests.swift \
@@ -761,55 +813,6 @@ export SWIFT_MK_UPDATE_INCLUDE_DIRTY
 export SWIFT_MK_UPDATE_VALIDATE
 export SWIFT_MK_UPDATE_DRY_RUN
 
-help:
-	@printf '%s\n' 'Canonical entry points:'
-	@printf '  %-40s %s\n' 'build' 'run build-check, then execute SWIFT_BUILD_CMD'
-	@printf '  %-40s %s\n' 'build FORCE=1' 'force a full build, skipping the freshness no-op'
-	@printf '  %-40s %s\n' 'build SWIFT_MK_BUILD_FRESH=0' 'disable the freshness no-op for this run'
-	@printf '  %-40s %s\n' 'run' 'run build, then execute SWIFT_RUN_CMD'
-	@printf '  %-40s %s\n' 'deploy' 'run build, then execute SWIFT_DEPLOY_CMD'
-	@printf '  %-40s %s\n' 'install' 'alias for deploy'
-	@printf '  %-40s %s\n' 'generate' 'execute SWIFT_GENERATE_CMD when configured'
-	@printf '  %-40s %s\n' 'clean' 'remove .build and the engine DerivedData'
-	@printf '  %-40s %s\n' 'check' 'alias for lint'
-	@printf '  %-40s %s\n' 'lint' 'run every lint gate'
-	@printf '  %-40s %s\n' 'build-check' 'run lint and audit'
-	@printf '  %-40s %s\n' 'fmt' 'apply swift-format in place'
-	@printf '  %-40s %s\n' 'test' 'execute SWIFT_TEST_CMD'
-	@printf '  %-40s %s\n' 'analyze' 'run deadcode analysis and SWIFT_ANALYZE_CMD'
-	@printf '  %-40s %s\n' 'audit' 'run dependency audit and SWIFT_AUDIT_EXTRA_CMD'
-	@printf '\n%s\n' 'Consumer preflight rail:'
-	@printf '  %-40s %s\n' 'SWIFT_PREFLIGHT_CHECK_CMD=...' 'assert a build requirement before the gate chain'
-	@printf '  %-40s %s\n' 'SWIFT_PREFLIGHT_ENSURE_CMD=...' 'establish the requirement when the check misses'
-	@printf '\n%s\n' 'Build caching:'
-	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFT_CACHE=auto|1|0' 'default local SwiftPM and Xcode cache policy'
-	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE=auto|1|0' 'override SwiftPM cache policy'
-	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE=auto|1|0' 'override local Xcode compilation cache policy'
-	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_PREFIX_MAP=auto|1|0' 'remap absolute paths for cross-runner cache hits'
-	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_PATH=...|off' 'shared CAS store path, kept outside DerivedData'
-	@printf '  %-40s %s\n' 'SWIFT_MK_XCODE_CACHE_DIAGNOSTICS=1' 'emit Xcode compilation cache diagnostic remarks'
-	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE_PATH=...' 'relocate the swift build compilation cache store (on by default, no opt-out)'
-	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS=1' 'emit swift build compilation cache diagnostic remarks'
-	@printf '  %-40s %s\n' 'SWIFT_MK_SWIFTPM_CACHE_ARGS=...' 'override shared SwiftPM cache flags'
-	@printf '  %-40s %s\n' 'ccache/sccache' 'C-family cache tools; not Swift compilation caches'
-	@printf '\n%s\n' 'Scoped iteration:'
-	@printf '  %-40s %s\n' 'lint-diff' 'run scoped lint against staged Swift files'
-	@printf '  %-40s %s\n' 'lint-files LINT_FILES=...' 'run scoped lint against listed files'
-	@printf '\n%s\n' 'Lint sub-targets:'
-	@printf '  %-40s %s\n' 'lint-tools' 'install or verify swift-format, SwiftLint, Periphery, and osv-scanner'
-	@printf '  %-40s %s\n' 'lint-swiftlint' 'SwiftLint with baseline gate'
-	@printf '  %-40s %s\n' 'lint-format' 'swift-format diff gate'
-	@printf '  %-40s %s\n' 'lint-complexity' 'SwiftLint metrics with baseline gate'
-	@printf '  %-40s %s\n' 'lint-deadcode' 'Periphery with baseline gate'
-	@printf '  %-40s %s\n' 'swiftcheck-extra' 'custom SwiftSyntax analyzers with baseline gate'
-	@printf '\n%s\n' 'Baseline maintenance (maintainer use, guarded by BASELINE_CONFIRM and BASELINE_TOKEN):'
-	@printf '  %-40s %s\n' 'baseline' 'refresh the recorded baselines'
-	@printf '\n%s\n' 'Pipeline maintenance:'
-	@printf '  %-40s %s\n' 'swift-mk-sync / update-swift-mk' 'refresh swift.mk, helper scripts, configs, modules, and swiftcheck source'
-	@printf '  %-40s %s\n' 'smoke-fetch' 'force a fetch-path smoke run'
-	@printf '  %-40s %s\n' 'update-consumers' 'refresh every opted-in consumer repo'
-	@printf '  %-40s %s\n' 'update-consumers-dry-run' 'show fleet update work without writes'
-
 # SWIFT_MK_DERIVED_DATA is an override, so only rm a path that physically resolves
 # to a real subpath of the checkout; refuse anything outside so an override cannot
 # rm an arbitrary path. `abspath` is lexical (collapses `..`) but does not resolve
@@ -991,3 +994,5 @@ install-hooks:
 	@bash "$(SWIFT_MK_HELPER_DIR)/install-hooks.sh"
 
 $(foreach m,$(SWIFT_MK_MODULES),$(eval -include .make/$(m)))
+
+endif
