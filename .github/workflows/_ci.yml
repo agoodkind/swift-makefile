@@ -288,204 +288,92 @@ jobs:
     secrets:
       LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
 
-  # changes-pool: first attempt on the planned Build runner, because the
-  # detector reads the Swift package graph and can need the same macOS toolchain.
-  # changes-hosted: hosted-only fallback when the pool attempt fails or is
-  # cancelled. changes: tiny aggregator that preserves the existing
-  # needs.changes.outputs contract for every downstream gate.
-  changes-pool:
-    name: Changes (pool attempt)
-    needs: plan-runners
-    if: ${{ !cancelled() && needs.plan-runners.result == 'success' }}
-    runs-on: ${{ needs.plan-runners.outputs.build_label }}
-    timeout-minutes: ${{ inputs.timeout-minutes }}
-    permissions:
-      contents: read
-    outputs:
-      run: ${{ steps.detect.outputs.run }}
-      run_build: ${{ steps.detect.outputs.run_build }}
-      run_lint: ${{ steps.detect.outputs.run_lint }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          # Credentials stay persisted (the default): the detector's feature-branch
-          # merge-base can need `git fetch origin <default>`, which fails without auth on a
-          # private repo and would disable skipping on feature branches.
-          fetch-depth: 0
-
-      - name: Setup Swift build env
-        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
-        uses: ./.github/actions/setup-build-env
-        with:
-          xcode-version: ${{ inputs.xcode-version }}
-          github-token: ${{ github.token }}
-          install-lint-tools: "false"
-          install-tuist: "false"
-          install-xcodegen: "false"
-          # The detector reads the build graph fresh with swift package describe, so it
-          # restores only the dependency bucket (the SPM checkouts describe resolves
-          # against), not the build or index cache.
-          cache-profile: dependencies
-          cache-version: ${{ inputs.cache-version }}
-          extra-cache-paths: ${{ inputs.extra-cache-paths }}
-          gate: changes
-
-      - name: Setup Swift build env
-        if: ${{ github.repository != 'agoodkind/swift-makefile' }}
-        uses: agoodkind/swift-makefile/.github/actions/setup-build-env@main
-        with:
-          xcode-version: ${{ inputs.xcode-version }}
-          github-token: ${{ github.token }}
-          install-lint-tools: "false"
-          install-tuist: "false"
-          install-xcodegen: "false"
-          # The detector reads the build graph fresh with swift package describe, so it
-          # restores only the dependency bucket (the SPM checkouts describe resolves
-          # against), not the build or index cache.
-          cache-profile: dependencies
-          cache-version: ${{ inputs.cache-version }}
-          extra-cache-paths: ${{ inputs.extra-cache-paths }}
-          gate: changes
-
-      - name: Detect changes
-        id: detect
-        shell: bash
-        env:
-          # On a pull request, github.event.before is empty, github.ref_name is the merge
-          # ref (<n>/merge), and github.sha is the synthetic merge commit. The pull-request
-          # context (head sha, base branch, head branch) gives the detector a well-defined
-          # branch head to diff against its base, so the merge-base path runs. On a push,
-          # those pull-request fields are empty and the values fall back to the push context.
-          SWIFT_MK_EVENT_NAME: ${{ github.event_name }}
-          SWIFT_MK_DIFF_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-          SWIFT_MK_DIFF_BASE: ${{ github.event.before }}
-          SWIFT_MK_DEFAULT_BRANCH: ${{ github.base_ref || github.event.repository.default_branch }}
-          SWIFT_MK_REF_NAME: ${{ github.head_ref || github.ref_name }}
-          SWIFT_MK_CI_EXTRA_DIRS: ${{ inputs.extra-dirs }}
-        run: |
-          set -euo pipefail
-
-          "${SWIFT_MK_BIN:-${HOME}/.swift-mk-ci-toolchain/swift-mk}" ci-changed
-
-  changes-hosted:
-    name: Changes (hosted fallback)
-    needs: [plan-runners, changes-pool]
-    # See build-hosted: always() + on_pool + a failed pool attempt.
-    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && needs.changes-pool.result != 'success' }}
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: ${{ inputs.timeout-minutes }}
-    permissions:
-      contents: read
-    outputs:
-      run: ${{ steps.detect.outputs.run }}
-      run_build: ${{ steps.detect.outputs.run_build }}
-      run_lint: ${{ steps.detect.outputs.run_lint }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          # Credentials stay persisted (the default): the detector's feature-branch
-          # merge-base can need `git fetch origin <default>`, which fails without auth on a
-          # private repo and would disable skipping on feature branches.
-          fetch-depth: 0
-
-      - name: Setup Swift build env
-        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
-        uses: ./.github/actions/setup-build-env
-        with:
-          xcode-version: ${{ inputs.xcode-version }}
-          github-token: ${{ github.token }}
-          install-lint-tools: "false"
-          install-tuist: "false"
-          install-xcodegen: "false"
-          # The detector reads the build graph fresh with swift package describe, so it
-          # restores only the dependency bucket (the SPM checkouts describe resolves
-          # against), not the build or index cache.
-          cache-profile: dependencies
-          cache-version: ${{ inputs.cache-version }}
-          extra-cache-paths: ${{ inputs.extra-cache-paths }}
-          gate: changes
-
-      - name: Setup Swift build env
-        if: ${{ github.repository != 'agoodkind/swift-makefile' }}
-        uses: agoodkind/swift-makefile/.github/actions/setup-build-env@main
-        with:
-          xcode-version: ${{ inputs.xcode-version }}
-          github-token: ${{ github.token }}
-          install-lint-tools: "false"
-          install-tuist: "false"
-          install-xcodegen: "false"
-          # The detector reads the build graph fresh with swift package describe, so it
-          # restores only the dependency bucket (the SPM checkouts describe resolves
-          # against), not the build or index cache.
-          cache-profile: dependencies
-          cache-version: ${{ inputs.cache-version }}
-          extra-cache-paths: ${{ inputs.extra-cache-paths }}
-          gate: changes
-
-      - name: Detect changes
-        id: detect
-        shell: bash
-        env:
-          # On a pull request, github.event.before is empty, github.ref_name is the merge
-          # ref (<n>/merge), and github.sha is the synthetic merge commit. The pull-request
-          # context (head sha, base branch, head branch) gives the detector a well-defined
-          # branch head to diff against its base, so the merge-base path runs. On a push,
-          # those pull-request fields are empty and the values fall back to the push context.
-          SWIFT_MK_EVENT_NAME: ${{ github.event_name }}
-          SWIFT_MK_DIFF_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-          SWIFT_MK_DIFF_BASE: ${{ github.event.before }}
-          SWIFT_MK_DEFAULT_BRANCH: ${{ github.base_ref || github.event.repository.default_branch }}
-          SWIFT_MK_REF_NAME: ${{ github.head_ref || github.ref_name }}
-          SWIFT_MK_CI_EXTRA_DIRS: ${{ inputs.extra-dirs }}
-        run: |
-          set -euo pipefail
-
-          "${SWIFT_MK_BIN:-${HOME}/.swift-mk-ci-toolchain/swift-mk}" ci-changed
-
+  # changes: change-detection runs on a free ubuntu-latest runner instead of a
+  # scarce macOS pool slot. `swift-mk ci-changed` only diffs files with git and
+  # classifies paths: a generated-project consumer takes the nil-graph path and
+  # needs only git, while the swift-makefile engine repo also runs
+  # `swift package describe`, which the Linux Swift toolchain in the container
+  # provides. So change-detection needs no macOS toolchain, and moving it off the
+  # pool frees one slot per run. It emits the same run/run_build/run_lint outputs
+  # every downstream gate reads, and no longer depends on plan-runners or a build
+  # label; plan-runners still runs for the real gates.
+  #
+  # The job is fail-safe: the Linux swift-mk build is best-effort, and the detect
+  # step always runs and falls back to a full run (every output true) when the
+  # binary is unavailable, so a transient Linux-build hiccup keeps the job green and
+  # runs the full gate set rather than blocking CI or skipping a gate.
   changes:
     name: Changes
-    if: ${{ always() }}
-    needs: [changes-pool, changes-hosted]
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # The official Swift image ships the 6.3.x line the macOS CI runs plus git, so
+    # the Linux swift-mk builds and `swift package describe` resolves with no
+    # toolchain install; actions/checkout and actions/cache run unchanged inside it.
+    container: swift:6.3
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
     outputs:
-      run: ${{ steps.resolve.outputs.run }}
-      run_build: ${{ steps.resolve.outputs.run_build }}
-      run_lint: ${{ steps.resolve.outputs.run_lint }}
+      run: ${{ steps.detect.outputs.run }}
+      run_build: ${{ steps.detect.outputs.run_build }}
+      run_lint: ${{ steps.detect.outputs.run_lint }}
     steps:
-      - name: Resolve changes result
-        id: resolve
+      - uses: actions/checkout@v7
+        with:
+          # Credentials stay persisted (the default): the detector's feature-branch
+          # merge-base can need `git fetch origin <default>`, which fails without auth on a
+          # private repo and would disable skipping on feature branches.
+          fetch-depth: 0
+
+      # Keep the local-vs-consumer split: the engine repo uses its local copy of
+      # the action, and consumers inherit it via @main. continue-on-error keeps a
+      # Linux swift-mk build failure from failing the job: the detect step below
+      # falls back to a full run when the binary is missing.
+      - name: Setup Linux swift-mk
+        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
+        continue-on-error: true
+        uses: ./.github/actions/setup-linux-swift-mk
+
+      - name: Setup Linux swift-mk
+        if: ${{ github.repository != 'agoodkind/swift-makefile' }}
+        continue-on-error: true
+        uses: agoodkind/swift-makefile/.github/actions/setup-linux-swift-mk@main
+
+      - name: Detect changes
+        id: detect
+        # always() so detection still runs (or fails safe) even when the setup step
+        # above did not produce a usable binary.
+        if: ${{ always() }}
+        shell: bash
         env:
-          POOL_RESULT: ${{ needs.changes-pool.result }}
-          HOSTED_RESULT: ${{ needs.changes-hosted.result }}
-          POOL_RUN: ${{ needs.changes-pool.outputs.run }}
-          POOL_RUN_BUILD: ${{ needs.changes-pool.outputs.run_build }}
-          POOL_RUN_LINT: ${{ needs.changes-pool.outputs.run_lint }}
-          HOSTED_RUN: ${{ needs.changes-hosted.outputs.run }}
-          HOSTED_RUN_BUILD: ${{ needs.changes-hosted.outputs.run_build }}
-          HOSTED_RUN_LINT: ${{ needs.changes-hosted.outputs.run_lint }}
+          # On a pull request, github.event.before is empty, github.ref_name is the merge
+          # ref (<n>/merge), and github.sha is the synthetic merge commit. The pull-request
+          # context (head sha, base branch, head branch) gives the detector a well-defined
+          # branch head to diff against its base, so the merge-base path runs. On a push,
+          # those pull-request fields are empty and the values fall back to the push context.
+          SWIFT_MK_EVENT_NAME: ${{ github.event_name }}
+          SWIFT_MK_DIFF_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          SWIFT_MK_DIFF_BASE: ${{ github.event.before }}
+          SWIFT_MK_DEFAULT_BRANCH: ${{ github.base_ref || github.event.repository.default_branch }}
+          SWIFT_MK_REF_NAME: ${{ github.head_ref || github.ref_name }}
+          SWIFT_MK_CI_EXTRA_DIRS: ${{ inputs.extra-dirs }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
-          resolve_output() {
-              local output_name="$1"
-              local pool_value="$2"
-              local hosted_value="$3"
-              local value="true"
+          # The detector itself always exits 0 and writes the outputs (it fail-safes
+          # to all-true internally). The only way to reach the fallback below is a
+          # missing or unrunnable binary, meaning the Linux build did not succeed.
+          bin="${SWIFT_MK_BIN:-${HOME}/.swift-mk-ci-toolchain/swift-mk}"
+          if [ -x "${bin}" ] && "${bin}" ci-changed; then
+            exit 0
+          fi
 
-              if [[ "${POOL_RESULT}" == "success" && -n "${pool_value}" ]]; then
-                  value="${pool_value}"
-              elif [[ "${HOSTED_RESULT}" == "success" && -n "${hosted_value}" ]]; then
-                  value="${hosted_value}"
-              fi
-
-              printf '%s=%s\n' "${output_name}" "${value}" >> "${GITHUB_OUTPUT}"
-              printf 'Changes %s=%s (pool=%s, hosted=%s)\n' "${output_name}" "${value}" "${POOL_RESULT}" "${HOSTED_RESULT}"
-          }
-
-          resolve_output "run" "${POOL_RUN}" "${HOSTED_RUN}"
-          resolve_output "run_build" "${POOL_RUN_BUILD}" "${HOSTED_RUN_BUILD}"
-          resolve_output "run_lint" "${POOL_RUN_LINT}" "${HOSTED_RUN_LINT}"
+          echo "change detection unavailable (Linux swift-mk build failed); running full CI"
+          {
+            printf 'run_build=true\n'
+            printf 'run_lint=true\n'
+            printf 'run=true\n'
+            printf 'changed=true\n'
+          } >> "${GITHUB_OUTPUT}"
 
   # ── Build ──────────────────────────────────────────────────────────────────
   # build-pool: first attempt on the planned runner (pool or hosted).
@@ -527,9 +415,9 @@ jobs:
     # always() defeats GitHub's implicit skip so the fallback runs when the pool
     # attempt did not succeed; on_pool gates it to pool-routed runs. The check is
     # `!= 'success'` (not failure/cancelled only) because a sibling pool job the
-    # watchdog cancels (for example changes-pool) puts the run into a cancelling
-    # state, which makes this single-job pool attempt end as `skipped` rather than
-    # `cancelled`; the fallback must still rescue that case.
+    # watchdog cancels (for example a quality-pool leg) puts the run into a
+    # cancelling state, which makes this single-job pool attempt end as `skipped`
+    # rather than `cancelled`; the fallback must still rescue that case.
     if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && needs.build-pool.result != 'success' }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
