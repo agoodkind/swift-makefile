@@ -50,42 +50,43 @@ swift_mk_dependency_hash() {
 # mtime neither forces a spurious rebuild nor serves a stale binary.
 swift_mk_content_key() {
     local package_path
-    local manifest_path
-    local resolved_path
-    local swiftpm_resolved_path
-    local file_list
+    local config
+    local resolved_rel
     local source_hash
     local toolchain_id
 
     package_path="$1"
-    manifest_path="${package_path}/Package.swift"
-    resolved_path="${package_path}/Package.resolved"
-    swiftpm_resolved_path="${package_path}/.swiftpm/configuration/Package.resolved"
+    # The product's build configuration is part of its identity: a release binary must
+    # not be reused when the consumer switches to debug, so fold it into the key.
+    config="${SWIFT_MK_BUILD_CONFIG:-release}"
 
-    file_list=$(mktemp)
-    if [[ -f "${manifest_path}" ]]; then
-        printf '%s\0' "${manifest_path}" >> "${file_list}"
+    # Prefer the committed Package.resolved, else the .swiftpm one, recorded as a
+    # package-relative path so both the digest and the path stay stable across machines.
+    resolved_rel=""
+    if [[ -f "${package_path}/Package.resolved" ]]; then
+        resolved_rel="Package.resolved"
+    elif [[ -f "${package_path}/.swiftpm/configuration/Package.resolved" ]]; then
+        resolved_rel=".swiftpm/configuration/Package.resolved"
     fi
-    if [[ -f "${resolved_path}" ]]; then
-        printf '%s\0' "${resolved_path}" >> "${file_list}"
-    elif [[ -f "${swiftpm_resolved_path}" ]]; then
-        printf '%s\0' "${swiftpm_resolved_path}" >> "${file_list}"
-    fi
-    # The build script itself helps produce the binary, and the CI toolchain-cache key
-    # folds it too, so a change to it rebuilds.
-    if [[ -f "${package_path}/scripts/swift-mk-build.sh" ]]; then
-        printf '%s\0' "${package_path}/scripts/swift-mk-build.sh" >> "${file_list}"
-    fi
-    # Every file under Sources, both the Swift sources and the bundled resources
-    # (Resources/*.yml, *.json, *.toml) that compile into the binary, so a resource
-    # edit rebuilds rather than reusing a binary that carries the stale config. This
-    # mirrors the CI toolchain-cache key, which hashes the same Sources tree. find
-    # under pipefail must not abort when Sources is absent, and the null delimiter
-    # keeps a path containing whitespace from splitting a hash entry. Sort the per-file
-    # hashes (not the filenames) so the key is order- and whitespace-stable.
-    find "${package_path}/Sources" -type f -print0 >> "${file_list}" 2>/dev/null || true
-    source_hash=$(xargs -0 shasum < "${file_list}" | awk '{ print $1 }' | LC_ALL=C sort | shasum | awk '{ print $1 }')
-    rm -f "${file_list}"
+
+    # Hash each input as "<content-digest>  <package-relative-path>", so a
+    # content-preserving rename changes the key (the path moved) while the digest stays
+    # deterministic across machines because the paths are package-relative, never absolute
+    # temp-dir paths. Run relative to the package so shasum emits relative paths. Inputs:
+    # Package.swift, the resolved lockfile, this build script (the CI toolchain-cache key
+    # folds it too), and every file under Sources (Swift sources plus bundled
+    # Resources/*.yml,*.json,*.toml that compile into the binary). find under pipefail
+    # must not abort when Sources is absent; the null delimiter keeps a path with
+    # whitespace from splitting an entry; sort the full lines so the key is order-stable.
+    source_hash=$(
+        cd "${package_path}" 2>/dev/null || exit 0
+        {
+            if [[ -f Package.swift ]]; then printf '%s\0' "Package.swift"; fi
+            if [[ -n "${resolved_rel}" ]]; then printf '%s\0' "${resolved_rel}"; fi
+            if [[ -f scripts/swift-mk-build.sh ]]; then printf '%s\0' "scripts/swift-mk-build.sh"; fi
+            find Sources -type f -print0 2>/dev/null || true
+        } | xargs -0 shasum 2>/dev/null | LC_ALL=C sort | shasum | awk '{ print $1 }'
+    )
 
     # Fold the active toolchain identity so a compiler or Xcode-bundle change rebuilds
     # even when no source changed.
@@ -95,7 +96,7 @@ swift_mk_content_key() {
             swift --version 2>/dev/null || true
         } | shasum | awk '{ print $1 }'
     )
-    printf '%s-%s\n' "${source_hash}" "${toolchain_id}"
+    printf '%s-%s-%s\n' "${source_hash}" "${config}" "${toolchain_id}"
 }
 
 swift_mk_pool_cache_args() {
@@ -135,6 +136,7 @@ swift_mk_build_from_repo() {
     local bin_dir_status
     local bin_path
     local scratch_path
+    local content_key
     local -a pool_cache_args
 
     output_path=$(swift_mk_output_path)
@@ -144,6 +146,12 @@ swift_mk_build_from_repo() {
         printf "swift-mk: package %s not present\n" "${package_path}"
         return 1
     fi
+    # Capture the content key BEFORE compiling. Recomputing it after the build would
+    # open a TOCTOU gap: a source edit during compilation would label the just-built
+    # binary with the post-edit key, so the next resolve would reuse a binary that does
+    # not match the edited source. Keying on the pre-build inputs labels the binary with
+    # exactly what produced it, so a mid-build edit leaves a key mismatch and rebuilds.
+    content_key=$(swift_mk_content_key "${package_path}")
     mkdir -p "$(dirname "${output_path}")"
     # Build into a per-consumer scratch directory under the consumer's .make, not
     # the package's own .build. In dev-dir mode every consumer (and swift-makefile's
@@ -183,9 +191,10 @@ swift_mk_build_from_repo() {
     if command -v codesign >/dev/null 2>&1; then
         codesign --force --sign - "${output_path}" >/dev/null 2>&1 || true
     fi
-    # Record the content key next to the binary so a later resolve reuses it whenever
-    # the source and toolchain are unchanged, independent of file mtimes.
-    printf '%s\n' "$(swift_mk_content_key "${package_path}")" > "${output_path}.key"
+    # Record the content key captured before the build, so a later resolve reuses the
+    # binary only when the source and toolchain that produced it are unchanged,
+    # independent of file mtimes.
+    printf '%s\n' "${content_key}" > "${output_path}.key"
 }
 
 swift_mk_resolve_bin() {

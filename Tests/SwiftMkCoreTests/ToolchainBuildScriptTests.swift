@@ -453,6 +453,15 @@ extension ToolchainBuildScriptTests {
       try harness.writeToolchainID("toolchain-two\n")
       #expect(harness.resolve().status == 0)
       #expect(try harness.buildCount() == 3)
+
+      // A content-preserving rename triggers a rebuild: the key folds each input's
+      // package-relative path, so moving a source to a new name changes the key even
+      // though its bytes are identical, and the stale binary is not reused.
+      let renamed = harness.sourceFile.deletingLastPathComponent()
+        .appendingPathComponent("Renamed.swift")
+      try FileManager.default.moveItem(at: harness.sourceFile, to: renamed)
+      #expect(harness.resolve().status == 0)
+      #expect(try harness.buildCount() == 4)
     }
   }
 }
