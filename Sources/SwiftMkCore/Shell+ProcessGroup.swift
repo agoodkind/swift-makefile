@@ -6,8 +6,51 @@
 //  Copyright © 2026, all rights reserved.
 //
 
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
+
+// Darwin imports `posix_spawnattr_t` and `posix_spawn_file_actions_t` as optional
+// opaque pointers, while glibc imports them as concrete structs. The spawn helpers
+// take these by `inout`, so the parameter type has to follow the platform's import.
+#if canImport(Darwin)
+  private typealias SpawnAttributes = posix_spawnattr_t?
+  private typealias SpawnFileActions = posix_spawn_file_actions_t?
+#else
+  private typealias SpawnAttributes = posix_spawnattr_t
+  private typealias SpawnFileActions = posix_spawn_file_actions_t
+#endif
+
+// A stdout or stderr pipe for the process-group spawn, exposing the same
+// `fileHandleForReading` and `fileHandleForWriting` accessors as Foundation `Pipe`
+// so the parent's drain path is identical on both platforms.
+#if canImport(Darwin)
+  // On Darwin the pipe is a plain `Pipe`; `POSIX_SPAWN_CLOEXEC_DEFAULT` makes the
+  // spawn treat its fds as close-on-exec atomically, so nothing extra is needed.
+  typealias StreamingPipe = Pipe
+#else
+  // On glibc the two ends are created atomically close-on-exec with
+  // `pipe2(O_CLOEXEC)`. Foundation `Pipe` creates its fds without `O_CLOEXEC`, and
+  // glibc has no `POSIX_SPAWN_CLOEXEC_DEFAULT`, so marking the fds close-on-exec
+  // after the fact with `fcntl` left a window in which a concurrently spawning
+  // sibling could inherit an end and hold a pipe open past EOF. `pipe2` closes that
+  // window by creating both ends close-on-exec in a single call.
+  struct StreamingPipe {
+    let fileHandleForReading: FileHandle
+    let fileHandleForWriting: FileHandle
+  }
+
+  // glibc's `pipe2` is a GNU extension that Swift's Glibc module map does not
+  // surface (it is gated behind `_GNU_SOURCE` in the C headers), so bind the libc
+  // symbol directly. Its C signature is `int pipe2(int pipefd[2], int flags)`; the
+  // array decays to a pointer, so `UnsafeMutablePointer<Int32>` matches the ABI.
+  @_silgen_name("pipe2")
+  private func swiftMkPipe2(_ fileDescriptors: UnsafeMutablePointer<Int32>, _ flags: Int32) -> Int32
+#endif
 
 // MARK: - Timeout process-group spawn and reap
 
@@ -29,35 +72,53 @@ extension Shell {
   /// `runStreamingStderr` path, with the pipes the parent drains.
   struct SpawnedStreamingProcess {
     let processIdentifier: pid_t
-    let standardOutput: Pipe
-    let standardError: Pipe
+    let standardOutput: StreamingPipe
+    let standardError: StreamingPipe
   }
 
   /// Configure the spawn attributes for a new process group and the file actions
   /// that wire the child's stdout and stderr to the pipe write ends. Returns false
   /// if any configuration call fails.
   ///
-  /// `POSIX_SPAWN_CLOEXEC_DEFAULT` makes the kernel treat every parent descriptor
-  /// as close-on-exec, so no unrelated fd leaks into the child. Foundation `Pipe`
-  /// does not mark its fds close-on-exec on Darwin, so without this flag a
-  /// concurrently spawning sibling's pipe write end could be inherited here and
-  /// hold that sibling's pipe open past EOF, hanging its drain. Only the fds named
-  /// in these file actions survive: the dup'd stdout and stderr, and stdin, which
-  /// `addinherit_np` preserves so a child that reads input still works.
+  /// On Darwin, `POSIX_SPAWN_CLOEXEC_DEFAULT` makes the kernel treat every parent
+  /// descriptor as close-on-exec, so no unrelated fd leaks into the child.
+  /// Foundation `Pipe` does not mark its fds close-on-exec on Darwin, so without
+  /// this flag a concurrently spawning sibling's pipe write end could be inherited
+  /// here and hold that sibling's pipe open past EOF, hanging its drain. Only the
+  /// fds named in these file actions survive: the dup'd stdout and stderr, and
+  /// stdin, which `addinherit_np` preserves so a child that reads input still works.
+  ///
+  /// glibc has neither flag, so the pipe ends are already close-on-exec: they come
+  /// from `pipe2(O_CLOEXEC)` (see `StreamingPipe`), which marks both ends
+  /// non-inheritable at creation with no fcntl window a concurrent spawn could slip
+  /// through. The `_np` inherit action does not exist either, so stdin (fd 0) is
+  /// left untouched and inherited by default. The dup2 duplicates at fd 1 and 2
+  /// carry no close-on-exec flag, so the child's stdout and stderr survive exec and
+  /// reach the pipes, while the four `addclose` actions drop the originals in the
+  /// child.
   private static func configureProcessGroupSpawn(
-    _ attributes: inout posix_spawnattr_t?,
-    _ fileActions: inout posix_spawn_file_actions_t?,
-    standardOutput: Pipe,
-    standardError: Pipe
+    _ attributes: inout SpawnAttributes,
+    _ fileActions: inout SpawnFileActions,
+    standardOutput: StreamingPipe,
+    standardError: StreamingPipe
   ) -> Bool {
     let outputRead = standardOutput.fileHandleForReading.fileDescriptor
     let outputWrite = standardOutput.fileHandleForWriting.fileDescriptor
     let errorRead = standardError.fileHandleForReading.fileDescriptor
     let errorWrite = standardError.fileHandleForWriting.fileDescriptor
-    let spawnFlags = Int16(POSIX_SPAWN_SETPGROUP) | Int16(POSIX_SPAWN_CLOEXEC_DEFAULT)
-    return posix_spawnattr_setflags(&attributes, spawnFlags) == 0
-      && posix_spawnattr_setpgroup(&attributes, 0) == 0
-      && posix_spawn_file_actions_addinherit_np(&fileActions, STDIN_FILENO) == 0
+    #if canImport(Darwin)
+      let spawnFlags = Int16(POSIX_SPAWN_SETPGROUP) | Int16(POSIX_SPAWN_CLOEXEC_DEFAULT)
+      let attributesConfigured =
+        posix_spawnattr_setflags(&attributes, spawnFlags) == 0
+        && posix_spawnattr_setpgroup(&attributes, 0) == 0
+        && posix_spawn_file_actions_addinherit_np(&fileActions, STDIN_FILENO) == 0
+    #else
+      let spawnFlags = Int16(POSIX_SPAWN_SETPGROUP)
+      let attributesConfigured =
+        posix_spawnattr_setflags(&attributes, spawnFlags) == 0
+        && posix_spawnattr_setpgroup(&attributes, 0) == 0
+    #endif
+    return attributesConfigured
       && posix_spawn_file_actions_adddup2(&fileActions, outputWrite, STDOUT_FILENO) == 0
       && posix_spawn_file_actions_adddup2(&fileActions, errorWrite, STDERR_FILENO) == 0
       && posix_spawn_file_actions_addclose(&fileActions, outputRead) == 0
@@ -66,14 +127,39 @@ extension Shell {
       && posix_spawn_file_actions_addclose(&fileActions, errorWrite) == 0
   }
 
+  /// Create a stdout or stderr pipe for the process-group spawn. On Darwin this is a
+  /// plain `Pipe`; on glibc it is a `pipe2(O_CLOEXEC)` pair so both ends are
+  /// close-on-exec at creation. Returns nil only when `pipe2` fails.
+  #if canImport(Darwin)
+    private static func makeStreamingPipe() -> StreamingPipe? {
+      Pipe()
+    }
+  #else
+    private static func makeStreamingPipe() -> StreamingPipe? {
+      var descriptors: [Int32] = [-1, -1]
+      let created = descriptors.withUnsafeMutableBufferPointer { buffer -> Bool in
+        guard let base = buffer.baseAddress else {
+          return false
+        }
+        return swiftMkPipe2(base, Int32(O_CLOEXEC)) == 0
+      }
+      guard created else {
+        return nil
+      }
+      return StreamingPipe(
+        fileHandleForReading: FileHandle(fileDescriptor: descriptors[0], closeOnDealloc: true),
+        fileHandleForWriting: FileHandle(fileDescriptor: descriptors[1], closeOnDealloc: true))
+    }
+  #endif
+
   /// Build argv and envp and invoke `posix_spawn`, returning the child pid or nil
   /// on failure. envp inherits the parent environment when no overrides are set.
   private static func performProcessGroupSpawn(
     _ executable: String,
     _ arguments: [String],
     _ environment: [String: String],
-    fileActions: inout posix_spawn_file_actions_t?,
-    attributes: inout posix_spawnattr_t?
+    fileActions: inout SpawnFileActions,
+    attributes: inout SpawnAttributes
   ) -> pid_t? {
     let argv = ["/usr/bin/env", executable] + arguments
     let envpStrings = childEnvironment(environment).map { merged in
@@ -106,16 +192,25 @@ extension Shell {
     environment: [String: String]
   ) -> SpawnedStreamingProcess? {
     Output.debug("Shell.spawnStreamingProcessGroup \(executable)")
-    let standardOutput = Pipe()
-    let standardError = Pipe()
+    guard let standardOutput = makeStreamingPipe(), let standardError = makeStreamingPipe() else {
+      return nil
+    }
 
-    var attributes: posix_spawnattr_t?
+    #if canImport(Darwin)
+      var attributes: SpawnAttributes = nil
+    #else
+      var attributes = SpawnAttributes()
+    #endif
     guard posix_spawnattr_init(&attributes) == 0 else {
       return nil
     }
     defer { posix_spawnattr_destroy(&attributes) }
 
-    var fileActions: posix_spawn_file_actions_t?
+    #if canImport(Darwin)
+      var fileActions: SpawnFileActions = nil
+    #else
+      var fileActions = SpawnFileActions()
+    #endif
     guard posix_spawn_file_actions_init(&fileActions) == 0 else {
       return nil
     }

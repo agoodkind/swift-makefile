@@ -382,6 +382,7 @@ SWIFT_MK_SCRIPT_FILES := \
 	Tests/SwiftMkCoreTests/LoggingTests.swift \
 	Tests/SwiftMkCoreTests/OutputCaptureTests.swift \
 	Tests/SwiftMkCoreTests/PreflightTests.swift \
+	Tests/SwiftMkCoreTests/IndexStoreSettleTests.swift \
 	Tests/SwiftMkCoreTests/ShellStreamingTests.swift \
 	Tests/SwiftMkCoreTests/ShellTests.swift \
 	Tests/SwiftMkCoreTests/ShellForwardingCaptureTests.swift \

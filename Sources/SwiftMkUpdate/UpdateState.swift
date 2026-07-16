@@ -6,8 +6,13 @@
 //  Copyright © 2026, all rights reserved.
 //
 
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
 
 // MARK: - UpdateResult
 
@@ -164,7 +169,7 @@ public func defaultCacheDir(
 
 func renameFile(from sourcePath: String, to targetPath: String, context: String) throws {
   UpdateDiagnostics.debug("update rename \(context)")
-  if Darwin.rename(sourcePath, targetPath) != 0 {
+  if rename(sourcePath, targetPath) != 0 {
     let code = errno
     do {
       try FileManager.default.removeItem(atPath: sourcePath)

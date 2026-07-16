@@ -6,8 +6,13 @@
 //  Copyright © 2026, all rights reserved.
 //
 
-import Darwin
 import Foundation
+
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
 
 // MARK: - CheckResult
 
@@ -466,12 +471,12 @@ func withUpdateLock<ResultValue>(
   try FileManager.default.createDirectory(
     at: lockURL.deletingLastPathComponent(),
     withIntermediateDirectories: true)
-  let fd = Darwin.open(lockURL.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+  let fd = open(lockURL.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
   if fd < 0 {
     throw UpdateError.filesystem(
       "open update lock: \(String(cString: strerror(errno)))")
   }
-  defer { Darwin.close(fd) }
+  defer { close(fd) }
   if flock(fd, LOCK_EX | LOCK_NB) != 0 {
     // Only a contended lock means another update is running; any other errno
     // (permissions, IO) is a real failure and must not be masked as such.
@@ -496,12 +501,12 @@ private func withStateLock<ResultValue>(
   try FileManager.default.createDirectory(
     at: lockURL.deletingLastPathComponent(),
     withIntermediateDirectories: true)
-  let fd = Darwin.open(lockURL.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+  let fd = open(lockURL.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
   if fd < 0 {
     throw UpdateError.filesystem(
       "open state lock: \(String(cString: strerror(errno)))")
   }
-  defer { Darwin.close(fd) }
+  defer { close(fd) }
   // Blocking exclusive lock: state writes are brief, so wait rather than fail.
   if flock(fd, LOCK_EX) != 0 {
     throw UpdateError.filesystem(
