@@ -133,6 +133,62 @@ enum ToolchainBuildScriptTests {
   }
 
   @Test
+  static func poolBuildScriptCopiesRunnableAdHocSignedBinary() throws {
+    // A copied arm64 binary can carry a stale linker signature and a provenance
+    // xattr that make the kernel kill it on launch. The script clears the xattrs
+    // and re-signs ad-hoc after the cp; this proves the copied output actually
+    // launches, carries an ad-hoc signature, and has its provenance xattr cleared,
+    // not just that the script text mentions xattr/codesign. The fixture seeds a
+    // com.apple.quarantine xattr on the compiled binary, which macOS `cp` carries
+    // to the output, so a regression that drops `xattr -c` leaves the xattr on the
+    // output and fails the residual-xattr assertion below. The fixture is a freshly
+    // compiled binary, not a copy of a system binary like /bin/echo: re-signing a
+    // copied system binary fails platform binary validation and is killed on launch
+    // on a clean macOS runner, which is a property of the fixture, not of the script
+    // under test. Skips where a required tool is unavailable.
+    guard
+      commandAvailable("xattr"), commandAvailable("codesign"), commandAvailable("clang")
+    else {
+      return
+    }
+
+    try runBuildScript(
+      fakeSwift: """
+        #!/usr/bin/env bash
+        script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        bin_dir="${script_dir}/show-bin-path-output"
+        mkdir -p "${bin_dir}"
+        for arg in "$@"; do
+            if [[ "${arg}" == "--show-bin-path" ]]; then
+                printf "%s\\n" "${bin_dir}"
+                exit 0
+            fi
+        done
+        printf 'int main(void){return 0;}\\n' | clang -x c - -o "${bin_dir}/swift-mk"
+        chmod +x "${bin_dir}/swift-mk"
+        xattr -w com.apple.quarantine '0081;00000000;SwiftMkTest;' "${bin_dir}/swift-mk"
+        exit 0
+        """
+    ) { result, outputPath in
+      #expect(result.status == 0)
+      #expect(FileManager.default.isExecutableFile(atPath: outputPath))
+
+      let launch = Shell.run(outputPath)
+      #expect(launch.status == 0)
+
+      let signature = Shell.run("/usr/bin/codesign", ["-dvv", outputPath])
+      #expect(signature.combined.contains("Signature=adhoc"))
+
+      // The seeded provenance xattr must be gone from the output, proving the
+      // script's `xattr -c` actually ran rather than the launch merely succeeding.
+      let residualXattr = Shell.run("/usr/bin/xattr", ["-l", outputPath])
+      #expect(
+        !residualXattr.combined.contains("com.apple.quarantine"),
+        "provenance xattr should be cleared from the output: \(residualXattr.combined)")
+    }
+  }
+
+  @Test
   static func setupBuildEnvConfiguresPoolCacheByMountPresence() throws {
     let action = try rootFile(".github/actions/setup-build-env/action.yml")
 
@@ -214,6 +270,19 @@ enum ToolchainBuildScriptTests {
   }
 
   private static func buildScriptResult(fakeSwift: String) throws -> Shell.Result {
+    try runBuildScript(fakeSwift: fakeSwift) { result, _ in
+      result
+    }
+  }
+
+  /// Run `swift_mk_build_from_repo` against a fake `swift`, then invoke `body`
+  /// with the script result and the output binary path while the temporary
+  /// directory still exists, so a caller can inspect the copied binary before
+  /// cleanup removes it.
+  private static func runBuildScript<Value>(
+    fakeSwift: String,
+    _ body: (Shell.Result, String) throws -> Value
+  ) throws -> Value {
     try withTemporaryDirectory { directory in
       let packageDirectory = directory.appendingPathComponent("package", isDirectory: true)
       let fakeBinDirectory = directory.appendingPathComponent("bin", isDirectory: true)
@@ -240,7 +309,7 @@ enum ToolchainBuildScriptTests {
       let command =
         #"cd "${SWIFT_MK_BUILD_REPO}"; source "${SCRIPT_PATH}" path >/dev/null; swift_mk_build_from_repo"#
       let existingPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
-      return Shell.run(
+      let result = Shell.run(
         "/bin/bash",
         ["-c", command],
         environment: [
@@ -249,7 +318,12 @@ enum ToolchainBuildScriptTests {
           "SWIFT_MK_BIN": outputPath,
           "SWIFT_MK_BUILD_REPO": packageDirectory.path,
         ])
+      return try body(result, outputPath)
     }
+  }
+
+  private static func commandAvailable(_ command: String) -> Bool {
+    Shell.run("/bin/sh", ["-c", "command -v \(command)"]).status == 0
   }
 
   private static func isSHA1(_ value: String) -> Bool {
@@ -283,6 +357,57 @@ enum ToolchainBuildScriptTests {
     if case .failure(let error) = removalResult {
       Issue.record("could not remove temporary directory \(directory.path): \(error)")
     }
+  }
+}
+
+// MARK: - Toolchain reuse invariants
+
+extension ToolchainBuildScriptTests {
+  @Test
+  static func setupBuildEnvToolchainKeyFoldsSourceHashAndXcodeBundlePath() throws {
+    let action = try rootFile(".github/actions/setup-build-env/action.yml")
+
+    // The key output folds BOTH the engine source hash and the toolchain id.
+    // Keying on the source hash alone would drop the `-${toolchain_id}` suffix.
+    #expect(action.contains(#"source_hash=$("#))
+    #expect(action.contains(#"toolchain_id=$("#))
+    #expect(action.contains(#"echo "hash=${source_hash}-${toolchain_id}""#))
+
+    // The toolchain id folds the Xcode bundle path (`xcode-select -p`), the only
+    // dimension separating a release candidate from the final of the same version.
+    // Anchor on the command form so the comment above the block cannot satisfy it,
+    // and pin the command inside the toolchain_id capture (before the hash echo).
+    let toolchainStart = try #require(action.range(of: #"toolchain_id=$("#)).lowerBound
+    let xcodeSelect = try #require(action.range(of: "xcode-select -p 2>/dev/null")).lowerBound
+    let hashEcho = try #require(
+      action.range(of: #"echo "hash=${source_hash}-${toolchain_id}""#)
+    ).lowerBound
+    #expect(toolchainStart < xcodeSelect)
+    #expect(xcodeSelect < hashEcho)
+  }
+
+  @Test
+  static func setupBuildEnvCacheHitRunsHelpProbeAndRebuildsOnFailure() throws {
+    let action = try rootFile(".github/actions/setup-build-env/action.yml")
+
+    let cacheHitGuard = #"if [ "${TOOLCHAIN_CACHE_HIT}" = "true" ] && [ -x "${bin}" ]; then"#
+    let helpProbe = #""${bin}" --help >/dev/null 2>&1"#
+    let probeFailed = #"if [ "${probe_rc}" -ne 0 ]; then"#
+
+    #expect(action.contains("probe_rc=$?"))
+    #expect(action.contains(#"bash "${SWIFT_MK_SRC}/scripts/swift-mk-build.sh" resolve"#))
+
+    // The `--help` launch probe runs on the cache-hit path, and a non-zero exit
+    // reaches the rebuild (`build_engine`, which invokes the build script).
+    let guardIndex = try #require(action.range(of: cacheHitGuard)).lowerBound
+    let probeIndex = try #require(action.range(of: helpProbe)).lowerBound
+    let probeFailedRange = try #require(action.range(of: probeFailed))
+    let rebuildIndex = try #require(
+      action.range(of: "build_engine", range: probeFailedRange.upperBound..<action.endIndex)
+    ).lowerBound
+    #expect(guardIndex < probeIndex)
+    #expect(probeIndex < probeFailedRange.lowerBound)
+    #expect(probeFailedRange.lowerBound < rebuildIndex)
   }
 }
 
