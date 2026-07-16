@@ -216,6 +216,19 @@ endif
 
 SWIFT_MK_MODULES ?=
 
+# Each selected module must sit at .make/$(m) so the `-include .make/$(m)` below
+# resolves it. The snapshot extracts the modules in fetched mode, but it does not run
+# in dev-dir mode, so fetch each one explicitly the same way the shared configs are
+# fetched: swift-mk-fetch-path copies from the checkout under SWIFT_MK_DEV_DIR and
+# downloads otherwise. The module list is the consumer's own small selection, not the
+# whole engine source tree, so fetching it per file is not the manifest footgun the
+# snapshot removed.
+ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
+SWIFT_MK_FETCHED_MODULES := $(foreach m,$(SWIFT_MK_MODULES),$(call swift-mk-require-one,.make/$(m)))
+else
+SWIFT_MK_FETCHED_MODULES := $(foreach m,$(SWIFT_MK_MODULES),$(call swift-mk-fetch-path,$(m),.make/$(m)))
+endif
+
 SWIFT_MK_SWIFTLINT_CONFIG ?= .make/swiftlint.yml
 SWIFT_MK_SWIFT_FORMAT_CONFIG ?= .make/swift-format.json
 SWIFT_MK_PERIPHERY_CONFIG ?= .make/periphery.yml
