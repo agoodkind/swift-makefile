@@ -68,4 +68,4 @@ The dependency audit uses the engine's OSV config through an `override` in [swif
 
 ## Bootstrap is a thin stub
 
-`bootstrap.mk` fetches only `swift.mk`, and `swift.mk` fetches everything else (configs, helper scripts, modules), so a consumer self-heals on the next build. The fetched file set is `SWIFT_MK_SCRIPT_FILES`, and [ManifestCompletenessTests](../../Tests/SwiftMkCoreTests/ManifestCompletenessTests.swift) fails the build when an engine file is missing from it.
+`bootstrap.mk` fetches only `swift.mk`, and `swift.mk` extracts one engine snapshot into `.make` plus the shared configs, so a consumer self-heals on the next build. The snapshot carries the whole engine tree, so a source added to the engine is present with no per-file manifest to maintain. [Consumer fetch](../fetch/overview.md) describes the snapshot and its smoke test.

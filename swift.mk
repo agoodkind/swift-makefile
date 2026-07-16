@@ -154,45 +154,34 @@ SWIFT_MK_BIN ?= $(CURDIR)/.make/swift-mk
 SWIFT_MK_LOCAL_NOTICES := $(if $(strip $(SWIFT_MK_DEV_DIR)),$(SWIFT_MK_DEV_DIR)/notices.txt,$(SWIFT_MK_SELF_DIR)/notices.txt)
 SWIFT_MK_NOTICES_FILE := $(if $(wildcard $(SWIFT_MK_LOCAL_NOTICES)),$(SWIFT_MK_LOCAL_NOTICES),$(CURDIR)/.make/notices.txt)
 
-define _swift_mk_fetch_bootstrap_commands
-	mkdir -p "$$(dirname "$(2)")"; \
-	tmp=$$(mktemp "$(2).tmp.XXXXXX") || exit 1; \
-	err=$$(mktemp "$(2).err.XXXXXX") || { rm -f "$$tmp"; exit 1; }; \
-	if [ -n "$(3)" ] && [ -f "$(3)/$(1)" ]; then \
-		cp "$(3)/$(1)" "$$tmp" || { rm -f "$$tmp" "$$err"; exit 1; }; \
-	else \
-		gh_path=$$(command -v gh || true); \
-		if [ -n "$$gh_path" ] && gh api "repos/$(SWIFT_MK_API_REPO)/contents/$(1)?ref=$(SWIFT_MK_API_REF)" -H "Accept: application/vnd.github.raw" > "$$tmp" 2>"$$err"; then \
-			:; \
-		elif curl -fsSL --connect-timeout 5 --max-time 10 "$(SWIFT_MK_BASE_URL)/$(1)?v=$$(date +%s)" -o "$$tmp" 2>"$$err"; then \
-			:; \
-		elif curl -fsSL --connect-timeout 5 --max-time 10 "$(SWIFT_MK_BASE_URL)/$(1)" -o "$$tmp" 2>"$$err"; then \
-			:; \
-		else \
-			rm -f "$$tmp" "$$err"; \
-			exit 1; \
-		fi; \
+# Fetch the whole engine as one snapshot. The consumer path downloads the archive
+# for the pinned ref (SWIFT_MK_API_REF) from GitHub and extracts it into .make with
+# tar --strip-components=1, so the archive's top-level directory is dropped and the
+# engine tree lands flat under .make. gh streams the tarball first, and a plain curl
+# of the public codeload archive is the fallback, so no auth is required. A marker
+# records the resolved ref for the idempotency check at the call site. Before the
+# extract it clears the prior snapshot's engine files (keeping the generated logs,
+# build lock, dev symlinks, and built binary), so a ref change or a migration from an
+# old per-file .make cannot leave an orphaned source the new snapshot no longer
+# defines. This runs before the swift-mk binary or any fetched script exists, so it
+# stays inline shell with no fetched-script dependency.
+define _swift_mk_snapshot_commands
+	tmp=$$(mktemp -d) || exit 1; \
+	ok=""; \
+	if command -v gh >/dev/null 2>&1 && gh api "repos/$(SWIFT_MK_API_REPO)/tarball/$(SWIFT_MK_API_REF)" > "$$tmp/snapshot.tar.gz" 2>"$$tmp/err" && [ -s "$$tmp/snapshot.tar.gz" ]; then \
+		ok=1; \
+	elif curl -fsSL --connect-timeout 5 --max-time 60 "https://codeload.github.com/$(SWIFT_MK_API_REPO)/tar.gz/$(SWIFT_MK_API_REF)" -o "$$tmp/snapshot.tar.gz" 2>"$$tmp/err" && [ -s "$$tmp/snapshot.tar.gz" ]; then \
+		ok=1; \
 	fi; \
-	if [ -s "$$tmp" ]; then \
-		mv "$$tmp" "$(2)"; \
-		case "$(2)" in *.sh) chmod +x "$(2)" ;; esac; \
-		rm -f "$$err"; \
-	else \
-		rm -f "$$tmp" "$$err"; \
-		exit 1; \
-	fi
+	if [ -z "$$ok" ]; then cat "$$tmp/err" >&2 2>/dev/null || true; rm -rf "$$tmp"; exit 1; fi; \
+	find .make -mindepth 1 -maxdepth 1 ! -name logs ! -name build.lock ! -name swift-mk ! -name swift-mk.key ! -name swift-mk-build ! -name dev ! -name .swift-mk-snapshot-ref ! -name swift.mk ! -name '*.log' -exec rm -rf {} + 2>>"$$tmp/err" || true; \
+	if ! tar -xz --strip-components=1 -C .make -f "$$tmp/snapshot.tar.gz" 2>>"$$tmp/err"; then cat "$$tmp/err" >&2 2>/dev/null || true; rm -rf "$$tmp"; exit 1; fi; \
+	printf '%s\n' "$(SWIFT_MK_API_REF)" > .make/.swift-mk-snapshot-ref; \
+	rm -rf "$$tmp"
 endef
 
-define swift_mk_fetch_bootstrap
-$(if $(filter ok,$(shell mkdir -p .make && if $(call _swift_mk_fetch_bootstrap_commands,$(1),$(2),$(SWIFT_MK_DEV_DIR)) > .make/swift-mk-bootstrap-fetch.log; then printf ok; else printf fail; fi)),,$(error swift-makefile failed to fetch $(1) into $(2)))
-endef
-
-ifeq ($(SWIFT_MK_HELPER_DIR),$(SWIFT_MK_FETCHED_SCRIPT_DIR))
-SWIFT_MK_FETCHED_BOOTSTRAP := $(call swift_mk_fetch_bootstrap,scripts/swift-mk-fetch-one.sh,.make/scripts/swift-mk-fetch-one.sh)
-endif
-
-define swift-mk-fetch-one
-$(if $(filter ok,$(shell mkdir -p .make && if bash "$(SWIFT_MK_FETCH_SCRIPT)" "$(1)" ".make/$(1)" "$(SWIFT_MK_DEV_DIR)" > .make/swift-mk-fetch.log; then printf ok; else printf fail; fi)),,$(error swift-makefile failed to fetch $(1)))
+define swift_mk_snapshot
+$(if $(filter ok,$(shell mkdir -p .make && if $(call _swift_mk_snapshot_commands) > .make/swift-mk-snapshot.log 2>&1; then printf ok; else printf fail; fi)),,$(error swift-makefile failed to fetch the engine snapshot for $(SWIFT_MK_API_REF); see .make/swift-mk-snapshot.log))
 endef
 
 define swift-mk-fetch-path
@@ -203,223 +192,41 @@ define swift-mk-require-one
 $(if $(wildcard $(1)),,$(error swift-makefile expected $(1); rerun without SWIFT_MK_SKIP_FETCH))
 endef
 
-SWIFT_MK_SCRIPT_FILES := \
-	scripts/swift-mk-trace.sh \
-	scripts/swift-mk-fetch-one.sh \
-	scripts/swift-mk-build.sh \
-	scripts/swift-mk-sync.sh \
-	scripts/swift-mk-fleet-update.sh \
-	scripts/install-hooks.sh \
-	hooks/pre-commit \
-	swiftcheck/Package.swift \
-	swiftcheck/Sources/SwiftCheckCore/Rule.swift \
-	swiftcheck/Sources/SwiftCheckCore/RuleSupport.swift \
-	swiftcheck/Sources/SwiftCheckCore/TopLevelTypeDeclaration.swift \
-	swiftcheck/Sources/swiftcheck-extra/main.swift \
-	swiftcheck/Tests/SwiftCheckCoreTests/SwiftCheckCoreTests.swift \
-	Package.swift \
-	Sources/SwiftMkRenderCore/TemplateRenderer.swift \
-	Sources/SwiftMkRenderCLI/main.swift \
-	Sources/SwiftMkCLI/SwiftMk.swift \
-	Sources/SwiftMkCLI/GateProofCommand.swift \
-	Sources/SwiftMkCLI/BuildFreshCommand.swift \
-	Sources/SwiftMkCLI/CodesignRun.swift \
-	Sources/SwiftMkCLI/NotarizeCommand.swift \
-	Sources/SwiftMkCLI/ToolchainCommand.swift \
-	Sources/SwiftMkCLI/CacheCommand.swift \
-	Sources/SwiftMkCLI/CiChangedCommand.swift \
-	Sources/SwiftMkCLI/UpdateCommand.swift \
-	Sources/SwiftMkCLI/VersionCommand.swift \
-	Sources/SwiftMkCLI/ReleasePackageCommand.swift \
-	Sources/SwiftMkMaint/SwiftMkMaint.swift \
-	Sources/SwiftMkUpdate/ReleaseResolver.swift \
-	Sources/SwiftMkUpdate/UpdateConfig.swift \
-	Sources/SwiftMkUpdate/UpdateDiagnostics.swift \
-	Sources/SwiftMkUpdate/UpdateOptions.swift \
-	Sources/SwiftMkUpdate/UpdateScheduler.swift \
-	Sources/SwiftMkUpdate/UpdateState.swift \
-	Sources/SwiftMkUpdate/Updater.swift \
-	Sources/SwiftMkUpdate/VerifyReleaseResult.swift \
-	Sources/SwiftMkMaintCore/CachePrunePlanner.swift \
-	Sources/SwiftMkMaintCore/CachePruner.swift \
-	Sources/SwiftMkMaintCore/MaintenanceOutput.swift \
-	Sources/SwiftMkMaintCore/ReleaseVersion.swift \
-	Sources/SwiftMkMaintCore/UpdateCommandOptions.swift \
-	Sources/SwiftMkCore/Findings.swift \
-	Sources/SwiftMkCore/BaselineKey.swift \
-	Sources/SwiftMkCore/BaselineRecord.swift \
-	Sources/SwiftMkCore/BaselineRunner+StructuredWrite.swift \
-	Sources/SwiftMkCore/CountAwareGate.swift \
-	Sources/SwiftMkCore/Finding.swift \
-	Sources/SwiftMkCore/FindingsSource.swift \
-	Sources/SwiftMkCore/Preflight.swift \
-	Sources/SwiftMkCore/StructuredGate.swift \
-	Sources/SwiftMkCore/XCResult.swift \
-	Sources/SwiftMkCore/Text.swift \
-	Sources/SwiftMkCore/Env.swift \
-	Sources/SwiftMkCore/Shell.swift \
-	Sources/SwiftMkCore/Shell+ProcessGroup.swift \
-	Sources/SwiftMkCore/Capture.swift \
-	Sources/SwiftMkCore/Baseline.swift \
-	Sources/SwiftMkCore/BaselineReport.swift \
-	Sources/SwiftMkCore/Baseline+Gate.swift \
-	Sources/SwiftMkCore/BaselineSpec.swift \
-	Sources/SwiftMkCore/TokenGate.swift \
-	Sources/SwiftMkCore/Scope.swift \
-	Sources/SwiftMkCore/Swiftcheck.swift \
-	Sources/SwiftMkCore/DeadcodeScan.swift \
-	Sources/SwiftMkCore/DeadcodeScan+Coverage.swift \
-	Sources/SwiftMkCore/DeadcodeScan+Witness.swift \
-	Sources/SwiftMkCore/Lint+DeadcodeVerdict.swift \
-	Sources/SwiftMkCore/DeadcodeCoverageCompleteness.swift \
-	Sources/SwiftMkCore/DeadcodeCoverageMatrix.swift \
-	Sources/SwiftMkCore/DeadcodeBuildConfig.swift \
-	Sources/SwiftMkCore/WitnessFilter.swift \
-	Sources/SwiftMkCore/BuildCache.swift \
-	Sources/SwiftMkCore/CachePaths.swift \
-	Sources/SwiftMkCore/CachePlan.swift \
-	Sources/SwiftMkCore/CacheService.swift \
-	Sources/SwiftMkCore/CiChanged.swift \
-	Sources/SwiftMkCore/CiChanged+Graph.swift \
-	Sources/SwiftMkCore/Codesign.swift \
-	Sources/SwiftMkCore/ReleasePackage.swift \
-	Sources/SwiftMkCore/Notarize.swift \
-	Sources/SwiftMkCore/SigningBuildConfig.swift \
-	Sources/SwiftMkCore/SigningVerification.swift \
-	Sources/SwiftMkCore/ToolchainPrebuild.swift \
-	Sources/SwiftMkCore/Toolchain.swift \
-	Sources/SwiftMkCore/Toolchain+Generate.swift \
-	Sources/SwiftMkCore/Toolchain+Coverage.swift \
-	Sources/SwiftMkCore/Toolchain+GatedCompile.swift \
-	Sources/SwiftMkCore/Toolchain+TuistCache.swift \
-	Sources/SwiftMkCore/GatedBuild.swift \
-	Sources/SwiftMkCore/GateDisplay.swift \
-	Sources/SwiftMkCore/GateReport.swift \
-	Sources/SwiftMkCore/LintPolicy.swift \
-	Sources/SwiftMkCore/LintResources.swift \
-	Sources/SwiftMkCore/GeneratedFiles.swift \
-	Sources/SwiftMkCore/XcconfigValues.swift \
-	Sources/SwiftMkCore/Resources/swiftlint.yml \
-	Sources/SwiftMkCore/Resources/swift-format.json \
-	Sources/SwiftMkCore/Resources/periphery.yml \
-	Sources/SwiftMkCore/Resources/osv-scanner.toml \
-	Sources/SwiftMkCore/Resources/mise.toml \
-	Sources/SwiftMkCore/BuildToolingAudit.swift \
-	Sources/SwiftMkCore/Build.swift \
-	Sources/SwiftMkCore/GateProof.swift \
-	Sources/SwiftMkCore/BuildFreshness.swift \
-	Sources/SwiftMkCore/AdHocSigningAllowlist.swift \
-	Sources/SwiftMkCore/Lint.swift \
-	Sources/SwiftMkCore/Lint+GitIgnore.swift \
-	Sources/SwiftMkCore/Lint+Run.swift \
-	Sources/SwiftMkCore/BaselineRunner.swift \
-	Sources/SwiftMkCore/Notice.swift \
-	Sources/SwiftMkCore/Output.swift \
-	Sources/SwiftMkCore/Logging.swift \
-	Sources/SwiftMkCore/Correlation.swift \
-	Sources/SwiftMkCore/OTelExport.swift \
-	Sources/SwiftMkCore/BuildFailureLog.swift \
-	Sources/SwiftMkCore/IndexStoreSettle.swift \
-	Sources/SwiftMkCore/IndexCompleteness.swift \
-	Sources/SwiftMkCore/FileLock.swift \
-	Sources/SwiftMkCore/BuildLock.swift \
-	Sources/SwiftMkCore/SwiftPM.swift \
-	Tests/SwiftMkRenderCoreTests/TemplateRendererTests.swift \
-	Tests/SwiftMkCoreTests/SwiftMkCoreTests.swift \
-	Tests/SwiftMkCoreTests/HelpFastPathTests.swift \
-	Tests/SwiftMkCoreTests/BrewLockScriptTests.swift \
-	Tests/SwiftMkCoreTests/BuildTests.swift \
-	Tests/SwiftMkCoreTests/GateProofTests.swift \
-	Tests/SwiftMkCoreTests/BuildFreshnessTests.swift \
-	Tests/SwiftMkCoreTests/GitIgnoreBatchTests.swift \
-	Tests/SwiftMkCoreTests/DeadcodeBuildConfigTests.swift \
-	Tests/SwiftMkCoreTests/IndexCompletenessTests.swift \
-	Tests/SwiftMkCoreTests/WitnessFilterTests.swift \
-	Tests/SwiftMkCoreTests/SigningBuildConfigTests.swift \
-	Tests/SwiftMkCoreTests/SigningVerificationTests.swift \
-	Tests/SwiftMkCoreTests/ToolchainPrebuildTests.swift \
-	Tests/SwiftMkCoreTests/ToolchainTests.swift \
-	Tests/SwiftMkCoreTests/ToolchainPoolCacheTests.swift \
-	Tests/SwiftMkCoreTests/ToolchainTuistCacheTests.swift \
-	Tests/SwiftMkCoreTests/ToolchainSharedCacheTests.swift \
-	Tests/SwiftMkCoreTests/ToolchainCoverageTests.swift \
-	Tests/SwiftMkCoreTests/ToolchainBuildCoverageTests.swift \
-	Tests/SwiftMkCoreTests/ToolchainBuildScriptTests.swift \
-	Tests/SwiftMkCoreTests/ToolchainReceiptTests.swift \
-	Tests/SwiftMkCoreTests/GatedBuildHarness.swift \
-	Tests/SwiftMkCoreTests/GatedBuildTests.swift \
-	Tests/SwiftMkCoreTests/GateReportTests.swift \
-	Tests/SwiftMkCoreTests/HardGateTests.swift \
-	Tests/SwiftMkCoreTests/LintSourceSetTests.swift \
-	Tests/SwiftMkCoreTests/NoMakeGatedBuildHarnessTests.swift \
-	Tests/SwiftMkCoreTests/DeadcodeCoverageTests.swift \
-	Tests/SwiftMkCoreTests/LintResourcesTests.swift \
-	Tests/SwiftMkCoreTests/XcconfigValuesTests.swift \
-	Tests/SwiftMkCoreTests/GeneratedFilesTests.swift \
-	Tests/SwiftMkCoreTests/BuildToolingAuditTests.swift \
-	Tests/SwiftMkCoreTests/AdHocSigningAllowlistTests.swift \
-	Tests/SwiftMkCoreTests/BaselineKeyTests.swift \
-	Tests/SwiftMkCoreTests/BaselineRecordTests.swift \
-	Tests/SwiftMkCoreTests/BuildCacheTests.swift \
-	Tests/SwiftMkCoreTests/CacheOutputTests.swift \
-	Tests/SwiftMkCoreTests/CachePathsTests.swift \
-	Tests/SwiftMkCoreTests/CachePlanTests.swift \
-	Tests/SwiftMkCoreTests/CacheServiceTests.swift \
-	Tests/SwiftMkCoreTests/CiChangedTests.swift \
-	Tests/SwiftMkCoreTests/CodesignTests.swift \
-	Tests/SwiftMkCoreTests/ReleasePackageTests.swift \
-	Tests/SwiftMkCoreTests/NotarizeTests.swift \
-	Tests/SwiftMkCoreTests/CountAwareGateTests.swift \
-	Tests/SwiftMkCoreTests/CorrelationTests.swift \
-	Tests/SwiftMkCoreTests/EnvironmentSerialized.swift \
-	Tests/SwiftMkCoreTests/DeadcodeScanTests.swift \
-	Tests/SwiftMkCoreTests/DeadcodeVerdictTests.swift \
-	Tests/SwiftMkCoreTests/DeadcodeCoverageCompletenessTests.swift \
-	Tests/SwiftMkCoreTests/DeadcodeCoverageMatrixTests.swift \
-	Tests/SwiftMkCoreTests/EnvTests.swift \
-	Tests/SwiftMkCoreTests/FindingsSourceTests.swift \
-	Tests/SwiftMkCoreTests/FindingTests.swift \
-	Tests/SwiftMkCoreTests/LoggingTests.swift \
-	Tests/SwiftMkCoreTests/OutputCaptureTests.swift \
-	Tests/SwiftMkCoreTests/PreflightTests.swift \
-	Tests/SwiftMkCoreTests/IndexStoreSettleTests.swift \
-	Tests/SwiftMkCoreTests/ShellStreamingTests.swift \
-	Tests/SwiftMkCoreTests/ShellTests.swift \
-	Tests/SwiftMkCoreTests/ShellForwardingCaptureTests.swift \
-	Tests/SwiftMkCoreTests/StructuredGateTests.swift \
-	Tests/SwiftMkCoreTests/SwiftcheckTests.swift \
-	Tests/SwiftMkCoreTests/XCResultTests.swift \
-	Tests/SwiftMkCoreTests/BuildLockTests.swift \
-	Tests/SwiftMkCoreTests/SwiftPMTests.swift \
-	Tests/SwiftMkCoreTests/PeripheryPackageScanArgsTests.swift \
-	Tests/SwiftMkCoreTests/ManifestCompletenessTests.swift \
-	Tests/SwiftMkCoreTests/NoLibSwiftPMImportTests.swift \
-	Tests/SwiftMkUpdateTests/SwiftMkUpdateSchedulerTests.swift \
-	Tests/SwiftMkUpdateTests/SwiftMkReleaseVerifierTests.swift \
-	Tests/SwiftMkUpdateTests/SwiftMkUpdateSupport.swift \
-	Tests/SwiftMkUpdateTests/SwiftMkUpdateTargetPathTests.swift \
-	Tests/SwiftMkUpdateTests/SwiftMkUpdateTests.swift \
-	Tests/SwiftMkMaintCoreTests/CachePrunePlannerTests.swift \
-	Tests/SwiftMkMaintCoreTests/CachePrunerTests.swift \
-	Tests/SwiftMkMaintCoreTests/MaintenanceOutputTests.swift \
-	Tests/SwiftMkMaintCoreTests/ReleaseVersionTests.swift \
-	Tests/SwiftMkMaintCoreTests/MaintenanceRunnersTests.swift \
-	notices.txt \
-	templates/xcode/IDETemplateMacros.plist.template
-
+# One engine snapshot replaces the per-file fetch. In consumer mode the whole
+# engine tree extracts into .make and becomes the flat SwiftPM package the build
+# compiles (.make/Package.swift, .make/Sources, .make/scripts, .make/swiftcheck),
+# so a source added to the engine is present with no manifest to maintain, and the
+# selected modules (SWIFT_MK_MODULES) arrive in the same snapshot. The extract is
+# idempotent: the marker records the resolved ref, and a later run whose marker
+# matches the pinned ref with a present .make/Package.swift skips the re-extract, so
+# file mtimes stay stable and the tool-binary staleness guard does not force a
+# rebuild. When a re-extract does run, it first clears the prior snapshot's engine
+# files while preserving .make/logs, .make/build.lock, and the built binary, so an
+# orphaned source cannot survive a ref change. Dev-dir mode is excluded here, because
+# SWIFT_MK_HELPER_DIR then resolves to the checkout rather than .make/scripts and the
+# build reads the checkout directly.
+SWIFT_MK_SNAPSHOT_CURRENT := $(shell if [ -f .make/Package.swift ] && [ -f .make/.swift-mk-snapshot-ref ] && [ "$$(cat .make/.swift-mk-snapshot-ref 2>/dev/null)" = "$(SWIFT_MK_API_REF)" ]; then printf 1; fi)
 ifeq ($(SWIFT_MK_HELPER_DIR),$(SWIFT_MK_FETCHED_SCRIPT_DIR))
 ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
-SWIFT_MK_FETCHED_SCRIPTS := $(foreach s,$(SWIFT_MK_SCRIPT_FILES),$(call swift-mk-require-one,.make/$(s)))
-else
-SWIFT_MK_FETCHED_SCRIPTS := $(foreach s,$(SWIFT_MK_SCRIPT_FILES),$(call swift-mk-fetch-one,$(s)))
+SWIFT_MK_SNAPSHOT := $(call swift-mk-require-one,.make/Package.swift)
+else ifneq ($(strip $(SWIFT_MK_SNAPSHOT_CURRENT)),1)
+SWIFT_MK_SNAPSHOT := $(call swift_mk_snapshot)
 endif
 endif
 
 SWIFT_MK_MODULES ?=
+
+# Each selected module must sit at .make/$(m) so the `-include .make/$(m)` below
+# resolves it. The snapshot extracts the modules in fetched mode, but it does not run
+# in dev-dir mode, so fetch each one explicitly the same way the shared configs are
+# fetched: swift-mk-fetch-path copies from the checkout under SWIFT_MK_DEV_DIR and
+# downloads otherwise. The module list is the consumer's own small selection, not the
+# whole engine source tree, so fetching it per file is not the manifest footgun the
+# snapshot removed.
 ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
 SWIFT_MK_FETCHED_MODULES := $(foreach m,$(SWIFT_MK_MODULES),$(call swift-mk-require-one,.make/$(m)))
 else
-SWIFT_MK_FETCHED_MODULES := $(foreach m,$(SWIFT_MK_MODULES),$(call swift-mk-fetch-one,$(m)))
+SWIFT_MK_FETCHED_MODULES := $(foreach m,$(SWIFT_MK_MODULES),$(call swift-mk-fetch-path,$(m),.make/$(m)))
 endif
 
 SWIFT_MK_SWIFTLINT_CONFIG ?= .make/swiftlint.yml
@@ -711,7 +518,6 @@ export SWIFT_MK_HELPER_DIR
 export SWIFT_MK_RECURSIVE_MAKE
 export SWIFT_MK_RECURSIVE_MAKE_ARGS
 export SWIFT_MK_ENTRY_MAKEFILE
-export SWIFT_MK_SCRIPT_FILES
 export SWIFT_MK_BASE_URL
 export SWIFT_MK_API_REPO
 export SWIFT_MK_API_REF
