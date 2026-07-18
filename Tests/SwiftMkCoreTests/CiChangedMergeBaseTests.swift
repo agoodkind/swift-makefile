@@ -17,50 +17,51 @@ import Testing
 // directory, which the .serialized parent keeps from racing other cwd/env suites.
 extension EnvironmentSerialized {
   @Suite struct CiChangedMergeBaseTests {
-    /// A pull-request checkout maps only the PR ref, so `origin/<default>` is absent
-    /// and a plain `git fetch origin <default>` updates only FETCH_HEAD. The detector
-    /// must still resolve the feature-branch merge-base by fetching the default branch
-    /// into its remote-tracking ref. The regression this guards: without the explicit
-    /// refspec, the retried `merge-base origin/<default> head` could not resolve and
-    /// the detector ran every gate on every PR.
+    /// GitHub checks out `refs/pull/N/merge`, a merge of the base branch and the PR
+    /// head, and a pull-request checkout has no `origin/<default>` and often cannot
+    /// fetch one. The detector must still resolve the feature-branch merge-base from
+    /// the merge ref's two parents, with no network fetch. The regression this guards:
+    /// without the merge-ref parent path, the detector could not compute the merge-base
+    /// on any PR and ran every gate every time.
     @Test
-    func resolvesMergeBaseUnderNarrowRefspecPullRequestCheckout() throws {
+    func resolvesMergeBaseFromPullRequestMergeRefWithoutFetching() throws {
       let root = try makeTempDirectory()
       defer { removeTemporary(root.path) }
+      let repo = root.appendingPathComponent("repo", isDirectory: true)
 
-      let remote = root.appendingPathComponent("remote", isDirectory: true)
-      let checkout = root.appendingPathComponent("pr", isDirectory: true)
+      try initRepository(repo)
+      run(["checkout", "-q", "-b", "main"], in: repo)
+      try writeFile(repo, "base.txt", "base\n")
+      run(["add", "-A"], in: repo)
+      run(["commit", "-qm", "base"], in: repo)
+      let branchPoint = capture(["rev-parse", "HEAD"], in: repo)
 
-      // Upstream: main, then a feature branch, then main advances past the branch point.
-      try initRepository(remote)
-      run(["checkout", "-q", "-b", "main"], in: remote)
-      try writeFile(remote, "base.txt", "base\n")
-      run(["add", "-A"], in: remote)
-      run(["commit", "-qm", "base"], in: remote)
-      let branchPoint = capture(["rev-parse", "HEAD"], in: remote)
-      run(["checkout", "-q", "-b", "feature"], in: remote)
-      try writeFile(remote, "feat.txt", "feat\n")
-      run(["add", "-A"], in: remote)
-      run(["commit", "-qm", "feat"], in: remote)
-      let head = capture(["rev-parse", "HEAD"], in: remote)
-      run(["checkout", "-q", "main"], in: remote)
-      try writeFile(remote, "advance.txt", "advance\n")
-      run(["add", "-A"], in: remote)
-      run(["commit", "-qm", "advance"], in: remote)
+      run(["checkout", "-q", "-b", "feature"], in: repo)
+      try writeFile(repo, "feat.txt", "feat\n")
+      run(["add", "-A"], in: repo)
+      run(["commit", "-qm", "feat"], in: repo)
+      let prHead = capture(["rev-parse", "HEAD"], in: repo)
 
-      // PR-style checkout: origin maps only the feature ref, so origin/main is absent.
-      let featureRefspec = "+refs/heads/feature:refs/remotes/origin/feature"
-      try initRepository(checkout)
-      run(["remote", "add", "origin", remote.path], in: checkout)
-      run(["config", "remote.origin.fetch", featureRefspec], in: checkout)
-      run(["fetch", "-q", "--no-tags", "origin"], in: checkout)
-      run(["checkout", "-q", head], in: checkout)
+      // main advances past the branch point, so the branch point is older than main's
+      // tip and only a real merge-base (not "main's tip") is correct.
+      run(["checkout", "-q", "main"], in: repo)
+      try writeFile(repo, "advance.txt", "advance\n")
+      run(["add", "-A"], in: repo)
+      run(["commit", "-qm", "advance"], in: repo)
+
+      // Build the pull-request merge commit (base merged with the PR head) like
+      // refs/pull/N/merge, then detach onto it. There is no `origin` remote, so the
+      // detector cannot fetch and must use the merge ref's parents.
+      run(["checkout", "-q", "-b", "prmerge", "main"], in: repo)
+      run(["merge", "-q", "--no-edit", "feature"], in: repo)
+      let mergeCommit = capture(["rev-parse", "HEAD"], in: repo)
+      run(["checkout", "-q", "--detach", mergeCommit], in: repo)
 
       let saved = FileManager.default.currentDirectoryPath
       defer { _ = FileManager.default.changeCurrentDirectoryPath(saved) }
-      #expect(FileManager.default.changeCurrentDirectoryPath(checkout.path))
+      #expect(FileManager.default.changeCurrentDirectoryPath(repo.path))
 
-      let mergeBase = CiChanged.featureBranchMergeBase(defaultBranch: "main", head: head)
+      let mergeBase = CiChanged.featureBranchMergeBase(defaultBranch: "main", head: prHead)
       #expect(mergeBase == branchPoint)
     }
 

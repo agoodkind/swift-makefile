@@ -290,10 +290,17 @@ extension CiChanged {
     if let base = gitOutput(["merge-base", "origin/\(defaultBranch)", head]) {
       return base
     }
-    // A pull-request checkout uses a narrow fetch refspec, so `origin/<default>` is
-    // absent and a plain `git fetch origin <default>` updates only FETCH_HEAD, not
-    // `refs/remotes/origin/<default>`. Fetch into the remote-tracking ref explicitly
-    // so the retried merge-base can resolve `origin/<default>`.
+    // GitHub checks out `refs/pull/N/merge`, a merge of the base branch (HEAD^1) and
+    // the pull-request head (HEAD^2). Both parents are already in the checkout, so
+    // their merge-base is the branch point, computable with no network fetch and no
+    // credentials. This is why a PR that never fetched `origin/<default>` still
+    // classifies instead of running every gate.
+    if let base = gitOutput(["merge-base", "HEAD^1", "HEAD^2"]) {
+      return base
+    }
+    // Fallback for a checkout that is not a merge ref: `origin/<default>` is absent
+    // and a plain `git fetch origin <default>` updates only FETCH_HEAD, so fetch into
+    // the remote-tracking ref explicitly and retry.
     let fetch = runGit([
       "fetch", "--no-tags", "origin",
       "+refs/heads/\(defaultBranch):refs/remotes/origin/\(defaultBranch)",
