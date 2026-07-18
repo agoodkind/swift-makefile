@@ -286,11 +286,18 @@ extension CiChanged {
     return Shell.run("git", arguments)
   }
 
-  private static func featureBranchMergeBase(defaultBranch: String, head: String) -> String? {
+  static func featureBranchMergeBase(defaultBranch: String, head: String) -> String? {
     if let base = gitOutput(["merge-base", "origin/\(defaultBranch)", head]) {
       return base
     }
-    _ = runGit(["fetch", "--no-tags", "origin", defaultBranch])
+    // A pull-request checkout uses a narrow fetch refspec, so `origin/<default>` is
+    // absent and a plain `git fetch origin <default>` updates only FETCH_HEAD, not
+    // `refs/remotes/origin/<default>`. Fetch into the remote-tracking ref explicitly
+    // so the retried merge-base can resolve `origin/<default>`.
+    _ = runGit([
+      "fetch", "--no-tags", "origin",
+      "+refs/heads/\(defaultBranch):refs/remotes/origin/\(defaultBranch)",
+    ])
     return gitOutput(["merge-base", "origin/\(defaultBranch)", head])
   }
 
