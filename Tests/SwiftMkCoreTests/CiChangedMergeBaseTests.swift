@@ -61,8 +61,51 @@ extension EnvironmentSerialized {
       defer { _ = FileManager.default.changeCurrentDirectoryPath(saved) }
       #expect(FileManager.default.changeCurrentDirectoryPath(repo.path))
 
-      let mergeBase = CiChanged.featureBranchMergeBase(defaultBranch: "main", head: prHead)
+      let mergeBase = CiChanged.featureBranchMergeBase(
+        defaultBranch: "main", head: prHead, isPullRequest: true)
       #expect(mergeBase == branchPoint)
+    }
+
+    /// The merge-ref fast path is valid only for pull-request events, where GitHub's
+    /// synthetic merge commit has the base tip and PR head as its parents. On a push,
+    /// HEAD is a real commit, and a local merge commit's parents are unrelated to the
+    /// default branch. With no `origin/<default>` to fetch and no merge ref to lean on,
+    /// the detector must not guess a base from the local merge's parents; it returns nil
+    /// so the caller fails safe to a full run.
+    @Test
+    func doesNotUseLocalMergeCommitParentsForPushEvents() throws {
+      let root = try makeTempDirectory()
+      defer { removeTemporary(root.path) }
+      let repo = root.appendingPathComponent("repo", isDirectory: true)
+
+      // A pushed tip that is itself a local merge of two feature branches, with no
+      // `origin` remote to fetch. HEAD^1 and HEAD^2 exist but are not the default
+      // branch, so the PR-only fast path must not fire.
+      try initRepository(repo)
+      run(["checkout", "-q", "-b", "main"], in: repo)
+      try writeFile(repo, "base.txt", "base\n")
+      run(["add", "-A"], in: repo)
+      run(["commit", "-qm", "base"], in: repo)
+
+      run(["checkout", "-q", "-b", "topic-a"], in: repo)
+      try writeFile(repo, "a.txt", "a\n")
+      run(["add", "-A"], in: repo)
+      run(["commit", "-qm", "a"], in: repo)
+
+      run(["checkout", "-q", "-b", "topic-b", "main"], in: repo)
+      try writeFile(repo, "b.txt", "b\n")
+      run(["add", "-A"], in: repo)
+      run(["commit", "-qm", "b"], in: repo)
+      run(["merge", "-q", "--no-edit", "topic-a"], in: repo)
+      let pushedMerge = capture(["rev-parse", "HEAD"], in: repo)
+
+      let saved = FileManager.default.currentDirectoryPath
+      defer { _ = FileManager.default.changeCurrentDirectoryPath(saved) }
+      #expect(FileManager.default.changeCurrentDirectoryPath(repo.path))
+
+      let mergeBase = CiChanged.featureBranchMergeBase(
+        defaultBranch: "main", head: pushedMerge, isPullRequest: false)
+      #expect(mergeBase == nil)
     }
 
     // MARK: Fixture helpers

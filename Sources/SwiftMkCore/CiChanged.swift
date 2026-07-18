@@ -184,7 +184,11 @@ extension CiChanged {
     case decision(Decision)
   }
 
-  private static func resolveDiffBase(defaultBranch: String, head: String) -> DiffBase {
+  private static func resolveDiffBase(
+    defaultBranch: String,
+    head: String,
+    isPullRequest: Bool
+  ) -> DiffBase {
     if Env.get("SWIFT_MK_REF_NAME") == defaultBranch {
       let diffBase = Env.get("SWIFT_MK_DIFF_BASE")
       if diffBase.isEmpty || isAllZeroSHA(diffBase) {
@@ -195,17 +199,22 @@ extension CiChanged {
       }
       return .base(diffBase)
     }
-    guard let mergeBase = featureBranchMergeBase(defaultBranch: defaultBranch, head: head) else {
+    let mergeBase = featureBranchMergeBase(
+      defaultBranch: defaultBranch, head: head, isPullRequest: isPullRequest)
+    guard let mergeBase else {
       return .decision(fullRunDecision(reason: "could not compute feature branch merge-base"))
     }
     return .base(mergeBase)
   }
 
+  private static let pushEventName = "push"
+  private static let pullRequestEventName = "pull_request"
+
   /// The events the detector classifies. A push carries the pushed range, and a pull
   /// request carries its own branch head, so both give a well-defined diff. Any other
   /// event has no reliable base, so the detector fails safe to a full run.
   static func isSupportedEvent(_ eventName: String) -> Bool {
-    eventName == "push" || eventName == "pull_request"
+    eventName == pushEventName || eventName == pullRequestEventName
   }
 
   private static func decide() -> Decision {
@@ -222,7 +231,8 @@ extension CiChanged {
     }
 
     let base: String
-    switch resolveDiffBase(defaultBranch: defaultBranch, head: head) {
+    let isPullRequest = eventName == pullRequestEventName
+    switch resolveDiffBase(defaultBranch: defaultBranch, head: head, isPullRequest: isPullRequest) {
     case .base(let value):
       base = value
     case .decision(let decision):
@@ -286,7 +296,11 @@ extension CiChanged {
     return Shell.run("git", arguments)
   }
 
-  static func featureBranchMergeBase(defaultBranch: String, head: String) -> String? {
+  static func featureBranchMergeBase(
+    defaultBranch: String,
+    head: String,
+    isPullRequest: Bool
+  ) -> String? {
     if let base = gitOutput(["merge-base", "origin/\(defaultBranch)", head]) {
       return base
     }
@@ -294,8 +308,10 @@ extension CiChanged {
     // the pull-request head (HEAD^2). Both parents are already in the checkout, so
     // their merge-base is the branch point, computable with no network fetch and no
     // credentials. This is why a PR that never fetched `origin/<default>` still
-    // classifies instead of running every gate.
-    if let base = gitOutput(["merge-base", "HEAD^1", "HEAD^2"]) {
+    // classifies instead of running every gate. This holds only for pull-request
+    // events: on a push, HEAD is a real commit whose parents (if it is a merge) are
+    // unrelated to the default branch, so the fast path is restricted to pull requests.
+    if isPullRequest, let base = gitOutput(["merge-base", "HEAD^1", "HEAD^2"]) {
       return base
     }
     // Fallback for a checkout that is not a merge ref: `origin/<default>` is absent
