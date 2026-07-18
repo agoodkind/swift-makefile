@@ -294,10 +294,15 @@ extension CiChanged {
     // absent and a plain `git fetch origin <default>` updates only FETCH_HEAD, not
     // `refs/remotes/origin/<default>`. Fetch into the remote-tracking ref explicitly
     // so the retried merge-base can resolve `origin/<default>`.
-    _ = runGit([
+    let fetch = runGit([
       "fetch", "--no-tags", "origin",
       "+refs/heads/\(defaultBranch):refs/remotes/origin/\(defaultBranch)",
     ])
+    if fetch.status != 0 {
+      Output.error(
+        "ci-changed: fetch of \(defaultBranch) for merge-base failed (status \(fetch.status)): "
+          + fetch.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
     return gitOutput(["merge-base", "origin/\(defaultBranch)", head])
   }
 
