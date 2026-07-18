@@ -409,6 +409,61 @@ extension ToolchainBuildScriptTests {
     #expect(probeIndex < probeFailedRange.lowerBound)
     #expect(probeFailedRange.lowerBound < rebuildIndex)
   }
+
+  @Test
+  static func setupBuildEnvPoolReusesKeyedBinaryWithoutBlanketWipe() throws {
+    let action = try rootFile(".github/actions/setup-build-env/action.yml")
+    // The pool binary path is content-keyed by the engine source hash, so a new source or
+    // toolchain lands in its own keyed directory. Dropping the keyed path fails here.
+    let keyedBin = #"bin="${HOME}/.swift-mk-ci-toolchain/${SWIFT_MK_SRC_HASH}/swift-mk""#
+    // Slice the pool branch: it follows the keyed bin assignment, so the hosted `rm -rf`
+    // in build_engine stays out of `pool` while the pool probe, rebuild, and `rm -f` fall in.
+    let pool = String(action[try #require(action.range(of: keyedBin)).upperBound...])
+    #expect(action.contains("SWIFT_MK_SRC_HASH: ${{ steps.swift-mk-src.outputs.hash }}"))
+    #expect(pool.contains(#""${bin}" --help >/dev/null 2>&1"#))
+    #expect(pool.contains(#"if [ "${probe_rc}" -ne 0 ]; then"#))
+    #expect(pool.contains("build_pool_bin"))
+    #expect(pool.contains(#"rm -f "${bin}""#))
+    // Reintroducing any `rm -rf` on the pool path (the blanket toolchain-root wipe) fails.
+    #expect(!pool.contains("rm -rf"))
+  }
+
+  @Test
+  static func toolchainContentKeyDrivesReuse() throws {
+    try withTemporaryDirectory { directory in
+      let harness = try ResolveHarness.make(in: directory)
+
+      // The first resolve builds the binary and records its content key.
+      #expect(harness.resolve().status == 0)
+      #expect(try harness.buildCount() == 1)
+      #expect(FileManager.default.isExecutableFile(atPath: harness.outputPath))
+      let firstModification = try harness.binaryModificationDate()
+
+      // An unchanged source and toolchain reuse the binary: no rebuild, mtime unchanged.
+      #expect(harness.resolve().status == 0)
+      #expect(try harness.buildCount() == 1)
+      #expect(try harness.binaryModificationDate() == firstModification)
+
+      // A changed source triggers a rebuild.
+      try harness.writeSource("source-two\n")
+      #expect(harness.resolve().status == 0)
+      #expect(try harness.buildCount() == 2)
+
+      // A changed toolchain id triggers a rebuild even with the source unchanged.
+      try harness.writeToolchainID("toolchain-two\n")
+      #expect(harness.resolve().status == 0)
+      #expect(try harness.buildCount() == 3)
+
+      // A content-preserving rename triggers a rebuild: the key folds each input's
+      // package-relative path, so moving a source to a new name changes the key even
+      // though its bytes are identical, and the stale binary is not reused.
+      let renamed = harness.sourceFile.deletingLastPathComponent()
+        .appendingPathComponent("Renamed.swift")
+      try FileManager.default.moveItem(at: harness.sourceFile, to: renamed)
+      #expect(harness.resolve().status == 0)
+      #expect(try harness.buildCount() == 4)
+    }
+  }
 }
 
 // MARK: - ScriptFailure

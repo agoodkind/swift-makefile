@@ -39,7 +39,14 @@ func collectSwiftFiles(paths: [String]) -> [String] {
 }
 
 func isTestPath(_ path: String) -> Bool {
-  path.contains("/Tests/") || path.hasSuffix("Tests.swift")
+  // A file inside a `Tests/` directory is a test file regardless of its own name, so
+  // a helper named for its role (ResolveHarness.swift, GatedBuildHarness.swift) is
+  // exempt alongside the `*Tests.swift` suites. Match a leading `Tests/` as well as an
+  // embedded `/Tests/`, because the gate scans repo-root-relative paths in CI
+  // (`Tests/Foo/Bar.swift`, no leading slash) and absolute paths locally
+  // (`/repo/Tests/Foo/Bar.swift`); the leading-prefix case is the one the embedded
+  // check misses.
+  path.contains("/Tests/") || path.hasPrefix("Tests/") || path.hasSuffix("Tests.swift")
 }
 
 func isCLIEntryPointPath(_ path: String) -> Bool {

@@ -44,6 +44,61 @@ swift_mk_dependency_hash() {
     } | awk '{ print $1 }' | LC_ALL=C sort | shasum | awk '{ print $1 }'
 }
 
+# Content key for the built tool binary: fold the source that produces it and the
+# active toolchain identity into one stable string. Reuse keys on content, not file
+# mtimes, so a source or toolchain change rebuilds while a binary restored with any
+# mtime neither forces a spurious rebuild nor serves a stale binary.
+swift_mk_content_key() {
+    local package_path
+    local config
+    local resolved_rel
+    local source_hash
+    local toolchain_id
+
+    package_path="$1"
+    # The product's build configuration is part of its identity: a release binary must
+    # not be reused when the consumer switches to debug, so fold it into the key.
+    config="${SWIFT_MK_BUILD_CONFIG:-release}"
+
+    # Prefer the committed Package.resolved, else the .swiftpm one, recorded as a
+    # package-relative path so both the digest and the path stay stable across machines.
+    resolved_rel=""
+    if [[ -f "${package_path}/Package.resolved" ]]; then
+        resolved_rel="Package.resolved"
+    elif [[ -f "${package_path}/.swiftpm/configuration/Package.resolved" ]]; then
+        resolved_rel=".swiftpm/configuration/Package.resolved"
+    fi
+
+    # Hash each input as "<content-digest>  <package-relative-path>", so a
+    # content-preserving rename changes the key (the path moved) while the digest stays
+    # deterministic across machines because the paths are package-relative, never absolute
+    # temp-dir paths. Run relative to the package so shasum emits relative paths. Inputs:
+    # Package.swift, the resolved lockfile, this build script (the CI toolchain-cache key
+    # folds it too), and every file under Sources (Swift sources plus bundled
+    # Resources/*.yml,*.json,*.toml that compile into the binary). find under pipefail
+    # must not abort when Sources is absent; the null delimiter keeps a path with
+    # whitespace from splitting an entry; sort the full lines so the key is order-stable.
+    source_hash=$(
+        cd "${package_path}" 2>/dev/null || exit 0
+        {
+            if [[ -f Package.swift ]]; then printf '%s\0' "Package.swift"; fi
+            if [[ -n "${resolved_rel}" ]]; then printf '%s\0' "${resolved_rel}"; fi
+            if [[ -f scripts/swift-mk-build.sh ]]; then printf '%s\0' "scripts/swift-mk-build.sh"; fi
+            find Sources -type f -print0 2>/dev/null || true
+        } | xargs -0 shasum 2>/dev/null | LC_ALL=C sort | shasum | awk '{ print $1 }'
+    )
+
+    # Fold the active toolchain identity so a compiler or Xcode-bundle change rebuilds
+    # even when no source changed.
+    toolchain_id=$(
+        {
+            xcode-select -p 2>/dev/null || true
+            swift --version 2>/dev/null || true
+        } | shasum | awk '{ print $1 }'
+    )
+    printf '%s-%s-%s\n' "${source_hash}" "${config}" "${toolchain_id}"
+}
+
 swift_mk_pool_cache_args() {
     local package_path
     local pool_cache_root
@@ -81,6 +136,7 @@ swift_mk_build_from_repo() {
     local bin_dir_status
     local bin_path
     local scratch_path
+    local content_key
     local -a pool_cache_args
 
     output_path=$(swift_mk_output_path)
@@ -90,6 +146,12 @@ swift_mk_build_from_repo() {
         printf "swift-mk: package %s not present\n" "${package_path}"
         return 1
     fi
+    # Capture the content key BEFORE compiling. Recomputing it after the build would
+    # open a TOCTOU gap: a source edit during compilation would label the just-built
+    # binary with the post-edit key, so the next resolve would reuse a binary that does
+    # not match the edited source. Keying on the pre-build inputs labels the binary with
+    # exactly what produced it, so a mid-build edit leaves a key mismatch and rebuilds.
+    content_key=$(swift_mk_content_key "${package_path}")
     mkdir -p "$(dirname "${output_path}")"
     # Build into a per-consumer scratch directory under the consumer's .make, not
     # the package's own .build. In dev-dir mode every consumer (and swift-makefile's
@@ -129,22 +191,44 @@ swift_mk_build_from_repo() {
     if command -v codesign >/dev/null 2>&1; then
         codesign --force --sign - "${output_path}" >/dev/null 2>&1 || true
     fi
+    # Record the content key captured before the build, so a later resolve reuses the
+    # binary only when the source and toolchain that produced it are unchanged,
+    # independent of file mtimes.
+    printf '%s\n' "${content_key}" > "${output_path}.key"
 }
 
 swift_mk_resolve_bin() {
     local package_path
     local output_path
-    local newest_source
+    local key_path
+    local computed_key
+    local stored_key
 
     output_path=$(swift_mk_output_path)
+
+    # Trust a CI-provided binary that already launched under its probe. CI exports
+    # SWIFT_MK_BIN_VERIFIED=1 after building or restoring the toolchain binary and
+    # running its `--help` launch probe, so the make-driven resolve reuses it instead
+    # of building a second copy. SWIFT_MK_BIN being set is not itself the signal:
+    # swift.mk sets it on every invocation, so gating on it would never rebuild a
+    # stale local binary.
+    if [[ "${SWIFT_MK_BIN_VERIFIED:-}" == "1" && -x "${output_path}" ]]; then
+        return
+    fi
+
     package_path=$(swift_mk_package_path)
-    newest_source=""
-    if [[ -x "${output_path}" ]]; then
-        newest_source=$(find "${package_path}/Sources" "${package_path}/Package.swift" -name "*.swift" -newer "${output_path}" -print -quit 2>/dev/null || true)
+    key_path="${output_path}.key"
+    computed_key=$(swift_mk_content_key "${package_path}")
+    stored_key=""
+    if [[ -f "${key_path}" ]]; then
+        stored_key=$(cat "${key_path}")
     fi
-    if [[ ! -x "${output_path}" || -n "${newest_source}" ]]; then
-        swift_mk_build_from_repo
+    # Reuse the existing binary only when it is executable and its stored content key
+    # matches the freshly computed one; otherwise rebuild (which rewrites the key).
+    if [[ -x "${output_path}" && "${stored_key}" == "${computed_key}" ]]; then
+        return
     fi
+    swift_mk_build_from_repo
 }
 
 case "${1:-resolve}" in

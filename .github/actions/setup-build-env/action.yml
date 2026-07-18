@@ -202,6 +202,7 @@ runs:
       shell: bash
       env:
         SWIFT_MK_SRC: ${{ steps.swift-mk-src.outputs.dir }}
+        SWIFT_MK_SRC_HASH: ${{ steps.swift-mk-src.outputs.hash }}
         TOOLCHAIN_CACHE_HIT: ${{ steps.swift-mk-toolchain.outputs.cache-hit }}
         CACHE_PROFILE: ${{ inputs.cache-profile }}
         CACHE_VERSION: ${{ inputs.cache-version }}
@@ -221,33 +222,89 @@ runs:
                 bash "${SWIFT_MK_SRC}/scripts/swift-mk-build.sh" resolve
         }
 
-        if [ "${TOOLCHAIN_CACHE_HIT}" = "true" ] && [ -x "${bin}" ]; then
-            # Real cache hit (the key pins the engine source and Xcode bundle, so the
-            # cached binary matches). Clear the provenance xattr and re-sign so a restored
-            # arm64 binary is not killed on launch.
+        if [ "${SWIFT_MK_POOL:-}" != "1" ]; then
+            # HOSTED: the actions/cache toolchain restore is active, so a warm run
+            # restores ~/.swift-mk-ci-toolchain and TOOLCHAIN_CACHE_HIT is "true".
+            if [ "${TOOLCHAIN_CACHE_HIT}" = "true" ] && [ -x "${bin}" ]; then
+                # Real cache hit. Run the content-key resolve without wiping first, so the
+                # restored binary is reused only when its recorded content key matches the
+                # current source and toolchain, and rebuilt otherwise. The actions/cache key
+                # (SWIFT_MK_SRC_HASH) drops file paths and omits the build configuration, so
+                # the content-key gate is the authority for artifact identity here.
+                SWIFT_MK_BIN="${bin}" SWIFT_MK_BUILD_REPO="${SWIFT_MK_SRC}" \
+                    bash "${SWIFT_MK_SRC}/scripts/swift-mk-build.sh" resolve
+                # Clear the provenance xattr and re-sign so a restored arm64 binary is not
+                # killed on launch.
+                xattr -c "${bin}" 2>/dev/null || true
+                codesign --force --sign - "${bin}" >/dev/null 2>&1 || true
+                # Verify the restored binary actually launches under the active toolchain.
+                # A binary built against a different Xcode bundle links libIndexStore by
+                # @rpath into that bundle and aborts on launch (SIGABRT, exit 134). The key
+                # already folds the bundle path in to prevent that, so this is the safety
+                # net: if a cached binary ever cannot launch, discard it and rebuild rather
+                # than aborting the whole run. `swift-mk --help` is an ArgumentParser
+                # built-in that exits 0 whenever the process launches, so treat ANY non-zero
+                # (a dyld abort, an exec-format or arch mismatch, or any launch failure) as a
+                # failed probe and rebuild.
+                set +e
+                "${bin}" --help >/dev/null 2>&1
+                probe_rc=$?
+                set -e
+                if [ "${probe_rc}" -ne 0 ]; then
+                    echo "cached swift-mk failed to launch (exit ${probe_rc}); rebuilding against the active toolchain"
+                    build_engine
+                fi
+            else
+                build_engine
+            fi
+        else
+            # POOL: the actions/cache restore is disabled, so TOOLCHAIN_CACHE_HIT is never
+            # set. The persistent VM keeps a prior gate's binary at a path keyed by the
+            # engine source hash, so reuse it VM-locally instead of wiping and rebuilding
+            # every gate. A new source or toolchain gets a distinct keyed directory, so no
+            # blanket wipe of the whole ${HOME}/.swift-mk-ci-toolchain root is needed; each
+            # VM writes only its own keyed path, never the shared mount, keeping the reuse
+            # single-writer.
+            bin="${HOME}/.swift-mk-ci-toolchain/${SWIFT_MK_SRC_HASH}/swift-mk"
+            build_pool_bin() {
+                mkdir -p "$(dirname "${bin}")"
+                SWIFT_MK_BIN="${bin}" SWIFT_MK_BUILD_REPO="${SWIFT_MK_SRC}" \
+                    bash "${SWIFT_MK_SRC}/scripts/swift-mk-build.sh" resolve
+            }
+            # Content-key resolve first: swift-mk-build.sh reuses the keyed binary only
+            # when its recorded content key matches the current source and toolchain, and
+            # rebuilds otherwise. This validates artifact identity, which the launch probe
+            # cannot: the keyed-directory hash (SWIFT_MK_SRC_HASH) drops file paths and
+            # omits the build configuration, so the full content-key gate must run before
+            # the binary is trusted and exported as verified.
+            build_pool_bin
+            # Clear the provenance xattr and re-sign so the reused or rebuilt ad-hoc arm64
+            # binary is not killed on launch, then run the launch probe as the safety net.
             xattr -c "${bin}" 2>/dev/null || true
             codesign --force --sign - "${bin}" >/dev/null 2>&1 || true
-            # Verify the restored binary actually launches under the active toolchain.
-            # A binary built against a different Xcode bundle links libIndexStore by
-            # @rpath into that bundle and aborts on launch (SIGABRT, exit 134). The key
-            # already folds the bundle path in to prevent that, so this is the safety
-            # net: if a cached binary ever cannot launch, discard it and rebuild rather
-            # than aborting the whole run. `swift-mk --help` is an ArgumentParser
-            # built-in that exits 0 whenever the process launches, so treat ANY non-zero
-            # (a dyld abort, an exec-format or arch mismatch, or any launch failure) as a
-            # failed probe and rebuild.
             set +e
             "${bin}" --help >/dev/null 2>&1
             probe_rc=$?
             set -e
             if [ "${probe_rc}" -ne 0 ]; then
-                echo "cached swift-mk failed to launch (exit ${probe_rc}); rebuilding against the active toolchain"
-                build_engine
+                echo "pooled swift-mk failed to launch (exit ${probe_rc}); rebuilding into the keyed path"
+                rm -f "${bin}"
+                build_pool_bin
+                xattr -c "${bin}" 2>/dev/null || true
+                codesign --force --sign - "${bin}" >/dev/null 2>&1 || true
             fi
-        else
-            build_engine
         fi
         "${bin}" cache plan
+
+        # The toolchain binary at ${bin} is now built or restored, re-signed, and
+        # proven to launch (the `--help` probe on the cache-hit path, and `cache plan`
+        # here). Export it so the later make-driven build reuses this exact binary
+        # instead of building a second copy at .make/swift-mk, and mark it verified so
+        # swift_mk_resolve_bin trusts it without recomputing its content key.
+        {
+            printf 'SWIFT_MK_BIN=%s\n' "${bin}"
+            printf 'SWIFT_MK_BIN_VERIFIED=1\n'
+        } >> "${GITHUB_ENV}"
 
     - name: Restore dependency cache
       if: steps.cache-plan.outputs.dependency-cache-enabled == 'true' && env.SWIFT_MK_POOL != '1'
