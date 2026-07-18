@@ -226,9 +226,15 @@ runs:
             # HOSTED: the actions/cache toolchain restore is active, so a warm run
             # restores ~/.swift-mk-ci-toolchain and TOOLCHAIN_CACHE_HIT is "true".
             if [ "${TOOLCHAIN_CACHE_HIT}" = "true" ] && [ -x "${bin}" ]; then
-                # Real cache hit (the key pins the engine source and Xcode bundle, so the
-                # cached binary matches). Clear the provenance xattr and re-sign so a restored
-                # arm64 binary is not killed on launch.
+                # Real cache hit. Run the content-key resolve without wiping first, so the
+                # restored binary is reused only when its recorded content key matches the
+                # current source and toolchain, and rebuilt otherwise. The actions/cache key
+                # (SWIFT_MK_SRC_HASH) drops file paths and omits the build configuration, so
+                # the content-key gate is the authority for artifact identity here.
+                SWIFT_MK_BIN="${bin}" SWIFT_MK_BUILD_REPO="${SWIFT_MK_SRC}" \
+                    bash "${SWIFT_MK_SRC}/scripts/swift-mk-build.sh" resolve
+                # Clear the provenance xattr and re-sign so a restored arm64 binary is not
+                # killed on launch.
                 xattr -c "${bin}" 2>/dev/null || true
                 codesign --force --sign - "${bin}" >/dev/null 2>&1 || true
                 # Verify the restored binary actually launches under the active toolchain.
@@ -265,25 +271,27 @@ runs:
                 SWIFT_MK_BIN="${bin}" SWIFT_MK_BUILD_REPO="${SWIFT_MK_SRC}" \
                     bash "${SWIFT_MK_SRC}/scripts/swift-mk-build.sh" resolve
             }
-            if [ -x "${bin}" ]; then
-                # A prior gate on this VM built the keyed binary. Clear the provenance
-                # xattr and re-sign so the ad-hoc arm64 binary is not killed on launch,
-                # then run the same `swift-mk --help` launch probe as the hosted path.
+            # Content-key resolve first: swift-mk-build.sh reuses the keyed binary only
+            # when its recorded content key matches the current source and toolchain, and
+            # rebuilds otherwise. This validates artifact identity, which the launch probe
+            # cannot: the keyed-directory hash (SWIFT_MK_SRC_HASH) drops file paths and
+            # omits the build configuration, so the full content-key gate must run before
+            # the binary is trusted and exported as verified.
+            build_pool_bin
+            # Clear the provenance xattr and re-sign so the reused or rebuilt ad-hoc arm64
+            # binary is not killed on launch, then run the launch probe as the safety net.
+            xattr -c "${bin}" 2>/dev/null || true
+            codesign --force --sign - "${bin}" >/dev/null 2>&1 || true
+            set +e
+            "${bin}" --help >/dev/null 2>&1
+            probe_rc=$?
+            set -e
+            if [ "${probe_rc}" -ne 0 ]; then
+                echo "pooled swift-mk failed to launch (exit ${probe_rc}); rebuilding into the keyed path"
+                rm -f "${bin}"
+                build_pool_bin
                 xattr -c "${bin}" 2>/dev/null || true
                 codesign --force --sign - "${bin}" >/dev/null 2>&1 || true
-                set +e
-                "${bin}" --help >/dev/null 2>&1
-                probe_rc=$?
-                set -e
-                if [ "${probe_rc}" -ne 0 ]; then
-                    echo "pooled swift-mk failed to launch (exit ${probe_rc}); rebuilding into the keyed path"
-                    # Remove just this keyed binary so swift-mk-build.sh's content-key
-                    # check cannot reuse the failed binary, then rebuild into the same keyed path.
-                    rm -f "${bin}"
-                    build_pool_bin
-                fi
-            else
-                build_pool_bin
             fi
         fi
         "${bin}" cache plan
