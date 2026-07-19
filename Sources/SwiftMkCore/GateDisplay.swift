@@ -97,8 +97,13 @@ enum GateDisplay {
 
     liveRows.stop()
     tickerGroup.wait()
-    clearLiveBlock(lineCount: items.count + 1)
-    Output.emitStandardOutput(GateReport.render(title: title, steps: steps) + "\n")
+    // The live rows are already resolved to their final stepRow form on screen, so
+    // print only the findings-and-footer tail beneath them, reusing the same tail
+    // the streamed path emits. The earlier version cleared the live block and
+    // reprinted the whole report, which showed the gate box twice whenever the
+    // cursor math drifted (a wrapped row, interleaved subprocess output). Emitting
+    // the tail below the resolved rows renders one block unconditionally.
+    Output.emitStandardOutput(reportTail(steps: steps) + "\n")
     return failedNames(steps: steps)
   }
 
@@ -182,17 +187,6 @@ enum GateDisplay {
     var sequence = "\u{1B}[\(rows.count)A"
     for row in rows {
       sequence += "\r\u{1B}[2K\(row)\n"
-    }
-    writeRaw(sequence)
-  }
-
-  private static func clearLiveBlock(lineCount: Int) {
-    guard lineCount > 0 else {
-      return
-    }
-    var sequence = "\u{1B}[\(lineCount)A"
-    for _ in 0..<lineCount {
-      sequence += "\r\u{1B}[2K\n"
     }
     writeRaw(sequence)
   }
