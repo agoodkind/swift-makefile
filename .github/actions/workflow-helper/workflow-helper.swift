@@ -105,6 +105,48 @@ private func runCommand(
   }
 }
 
+// runBestEffort runs a command and never throws. It is for diagnostics and for
+// keychain preparation that must not fail the build on its own.
+private func runBestEffort(executable: String, arguments: [String]) {
+  do {
+    try runCommand(executable: executable, arguments: arguments)
+  } catch {
+    let rendered = ([executable] + arguments).joined(separator: " ")
+    print("workflow-helper: \(rendered) failed, continuing: \(error)")
+  }
+}
+
+// prepareSigningKeychainForBuild unlocks the signing keychain in this process
+// before make and xcodebuild run as its children. The signing keychain is set
+// up in an earlier workflow step. Each GitHub step is a separate process, and
+// the pool runner is a fork of a session-less daemon, so keychain unlock state
+// set in that earlier step may not carry into this one. make and xcodebuild
+// inherit this process's session, so an unlock here reaches the codesign call.
+// The keychain was created with an empty password, so the unlock uses "". The
+// diagnostics print the exact keychain state so a build-time signing failure is
+// debuggable from the log.
+private func prepareSigningKeychainForBuild(codeSignKeychain: String) {
+  guard !codeSignKeychain.isEmpty else {
+    return
+  }
+  runBestEffort(
+    executable: "security",
+    arguments: ["unlock-keychain", "-p", "", codeSignKeychain])
+  print("workflow-helper: signing keychain state at build time")
+  runBestEffort(
+    executable: "security",
+    arguments: ["show-keychain-info", codeSignKeychain])
+  runBestEffort(
+    executable: "security",
+    arguments: ["list-keychains", "-d", "user"])
+  runBestEffort(
+    executable: "security",
+    arguments: ["find-identity", "-v", "-p", "codesigning", codeSignKeychain])
+  runBestEffort(
+    executable: "security",
+    arguments: ["find-identity", "-v", "-p", "codesigning"])
+}
+
 private func makeArguments(
   target: String,
   makeArgs: String,
@@ -192,6 +234,8 @@ private func runMakeWithSigning(environment: Environment) throws {
     codeSignKeychain: codeSignKeychain,
     teamID: teamID)
 
+  prepareSigningKeychainForBuild(codeSignKeychain: codeSignKeychain)
+
   try runCommand(
     executable: "make",
     arguments: makeArguments(
@@ -213,6 +257,8 @@ private func runExtraTargets(environment: Environment) throws {
     certSHA1: certSHA1,
     codeSignKeychain: codeSignKeychain,
     teamID: teamID)
+
+  prepareSigningKeychainForBuild(codeSignKeychain: codeSignKeychain)
 
   for target in splitWords(rawExtraTargets) {
     print("extra-targets: running \(target)")
