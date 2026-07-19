@@ -480,7 +480,8 @@ struct RenderBatch: ParsableCommand {
     }
 
     let templateSuffix = ".template"
-    var renderedCount = 0
+    var writtenCount = 0
+    var unchangedCount = 0
     for case let templateURL as URL in enumerator {
       let templateName = templateURL.lastPathComponent
       guard templateName.hasSuffix(templateSuffix) else { continue }
@@ -489,12 +490,17 @@ struct RenderBatch: ParsableCommand {
         templateText: templateText, values: values)
       let outputName = String(templateName.dropLast(templateSuffix.count))
       let outputFileURL = outputURL.appendingPathComponent(outputName)
-      try rendered.write(to: outputFileURL, atomically: true, encoding: .utf8)
-      renderedCount += 1
+      // Write only on change so a re-render of unchanged inputs leaves the file's
+      // mtime intact and does not force a downstream recompile.
+      if try Text.writeIfChanged(rendered, toFile: outputFileURL.path) {
+        writtenCount += 1
+      } else {
+        unchangedCount += 1
+      }
     }
 
     Output.info(
-      "render-batch: rendered \(renderedCount) file(s) to \(outputURL.path)"
+      "render-batch: wrote \(writtenCount) file(s), \(unchangedCount) unchanged, to \(outputURL.path)"
     )
   }
 }
@@ -614,22 +620,7 @@ struct XcodeFileHeader: ParsableCommand {
     let encoder = PropertyListEncoder()
     encoder.outputFormat = .xml
     let rendered = try encoder.encode(macros)
-    let existing: Data?
-    do {
-      existing = try Data(contentsOf: outputFileURL)
-    } catch {
-      let cocoaError = error as NSError
-      guard
-        cocoaError.domain == NSCocoaErrorDomain,
-        cocoaError.code == NSFileReadNoSuchFileError
-      else {
-        throw error
-      }
-      existing = nil
-    }
-    if existing == rendered { return false }
-    try rendered.write(to: outputFileURL, options: .atomic)
-    return true
+    return try Text.writeIfChanged(rendered, to: outputFileURL)
   }
 
   private struct TemplateMacros: Codable {
