@@ -128,6 +128,12 @@ build: $(SWIFT_MK_FRESH_RECORD)
 # considered out of date; a normal prerequisite on it would force this record to
 # rebuild on every invocation and defeat the whole gate. The order-only form runs it
 # without letting its perpetual out-of-dateness propagate to the stamp.
+#
+# When SWIFT_GENERATE_CMD ran here, the build command carries SWIFT_MK_GENERATED=1 so
+# the in-process gate chain's ensureGenerated skips a second generate. The dedup flag
+# ensureGenerated sets is process-local and cannot reach across this recipe -> build
+# process boundary, so without this prefix generate runs twice per off-CI build. On CI
+# the inline gates are skipped, ensureGenerated never runs, and the flag is inert.
 $(SWIFT_MK_FRESH_RECORD): $$(SWIFT_MK_FRESH_INPUTS) | swift-mk-bin
 	@if [ -z "$(SWIFT_MK_FRESH_FORCE)" ] && "$(SWIFT_MK_BIN)" build-fresh check $(SWIFT_MK_FRESH_ARGS); then \
 		echo "swift-build.mk: build up to date, skipping (FORCE=1 to rebuild)"; \
@@ -137,7 +143,7 @@ $(SWIFT_MK_FRESH_RECORD): $$(SWIFT_MK_FRESH_INPUTS) | swift-mk-bin
 			$(if $(SWIFT_MK_SIGNING_REQUIRED),$(SWIFT_MK_SIGNING_PREFLIGHT) && ,) \
 			$(if $(strip $(SWIFT_GENERATE_CMD)),$(SWIFT_GENERATE_CMD) &&,) \
 			$(SWIFT_MK_VERIFY_SETTINGS_CMD) \
-			"$(SWIFT_MK_BIN)" build \
+			$(if $(strip $(SWIFT_GENERATE_CMD)),SWIFT_MK_GENERATED=1 ,)"$(SWIFT_MK_BIN)" build \
 			$(SWIFT_MK_POST_BUILD_SIGN_CMD) \
 			&& $(SWIFT_MK_VERIFY_ARTIFACTS_CMD) \
 			&& "$(SWIFT_MK_BIN)" build-fresh record $(SWIFT_MK_FRESH_ARGS) \
