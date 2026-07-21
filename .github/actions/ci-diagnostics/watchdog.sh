@@ -14,6 +14,37 @@ find_first_pid() {
     done < <(pgrep -x "$process_name" 2>/dev/null || true)
 }
 
+# Match on a full-command substring rather than the exact executable name, for a
+# process whose comm name differs from its launchd service (for example the
+# keychain-authorization agent, which runs as SecurityAgent or authorizationhost
+# rather than com.apple.security.agent).
+find_first_pid_fuzzy() {
+    local pattern="$1"
+    local found_pid
+
+    while IFS= read -r found_pid; do
+        printf '%s' "$found_pid"
+        return
+    done < <(pgrep -f "$pattern" 2>/dev/null || true)
+}
+
+# Sample one process by exact executable name into its own file. sudo -n so a
+# runner without passwordless sudo degrades instead of prompting; all best-effort.
+sample_daemon() {
+    local label="$1"
+    local process_name="$2"
+    local tag="$3"
+    local out_dir="$4"
+    local daemon_pid
+
+    daemon_pid="$(find_first_pid "$process_name")"
+    if [[ -n "$daemon_pid" ]]; then
+        # shellcheck disable=SC2024
+        sudo -n sample "$daemon_pid" 5 -mayDie \
+            > "$out_dir/sample-$label-$tag.txt" 2>&1 || true
+    fi
+}
+
 find_observed_pid() {
     local current_pid
 
@@ -33,31 +64,61 @@ capture_stall() {
     local out_dir="$2"
     local tag
     local securityd_pid
-    local trustd_pid
+    local agent_pid
 
     tag="${pid}-$(date +%Y%m%dT%H%M%S)"
     securityd_pid="$(find_first_pid securityd)"
-    trustd_pid="$(find_first_pid trustd)"
 
     sudo -n /usr/bin/spindump -o "$out_dir/spindump-$tag.txt" 5 10 || true
     sample "$pid" 5 -mayDie > "$out_dir/sample-swiftpackage-$tag.txt" 2>&1 || true
+
+    # Sample every daemon in the keychain-authorization chain by name, so a stall
+    # can be attributed to whichever one is blocked. securityd (the legacy
+    # single-threaded SecurityServer) blocks on a synchronous cross-service reply;
+    # sampling its candidate peers names the one it waits on.
     # sudo -n applies only to inspected processes; the runner owns the output files.
+    sample_daemon securityd securityd "$tag" "$out_dir"
+    sample_daemon trustd trustd "$tag" "$out_dir"
+    sample_daemon securitydsystem securityd_system "$tag" "$out_dir"
+    sample_daemon applekeystored applekeystored "$tag" "$out_dir"
+    sample_daemon endpointsecurityd endpointsecurityd "$tag" "$out_dir"
+    sample_daemon secd secd "$tag" "$out_dir"
+    sample_daemon trustdagent trustd "$tag" "$out_dir"
+
+    # The keychain-authorization agent hosts the interactive prompt (service
+    # com.apple.security.agent) and runs as SecurityAgent or authorizationhost.
+    # Match on the command since its comm name is not the service name.
+    agent_pid="$(find_first_pid_fuzzy SecurityAgent)"
+    if [[ -z "$agent_pid" ]]; then
+        agent_pid="$(find_first_pid_fuzzy authorizationhost)"
+    fi
+    if [[ -n "$agent_pid" ]]; then
+        # shellcheck disable=SC2024
+        sudo -n sample "$agent_pid" 5 -mayDie \
+            > "$out_dir/sample-securityagent-$tag.txt" 2>&1 || true
+    fi
+
+    # Name the XPC peer the blocked securityd is waiting on. procinfo lists its
+    # live endpoints; dumpstate maps every service to its owning pid. lsof lists
+    # its open handles.
     if [[ -n "$securityd_pid" ]]; then
         # shellcheck disable=SC2024
-        sudo -n sample "$securityd_pid" 5 -mayDie \
-            > "$out_dir/sample-securityd-$tag.txt" 2>&1 || true
-    fi
-    if [[ -n "$trustd_pid" ]]; then
-        # shellcheck disable=SC2024
-        sudo -n sample "$trustd_pid" 5 -mayDie \
-            > "$out_dir/sample-trustd-$tag.txt" 2>&1 || true
-    fi
-    lsof -p "$pid" > "$out_dir/lsof-swiftpackage-$tag.txt" 2>&1 || true
-    if [[ -n "$securityd_pid" ]]; then
+        sudo -n launchctl procinfo "$securityd_pid" \
+            > "$out_dir/procinfo-securityd-$tag.txt" 2>&1 || true
         # shellcheck disable=SC2024
         sudo -n lsof -p "$securityd_pid" \
             > "$out_dir/lsof-securityd-$tag.txt" 2>&1 || true
     fi
+    # shellcheck disable=SC2024
+    sudo -n launchctl dumpstate > "$out_dir/launchctl-dumpstate-$tag.txt" 2>&1 || true
+
+    lsof -p "$pid" > "$out_dir/lsof-swiftpackage-$tag.txt" 2>&1 || true
+    # Wait-channel and parentage for the whole security stack in one table. ps with
+    # a wchan column plus a multi-term match is not expressible with pgrep.
+    # shellcheck disable=SC2009
+    ps -axo pid,ppid,stat,wchan,command 2>/dev/null \
+        | grep -Ei "securityd|secd|SecurityAgent|authorizationhost|SandboxCheck|trustd|mds|git-credential|swift-package|xcodebuild" \
+        > "$out_dir/ps-security-$tag.txt" 2>&1 || true
     nettop -P -x -l 1 > "$out_dir/nettop-$tag.txt" 2>&1 || true
     netstat -an > "$out_dir/netstat-$tag.txt" 2>&1 || true
     # Redact account values from the dump. dump-keychain without -d already omits
