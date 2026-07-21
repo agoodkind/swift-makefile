@@ -1,10 +1,10 @@
-# Reusable runner planner. Decides which runner label each heavy gate should
-# use: the self-hosted M1 pool when its broker reports capacity, else the hosted
-# fallback. Both _ci.yml and _release.yml call this so the pool-or-hosted routing
-# lives in one place. Runs on ubuntu-latest (fast, cheap). Fork PRs short-circuit
-# to hosted before any network call. When local-pool-capacity-url is empty or the
-# capacity endpoint says the pool is busy, every gate falls back to inputs.runner
-# automatically; there is no separate no-op branch for the empty-URL case.
+# Reusable runner planner. Each invocation decides which runner label one gate
+# should use: the self-hosted M1 pool when its broker reports capacity, else the
+# hosted fallback. CI invokes this once per macOS gate so capacity decisions are
+# independent; Release invokes it once for its shared route. Runs on ubuntu-latest
+# (fast, cheap). Fork PRs short-circuit to hosted before any network call. When
+# local-pool-capacity-url is empty or the capacity endpoint says the pool is busy,
+# the invocation falls back to inputs.runner automatically.
 name: Plan runners
 
 on:
@@ -44,6 +44,10 @@ on:
       LOCAL_POOL_CAPACITY_TOKEN:
         required: false
     outputs:
+      label:
+        description: Runner label selected by this planner invocation.
+        value: ${{ jobs.plan.outputs.label }}
+      # Compatibility aliases used by _release.yml and older callers.
       build_label:
         description: Runner label for the Build gate (pool or hosted).
         value: ${{ jobs.plan.outputs.build_label }}
@@ -57,7 +61,7 @@ on:
         description: Runner label for the Extra Targets gate.
         value: ${{ jobs.plan.outputs.extra_targets_label }}
       on_pool:
-        # True when the gates were routed to the self-hosted pool, so a hosted
+        # True when this invocation routed to the self-hosted pool, so a hosted
         # fallback is meaningful.
         description: Whether the chosen label is the self-hosted pool.
         value: ${{ jobs.plan.outputs.on_pool }}
@@ -69,7 +73,7 @@ env:
 
 jobs:
   plan:
-    name: Plan runners
+    name: Plan runner
     runs-on: ubuntu-latest
     # Covers the default pool-wait-timeout (1800s) plus curl/jq overhead. The
     # wait runs on this free ubuntu runner, so a long wait costs no macOS time.
@@ -77,6 +81,7 @@ jobs:
     permissions:
       contents: read
     outputs:
+      label: ${{ steps.pick.outputs.label }}
       build_label: ${{ steps.pick.outputs.build_label }}
       test_label: ${{ steps.pick.outputs.test_label }}
       quality_label: ${{ steps.pick.outputs.quality_label }}
@@ -100,9 +105,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Emit the chosen label to every gate output. on_pool is true only when a
-          # pool label was chosen, so the hosted fallback never re-runs a gate that
-          # already ran on hosted.
+          # Emit the chosen label as the generic output and as the compatibility
+          # aliases. on_pool is true only when a pool label was chosen, so a hosted
+          # fallback never re-runs a gate that already ran on hosted.
           emit() {
             local label="$1" on_pool
             if [[ "${label}" != "${HOSTED_LABEL}" ]]; then
@@ -111,6 +116,7 @@ jobs:
               on_pool=false
             fi
             {
+              printf 'label=%s\n' "${label}"
               printf 'build_label=%s\n' "${label}"
               printf 'test_label=%s\n' "${label}"
               printf 'quality_label=%s\n' "${label}"
