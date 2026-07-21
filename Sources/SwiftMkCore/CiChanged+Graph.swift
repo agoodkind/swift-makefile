@@ -33,7 +33,7 @@ extension CiChanged {
   static func readGraph(root: String) -> (graph: Graph?, failed: Bool) {
     switch DeadcodeScan.projectShape() {
     case .swiftPMOnly:
-      Output.log("ci-changed: reading the build graph via swift package describe")
+      Output.info("ci-changed: reading the build graph via swift package describe")
       guard let json = SwiftPM.describePackageJSON(timeoutSeconds: describeTimeoutSeconds) else {
         Output.error("ci-changed: swift package describe failed or timed out")
         return (nil, true)

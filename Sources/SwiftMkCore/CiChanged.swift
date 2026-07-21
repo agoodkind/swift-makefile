@@ -220,6 +220,11 @@ extension CiChanged {
   private static func decide() -> Decision {
     let eventName = Env.get("SWIFT_MK_EVENT_NAME")
     let head = Env.get("SWIFT_MK_DIFF_HEAD", "HEAD")
+    // The detector logs each phase unconditionally, not behind SWIFT_MK_LOG_LEVEL. In
+    // CI these lines are the only record of where the detector spent its time, so a
+    // stall (a slow git command or dependency resolve) shows exactly which phase is in
+    // flight rather than a silent step. There is no interactive output to keep quiet.
+    Output.info("ci-changed: event=\(eventName.isEmpty ? "(unset)" : eventName) head=\(head)")
     guard isSupportedEvent(eventName) else {
       let event = eventName.isEmpty ? "(unset)" : eventName
       return fullRunDecision(reason: "unsupported event: \(event)")
@@ -232,12 +237,14 @@ extension CiChanged {
 
     let base: String
     let isPullRequest = eventName == pullRequestEventName
+    Output.info("ci-changed: resolving the diff base against \(defaultBranch)")
     switch resolveDiffBase(defaultBranch: defaultBranch, head: head, isPullRequest: isPullRequest) {
     case .base(let value):
       base = value
     case .decision(let decision):
       return decision
     }
+    Output.info("ci-changed: diff base=\(base)")
 
     guard let repoRoot = gitOutput(["rev-parse", "--show-toplevel"]) else {
       return fullRunDecision(reason: "could not resolve git toplevel")
@@ -249,12 +256,14 @@ extension CiChanged {
     guard FileManager.default.changeCurrentDirectoryPath(repoRoot) else {
       return fullRunDecision(reason: "could not change to repo root")
     }
+    Output.info("ci-changed: diffing \(base)..\(head)")
     guard let changedFiles = changedFiles(base: base, head: head) else {
       return fullRunDecision(reason: "git diff failed")
     }
     if changedFiles.isEmpty {
       return Decision(families: [], reason: "no changed files")
     }
+    Output.info("ci-changed: \(changedFiles.count) changed path(s)")
 
     let changedPaths = changedFiles.map { standardizePath($0.path, root: repoRoot) }
     let deletedPaths = Set(
@@ -265,6 +274,7 @@ extension CiChanged {
     // The lint gate lints exactly this set (every tracked and untracked-not-ignored
     // `.swift`), anchored to the same repo root as the changed paths, so a linted source
     // is never pruned by the build graph.
+    Output.info("ci-changed: resolving the lint source set")
     let lintContext = PathContext(pwd: repoRoot + "/", cwd: repoRoot + "/")
     let lintSources = Set(
       LintSourceSet.resolve(context: lintContext).map { standardizePath($0, root: repoRoot) })
@@ -273,6 +283,7 @@ extension CiChanged {
     if resolved.failed {
       return fullRunDecision(reason: "could not read the build graph")
     }
+    Output.info("ci-changed: classifying changed paths against the build graph")
     let result = classify(
       changedPaths: changedPaths,
       graph: resolved.graph,
@@ -290,7 +301,9 @@ extension CiChanged {
 
   /// Run a git subcommand, logging the invocation on the diagnostic boundary. Every
   /// git call in this type routes through here, so the process boundary has one
-  /// explicit, auditable place to report.
+  /// explicit, auditable place to report. `run()` forces debug output for the detector,
+  /// so in CI this line prints for every git call and shows which command is running
+  /// when the detector stalls.
   private static func runGit(_ arguments: [String]) -> Shell.Result {
     Output.debug("ci-changed: git \(arguments.joined(separator: " "))")
     return Shell.run("git", arguments)
