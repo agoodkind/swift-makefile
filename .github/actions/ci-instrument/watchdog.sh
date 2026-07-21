@@ -60,8 +60,13 @@ capture_stall() {
     fi
     nettop -P -x -l 1 > "$out_dir/nettop-$tag.txt" 2>&1 || true
     netstat -an > "$out_dir/netstat-$tag.txt" 2>&1 || true
-    security dump-keychain "$HOME/Library/Keychains/login.keychain-db" \
-        > "$out_dir/keychain-$tag.txt" 2>&1 || true
+    # Redact account values from the dump. dump-keychain without -d already omits
+    # decrypted secrets; this also drops the per-item account so the uploaded
+    # artifact keeps only item class, label, and service, which is what stall
+    # diagnosis needs.
+    security dump-keychain "$HOME/Library/Keychains/login.keychain-db" 2>&1 \
+        | sed -E 's/("acct"<blob>=).*/\1<redacted>/' \
+        > "$out_dir/keychain-$tag.txt" || true
     security find-identity -v > "$out_dir/identities-$tag.txt" 2>&1 || true
     {
         curl --max-time 20 -o /dev/null \
@@ -76,6 +81,14 @@ capture_stall() {
 main() {
     local out_dir="$1"
     local stall_threshold="${2:-180}"
+    # Backstop lifetime. A self-hosted pool runner is a persistent machine reused
+    # across jobs, so a path that skips stop.sh's teardown (forced cancellation
+    # past the grace window, a crashed job, a runner failure) must not leave this
+    # loop or the sibling log stream running forever. Default is well above the
+    # 60-minute job timeout.
+    local max_runtime="${3:-7200}"
+    local start_time
+    start_time="$(date +%s)"
     local now
     local current_pid
     local previous_pid=""
@@ -87,6 +100,13 @@ main() {
 
     while true; do
         now="$(date +%s)"
+        if [[ $((now - start_time)) -ge "$max_runtime" ]]; then
+            # Reap the sibling log stream too, since stop.sh may never run.
+            if [[ -f "$out_dir/logstream.pid" ]]; then
+                kill "$(< "$out_dir/logstream.pid")" 2>/dev/null || true
+            fi
+            exit 0
+        fi
         current_pid="$(find_observed_pid)"
 
         if [[ -z "$current_pid" ]]; then
