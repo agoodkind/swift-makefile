@@ -33,7 +33,8 @@ extension CiChanged {
   static func readGraph(root: String) -> (graph: Graph?, failed: Bool) {
     switch DeadcodeScan.projectShape() {
     case .swiftPMOnly:
-      Output.info("ci-changed: reading the build graph via swift package describe")
+      Output.info("ci-changed: reading the SwiftPM build graph via swift package describe")
+      let start = Date()
       guard let json = SwiftPM.describePackageJSON(timeoutSeconds: describeTimeoutSeconds) else {
         Output.error("ci-changed: swift package describe failed or timed out")
         return (nil, true)
@@ -41,16 +42,28 @@ extension CiChanged {
       guard let graph = parseDescribe(json, root: root) else {
         return (nil, true)
       }
+      Output.info(
+        "ci-changed: build graph has \(graph.sources.count) source(s) and "
+          + "\(graph.resourcePrefixes.count) resource prefix(es), describe took "
+          + String(format: "%.1fs", Date().timeIntervalSince(start)))
       return (graph, false)
     case .project(let project):
+      Output.info(
+        "ci-changed: reading the Xcode build graph from "
+          + ((project.path as NSString).lastPathComponent))
       do {
         let graph = try xcodeGraph(projectPath: project.path, isWorkspace: project.isWorkspace)
+        Output.info(
+          "ci-changed: build graph has \(graph.sources.count) source(s) and "
+            + "\(graph.resourcePrefixes.count) resource prefix(es)")
         return (graph, false)
       } catch {
         Output.error("ci-changed: could not read xcode project: \(error)")
         return (nil, true)
       }
     case .manifestWithoutProject:
+      Output.info(
+        "ci-changed: generated project without a committed graph; using path rules")
       return (nil, false)
     }
   }
