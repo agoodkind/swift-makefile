@@ -39,23 +39,23 @@ capture_stall() {
     securityd_pid="$(find_first_pid securityd)"
     trustd_pid="$(find_first_pid trustd)"
 
-    sudo /usr/bin/spindump -o "$out_dir/spindump-$tag.txt" 5 10 || true
+    sudo -n /usr/bin/spindump -o "$out_dir/spindump-$tag.txt" 5 10 || true
     sample "$pid" 5 -mayDie > "$out_dir/sample-swiftpackage-$tag.txt" 2>&1 || true
-    # sudo applies only to inspected processes; the runner owns the output files.
+    # sudo -n applies only to inspected processes; the runner owns the output files.
     if [[ -n "$securityd_pid" ]]; then
         # shellcheck disable=SC2024
-        sudo sample "$securityd_pid" 5 -mayDie \
+        sudo -n sample "$securityd_pid" 5 -mayDie \
             > "$out_dir/sample-securityd-$tag.txt" 2>&1 || true
     fi
     if [[ -n "$trustd_pid" ]]; then
         # shellcheck disable=SC2024
-        sudo sample "$trustd_pid" 5 -mayDie \
+        sudo -n sample "$trustd_pid" 5 -mayDie \
             > "$out_dir/sample-trustd-$tag.txt" 2>&1 || true
     fi
     lsof -p "$pid" > "$out_dir/lsof-swiftpackage-$tag.txt" 2>&1 || true
     if [[ -n "$securityd_pid" ]]; then
         # shellcheck disable=SC2024
-        sudo lsof -p "$securityd_pid" \
+        sudo -n lsof -p "$securityd_pid" \
             > "$out_dir/lsof-securityd-$tag.txt" 2>&1 || true
     fi
     nettop -P -x -l 1 > "$out_dir/nettop-$tag.txt" 2>&1 || true

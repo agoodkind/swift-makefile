@@ -27,7 +27,7 @@ main() {
         com.apple.security \
         com.apple.trustd \
         com.apple.network; do
-        sudo log config --mode 'level:debug' --subsystem "$subsystem" || true
+        sudo -n log config --mode 'level:debug' --subsystem "$subsystem" || true
     done
 
     security dump-keychain "$HOME/Library/Keychains/login.keychain-db" \
