@@ -89,6 +89,9 @@ on:
 env:
   GH_TOKEN: ${{ github.token }}
   HOMEBREW_NO_REQUIRE_TAP_TRUST: "1"
+  # The ci-diagnostics PR label turns on swift-mk debug logging for every step of
+  # the gate job. Empty keeps unlabeled runs at swift-mk's default quiet level.
+  SWIFT_MK_LOG_LEVEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') && 'debug' || '' }}
 
 jobs:
   gate:
@@ -102,6 +105,7 @@ jobs:
       # itself when self-hosted here, or the .swift-makefile helper checkout for
       # consumers. A reusable workflow can set this at job level, so no env step.
       SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+      INSTRUMENT: ${{ contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') }}
     steps:
       # Hard-fail on an unknown gate so a typo cannot run setup and then skip
       # every make step, which would otherwise be a false-green CI run.
@@ -217,6 +221,11 @@ jobs:
         with:
           profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
 
+      - name: Start CI instrumentation
+        if: ${{ inputs.run != 'false' && env.INSTRUMENT == 'true' }}
+        shell: bash
+        run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/ci-diagnostics/start.sh" "${RUNNER_TEMP}/ci-diagnostics" "${SWIFT_MK_HELPER_ROOT}"
+
       - name: Run setup target
         if: ${{ inputs.run != 'false' && (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.setup-target != '' }}
         shell: bash
@@ -298,3 +307,17 @@ jobs:
           MAKE_ARGS: ${{ inputs.make-args }}
           TEAM_ID: ${{ inputs.apple-team-id }}
         run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-team
+
+      - name: Stop CI instrumentation
+        if: ${{ always() && env.INSTRUMENT == 'true' }}
+        shell: bash
+        run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/ci-diagnostics/stop.sh" "${RUNNER_TEMP}/ci-diagnostics"
+
+      - name: Upload CI instrumentation
+        if: ${{ always() && env.INSTRUMENT == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-diagnostics-${{ inputs.gate }}-${{ inputs.runner }}
+          path: ${{ runner.temp }}/ci-diagnostics
+          overwrite: true
+          if-no-files-found: ignore

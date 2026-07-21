@@ -125,6 +125,11 @@ env:
   # preinstalled, which makes unrelated `brew install` and `brew update` calls
   # fail closed unless the job disables the new trust gate explicitly.
   HOMEBREW_NO_REQUIRE_TAP_TRUST: "1"
+  # The ci-diagnostics PR label turns on swift-mk debug logging across every job
+  # in this workflow (changes, the aggregators, and anything else that runs
+  # swift-mk). Empty keeps unlabeled runs at swift-mk's default quiet level. The
+  # macOS system capture is added only on the gate job in _ci-gate.yml.
+  SWIFT_MK_LOG_LEVEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') && 'debug' || '' }}
 
 jobs:
   # ── Quality ────────────────────────────────────────────────────────────────

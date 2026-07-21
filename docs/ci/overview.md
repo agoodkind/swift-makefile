@@ -48,6 +48,16 @@ The broker handles normal overflow by reporting truthful capacity before a job r
 
 `ci-infra-retry.yml` reruns only an infra-cancelled first attempt. It skips a run with a real job failure, skips a run superseded by a newer push, and uses the full rerun endpoint because a run with only cancelled jobs may have no failed jobs to rerun. On the rerun, `plan-runners` sees unavailable capacity and routes the gates to hosted.
 
+## Opt-in CI diagnostics
+
+A pull request labeled `ci-diagnostics` captures macOS system diagnostics around the heavy gate and uploads them as an artifact, so a build or resolve that hangs on a runner leaves evidence to read. Every consumer inherits this through [_ci-gate.yml](../../.github/workflows/_ci-gate.yml); a consumer labels its own pull request and needs no configuration.
+
+The feature is pure observability. It only adds capture and upload on top of the existing gate steps. It never kills a process, changes an exit code, or alters timing, so a labeled run behaves the same as an unlabeled run and a hang still hangs to the job's own `timeout-minutes`. Without the label, no instrumentation step runs and nothing is added.
+
+A labeled run sets `SWIFT_MK_LOG_LEVEL=debug` wherever swift-mk runs, including the ubuntu `changes` job, so swift-mk emits its own debug diagnostics. On the macOS gate job it additionally enables Security and network debug logging, records a baseline of the login keychain, and starts a background watcher. The watcher polls for a build child (`swift-package`, `xcodebuild`, or `swift-frontend`) that outlives a threshold, and on one it captures a whole-system `spindump`, a `sample` of the stalled process plus `securityd` and `trustd`, open handles, network state, a keychain snapshot, and reachability probes. The keychain dump redacts account values, and the collectors self-terminate after a backstop lifetime so nothing lingers on a persistent runner. The scripts live under [.github/actions/ci-diagnostics](../../.github/actions/ci-diagnostics).
+
+Delivery uses the cancellation grace window. When a job hits its `timeout-minutes`, GitHub still runs `if: always()` steps for a few minutes before force-terminating, and the watcher captures well before that, so the upload ships the evidence even when the run is cancelled by timeout. The upload is the artifact `ci-diagnostics-<gate>-<runner>`. It holds system diagnostic metadata, including process samples, network state, and login-keychain item metadata with account values redacted, so treat it as internal to people with repository access and rely on the repository's default artifact retention to age it out. Privileged captures need passwordless `sudo`; a runner without it records less rather than failing the job. To read a stall, start with `spindump-*.txt` for the cross-process blocking chain.
+
 ## Build on the default branch to warm pull requests
 
 A consumer builds on its default branch so pull requests inherit a warm compile cache. The consumer workflow keeps its pull-request trigger and adds a push trigger scoped to the default branch:
