@@ -61,6 +61,26 @@ runs:
         p12-password: ${{ inputs.p12-password }}
         keychain: ${{ steps.keychain.outputs.path_noext }}
 
+    - name: Scope the user keychain search list to the signing keychain
+      shell: bash
+      env:
+        KEYCHAIN_PATH: ${{ steps.keychain.outputs.path }}
+      run: |
+        set -euo pipefail
+
+        # xcodebuild's provisioning reads the -d user keychain search list from
+        # $HOME/Library/Preferences/com.apple.security.plist. On the self-hosted
+        # pool each job runs with its own HOME (slot-home-N), so this list is
+        # already per-slot isolated and co-tenant slots cannot clobber it.
+        # apple-actions leaves the list as [signing, login]; under a per-slot HOME
+        # that bare "login" resolves to a fresh empty per-slot login keychain that
+        # does not retain a usable signing entry, so provisioning reports
+        # "No certificate for team". Set the list explicitly to the signing
+        # keychain plus the System keychain: the signing keychain supplies the
+        # identity and the System keychain supplies the trust anchors that
+        # validate the Developer ID chain.
+        security list-keychains -d user -s "$KEYCHAIN_PATH" /Library/Keychains/System.keychain
+
     - name: Resolve identity SHA-1
       id: resolve
       shell: bash
