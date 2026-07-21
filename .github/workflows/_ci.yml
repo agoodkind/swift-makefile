@@ -212,15 +212,17 @@ jobs:
             swiftpm-deps-${{ runner.os }}-${{ runner.arch }}-
 
       # Keep the local-vs-consumer split: the engine repo uses its local copy of
-      # the action, and consumers inherit it via @main. continue-on-error keeps a
-      # Linux swift-mk build failure from failing the job: the detect step below
+      # the action, and consumers inherit it via @main. Exactly one of the two steps
+      # runs and the other skips, decided by github.repository; the names differ so the
+      # skipped one is not a confusing duplicate in the step list. continue-on-error
+      # keeps a Linux swift-mk build failure from failing the job: the detect step below
       # falls back to a full run when the binary is missing.
-      - name: Setup Linux swift-mk
+      - name: Setup Linux swift-mk (engine checkout)
         if: ${{ github.repository == 'agoodkind/swift-makefile' }}
         continue-on-error: true
         uses: ./.github/actions/setup-linux-swift-mk
 
-      - name: Setup Linux swift-mk
+      - name: Setup Linux swift-mk (pinned @main)
         if: ${{ github.repository != 'agoodkind/swift-makefile' }}
         continue-on-error: true
         uses: agoodkind/swift-makefile/.github/actions/setup-linux-swift-mk@main
