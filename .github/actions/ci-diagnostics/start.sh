@@ -57,12 +57,16 @@ main() {
 
     # Independent reaper so both collectors are bounded even if the watchdog dies
     # abnormally and stop.sh never runs. macOS runners have no `timeout`, so use a
-    # detached sleep-then-kill.
+    # detached sleep-then-kill. Record its pid so stop.sh can stop the reaper too.
+    local reaper_pid
     nohup bash -c "sleep $max_runtime; kill $logstream_pid $watchdog_pid 2>/dev/null" \
         > /dev/null 2>&1 &
+    reaper_pid=$!
+    CHILD_PIDS+=("$reaper_pid")
+    echo "$reaper_pid" > "$out_dir/reaper.pid"
 
-    printf 'CI instrumentation started: logstream_pid=%s watchdog_pid=%s\n' \
-        "$logstream_pid" "$watchdog_pid"
+    printf 'CI instrumentation started: logstream_pid=%s watchdog_pid=%s reaper_pid=%s\n' \
+        "$logstream_pid" "$watchdog_pid" "$reaper_pid"
 }
 
 trap handle_interrupt INT TERM
