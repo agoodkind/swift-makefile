@@ -29,6 +29,7 @@ main() {
     for subsystem in \
         com.apple.securityd \
         com.apple.security \
+        com.apple.Authorization \
         com.apple.trustd \
         com.apple.network; do
         sudo -n log config --mode 'level:debug' --subsystem "$subsystem" || true
@@ -43,7 +44,7 @@ main() {
     security find-identity -v > "$out_dir/identities-baseline.txt" 2>&1 || true
 
     nohup /usr/bin/log stream --style syslog \
-        --predicate 'process == "swift-package" OR process == "securityd" OR process == "trustd" OR subsystem == "com.apple.securityd" OR subsystem == "com.apple.trustd" OR subsystem == "com.apple.network"' \
+        --predicate 'process == "swift-package" OR process == "securityd" OR process == "trustd" OR process == "SecurityAgent" OR process == "authorizationhost" OR subsystem == "com.apple.securityd" OR subsystem == "com.apple.Authorization" OR subsystem == "com.apple.trustd" OR subsystem == "com.apple.network"' \
         > "$out_dir/logstream.txt" 2>&1 &
     logstream_pid=$!
     CHILD_PIDS+=("$logstream_pid")
