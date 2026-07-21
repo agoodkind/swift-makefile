@@ -316,6 +316,16 @@ jobs:
     # toolchain install; actions/checkout and actions/cache run unchanged inside it.
     container: swift:6.3
     timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      # Pin SwiftPM's cache to one absolute literal path so the cache step and the swift
+      # process reference the identical location, instead of each resolving `~`/HOME on
+      # its own (the container sets HOME to /github/home, but the cache action's tilde
+      # expansion and swift's HOME are not guaranteed to agree). SwiftPM honors
+      # XDG_CACHE_HOME, placing its clone cache at $XDG_CACHE_HOME/org.swift.swiftpm. A
+      # literal path is required here because the `runner` context is not available in a
+      # job-level env; the container filesystem is shared across steps, so /tmp persists
+      # for the whole job.
+      XDG_CACHE_HOME: /tmp/swiftpm-cache
     permissions:
       contents: read
     outputs:
@@ -340,6 +350,24 @@ jobs:
         # workspace safe in the container's global config so the detector's git works;
         # $GITHUB_WORKSPACE is the repo path for the engine and every consumer alike.
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Cache SwiftPM dependency resolution
+        uses: actions/cache@v5
+        with:
+          # The detect step's `swift package describe` resolves the described repo's
+          # dependency graph, cloning every dependency over the network when this cache
+          # is cold. That resolve is the slow, occasionally stalling part of the changes
+          # job. Cache SwiftPM's clone cache so the resolve reuses cloned repositories
+          # instead of hitting the network. The path matches XDG_CACHE_HOME above, so the
+          # cache action and swift agree on one literal location. Key on the manifests so
+          # a dependency change rotates the key; restore-keys lets a manifest change still
+          # restore the previous cache and update it rather than cold-clone. Package.resolved
+          # is gitignored in swift-makefile's own repo, so hashFiles falls back to
+          # Package.swift alone there.
+          path: /tmp/swiftpm-cache/org.swift.swiftpm
+          key: swiftpm-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Package.swift', '**/Package.resolved') }}
+          restore-keys: |
+            swiftpm-deps-${{ runner.os }}-${{ runner.arch }}-
 
       # Keep the local-vs-consumer split: the engine repo uses its local copy of
       # the action, and consumers inherit it via @main. continue-on-error keeps a
