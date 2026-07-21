@@ -89,6 +89,9 @@ on:
 env:
   GH_TOKEN: ${{ github.token }}
   HOMEBREW_NO_REQUIRE_TAP_TRUST: "1"
+  # The ci-diagnostics PR label turns on swift-mk debug logging for every step of
+  # the gate job. Empty keeps unlabeled runs at swift-mk's default quiet level.
+  SWIFT_MK_LOG_LEVEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') && 'debug' || '' }}
 
 jobs:
   gate:
@@ -103,10 +106,6 @@ jobs:
       # consumers. A reusable workflow can set this at job level, so no env step.
       SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
       INSTRUMENT: ${{ contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') }}
-      # Turn on swift-mk's own debug diagnostics under the same label. An empty
-      # value falls back to swift-mk's default quiet level, so unlabeled runs are
-      # unaffected.
-      SWIFT_MK_LOG_LEVEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') && 'debug' || '' }}
     steps:
       # Hard-fail on an unknown gate so a typo cannot run setup and then skip
       # every make step, which would otherwise be a false-green CI run.

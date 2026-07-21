@@ -62,6 +62,11 @@ on:
         description: Whether the chosen label is the self-hosted pool.
         value: ${{ jobs.plan.outputs.on_pool }}
 
+env:
+  # The ci-diagnostics PR label turns on swift-mk debug logging for every job in
+  # this workflow. Empty keeps unlabeled runs at swift-mk's default quiet level.
+  SWIFT_MK_LOG_LEVEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') && 'debug' || '' }}
+
 jobs:
   plan:
     name: Plan runners
