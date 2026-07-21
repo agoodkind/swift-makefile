@@ -312,6 +312,11 @@ jobs:
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
+    env:
+      # The ci-diagnostics label turns on swift-mk debug logging here too, so the
+      # ubuntu change-detector emits its own debug output. The macOS system
+      # capture does not apply in this Linux container. Empty keeps the default.
+      SWIFT_MK_LOG_LEVEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') && 'debug' || '' }}
     outputs:
       run: ${{ steps.detect.outputs.run }}
       run_build: ${{ steps.detect.outputs.run_build }}
