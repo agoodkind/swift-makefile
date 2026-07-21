@@ -326,6 +326,12 @@ jobs:
       # job-level env; the container filesystem is shared across steps, so /tmp persists
       # for the whole job.
       XDG_CACHE_HOME: /tmp/swiftpm-cache
+      # Default the detector to info, overriding the workflow-level SWIFT_MK_LOG_LEVEL
+      # (empty unless labeled) for this job only, so the detector's essential phase logs
+      # (diff base, git diff, build-graph read, classification) always show. The
+      # ci-diagnostics label still raises this to debug, matching the reusable gate's own
+      # expression, so a labeled run additionally gets the per-git-call debug lines.
+      SWIFT_MK_LOG_LEVEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') && 'debug' || 'info' }}
     permissions:
       contents: read
     outputs:
