@@ -1,5 +1,6 @@
 # Reusable Swift CI. Consumers declare setup plus optional bespoke extra
-# targets; the required Build, Test, and Quality gates live here. Triggers live
+# targets; the required Build, Test, Deadcode, Lint, and Extra Targets gates live
+# here. Triggers live
 # in the caller (GitHub does not allow them here).
 name: CI
 
@@ -13,7 +14,7 @@ on:
         type: string
         default: latest-stable
       # Legacy JSON array alias for bespoke extra targets. Required Build, Test,
-      # and Quality jobs now run unconditionally here.
+      # and shared gate jobs now run unconditionally here.
       targets:
         type: string
         default: '["lint","build","test","audit"]'
@@ -77,13 +78,10 @@ on:
         # target, so a normal build still finishes early.
         default: 60
       # Self-hosted macOS pool support. When local-pool-capacity-url points at a
-      # broker that reports available capacity, the heavy jobs (Build, Test,
-      # Quality, Extra Targets) run on local-pool-label; otherwise they fall back
-      # to inputs.runner through the same plan-runners path, so there is no
-      # separate no-op branch. The URL defaults to the shared broker, so any
-      # consumer calling this workflow auto-routes to the pool with no config;
-      # the broker's /capacity endpoint is public, and overflow past the pool
-      # falls back to hosted. Set this to an empty string to force hosted.
+      # broker that reports available capacity, each macOS gate independently
+      # prefers local-pool-label; otherwise that gate falls back to inputs.runner.
+      # The URL defaults to the shared broker, so consumers need no configuration.
+      # Set this to an empty string to force every gate to hosted.
       local-pool-capacity-url:
         type: string
         default: "https://darwin-gh-broker.silver-flare.com/capacity"
@@ -132,168 +130,6 @@ env:
   SWIFT_MK_LOG_LEVEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') && 'debug' || '' }}
 
 jobs:
-  # ── Quality ────────────────────────────────────────────────────────────────
-  # quality-pool: first attempt on the planned runner (pool or hosted), one leg
-  # per lint, run after Build so the compiling lints (Deadcode, Swiftcheck Extra)
-  # restore Build's fresh compile/index pile and replay instead of cold-building.
-  # quality-hosted: hosted-only fallback that reruns when a pool leg fails or is
-  # cancelled (a pool runner that disconnects mid-job ends as cancelled).
-  # quality: per-lint aggregator; each `Quality / <name>` is the required check.
-  quality-pool:
-    name: Quality pool / ${{ matrix.name }}
-    needs: [plan-runners, changes, build]
-    # !cancelled() keeps the source-only lints running even when Build failed, and
-    # requiring plan-runners success keeps the runner label well-defined the same
-    # way build-pool/test-pool do. needs build so the compiling lints reuse Build's
-    # fresh pile: build first, then Quality replays it.
-    if: ${{ !cancelled() && needs.plan-runners.result == 'success' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: SwiftLint
-            target: lint-swiftlint
-            signal: lint
-          - name: Format
-            target: lint-format
-            signal: lint
-          - name: Complexity
-            target: lint-complexity
-            signal: lint
-          - name: Deadcode
-            target: lint-deadcode
-            signal: build
-          - name: Swiftcheck Extra
-            target: swiftcheck-extra
-            signal: lint
-          - name: Audit
-            target: audit
-            signal: build
-    uses: ./.github/workflows/_ci-gate.yml
-    with:
-      gate: ${{ matrix.target }}
-      # Route to ubuntu on a per-gate skip so a change that does not feed this
-      # gate family occupies no macOS pool slot (see the Build job note). A lint
-      # leg keys on run_lint; Deadcode and Audit key on run_build. The condition
-      # is written as an explicit `!= 'false'` boolean per family, not the
-      # `cond && A || B` idiom, so it does not depend on the string 'false' being
-      # truthy and it still fails safe to run when a signal is empty.
-      runner: ${{ ((matrix.signal == 'lint' && needs.changes.outputs.run_lint != 'false') || (matrix.signal != 'lint' && needs.changes.outputs.run_build != 'false')) && needs.plan-runners.outputs.quality_label || 'ubuntu-latest' }}
-      run: ${{ ((matrix.signal == 'lint' && needs.changes.outputs.run_lint != 'false') || (matrix.signal != 'lint' && needs.changes.outputs.run_build != 'false')) && 'true' || 'false' }}
-      xcode-version: ${{ inputs.xcode-version }}
-      cache-profile: ${{ inputs.cache-profile }}
-      cache-version: ${{ inputs.cache-version }}
-      extra-cache-paths: ${{ inputs.extra-cache-paths }}
-      brew-packages: ${{ inputs.brew-packages }}
-      setup-target: ${{ inputs.setup-target }}
-      make-args: ${{ inputs.make-args }}
-      apple-team-id: ${{ inputs.apple-team-id }}
-      timeout-minutes: ${{ inputs.timeout-minutes }}
-      fetch-depth: ${{ inputs.fetch-depth }}
-    secrets: inherit
-
-  quality-hosted:
-    name: Quality hosted / ${{ matrix.name }}
-    needs: [plan-runners, quality-pool]
-    # See build-hosted: !cancelled() + on_pool + a failed pool attempt. quality-pool's
-    # result is the whole-matrix aggregate, so any failed or cancelled pool leg
-    # reruns the full hosted matrix; the aggregator then resolves each lint per leg.
-    if: ${{ !cancelled() && needs.plan-runners.outputs.on_pool == 'true' && needs.quality-pool.result != 'success' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: SwiftLint
-            target: lint-swiftlint
-          - name: Format
-            target: lint-format
-          - name: Complexity
-            target: lint-complexity
-          - name: Deadcode
-            target: lint-deadcode
-          - name: Swiftcheck Extra
-            target: swiftcheck-extra
-          - name: Audit
-            target: audit
-    uses: ./.github/workflows/_ci-gate.yml
-    with:
-      gate: ${{ matrix.target }}
-      runner: ${{ inputs.runner }}
-      xcode-version: ${{ inputs.xcode-version }}
-      cache-profile: ${{ inputs.cache-profile }}
-      cache-version: ${{ inputs.cache-version }}
-      extra-cache-paths: ${{ inputs.extra-cache-paths }}
-      brew-packages: ${{ inputs.brew-packages }}
-      setup-target: ${{ inputs.setup-target }}
-      make-args: ${{ inputs.make-args }}
-      apple-team-id: ${{ inputs.apple-team-id }}
-      timeout-minutes: ${{ inputs.timeout-minutes }}
-      fetch-depth: ${{ inputs.fetch-depth }}
-    secrets: inherit
-
-  quality:
-    name: Quality / ${{ matrix.name }}
-    # !cancelled(): see the Build aggregator note.
-    if: ${{ !cancelled() }}
-    needs: [quality-pool, quality-hosted]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    # actions: read lets the resolve step read this run's jobs. It stays within the
-    # caller's grant: ci.yml grants contents+actions read, so this reusable job does
-    # not escalate (requesting a scope beyond the caller fails workflow startup).
-    permissions:
-      contents: read
-      actions: read
-    # A vector matrix, not include-only: an include-only matrix on this aggregator
-    # (a job that needs the two matrix-reusable jobs) fails workflow startup even
-    # though actionlint accepts it, so the lint set is a plain list.
-    strategy:
-      fail-fast: false
-      matrix:
-        name: [SwiftLint, Format, Complexity, Deadcode, "Swiftcheck Extra", Audit]
-    steps:
-      - name: Resolve this lint's pool-or-hosted result
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ github.run_id }}
-          REPOSITORY: ${{ github.repository }}
-          LINT_NAME: ${{ matrix.name }}
-        run: |
-          set -euo pipefail
-          # A matrix aggregator cannot read needs.quality-pool.result per leg (that
-          # value is the whole-matrix aggregate), so read this lint's own pool and
-          # hosted job conclusions from the run's jobs. The jobs API names a job
-          # "<caller-job> / Quality pool / <name> / <gate>" (the caller prefix, e.g.
-          # "swift /", differs per consumer, and the reusable gate appends the gate
-          # job), so match the "Quality pool / <name> /" substring, not a prefix.
-          # per_page=100 fetches every job in one page (far fewer than 100 jobs).
-          jobs_json=$(gh api "repos/${REPOSITORY}/actions/runs/${RUN_ID}/jobs?per_page=100")
-          pool=$(printf '%s' "${jobs_json}" | jq -r --arg p "Quality pool / ${LINT_NAME} /" '[.jobs[] | select(.name | contains($p)) | .conclusion] | first // "missing"')
-          hosted=$(printf '%s' "${jobs_json}" | jq -r --arg p "Quality hosted / ${LINT_NAME} /" '[.jobs[] | select(.name | contains($p)) | .conclusion] | first // "missing"')
-          printf 'Quality / %s: pool=%s hosted=%s\n' "${LINT_NAME}" "${pool}" "${hosted}"
-          if [ "${pool}" = "success" ] || [ "${hosted}" = "success" ]; then
-            exit 0
-          fi
-          printf 'Quality / %s failed (pool=%s, hosted=%s)\n' "${LINT_NAME}" "${pool}" "${hosted}" >&2
-          exit 1
-
-  # Runner planning. The pool-or-hosted capacity decision lives in the shared
-  # reusable _plan-runners.yml so _release.yml reuses the same routing. Its
-  # outputs (build_label, test_label, quality_label, extra_targets_label,
-  # on_pool) are consumed by the gate jobs below via needs.plan-runners.outputs.
-  # extra_targets_enabled is not an output here: it is a pure function of this
-  # workflow's inputs, so the two Extra Targets jobs inline that expression in
-  # their if: conditions instead.
-  plan-runners:
-    uses: ./.github/workflows/_plan-runners.yml
-    with:
-      runner: ${{ inputs.runner }}
-      local-pool-capacity-url: ${{ inputs.local-pool-capacity-url }}
-      local-pool-label: ${{ inputs.local-pool-label }}
-    # Pass only the capacity token the planner uses, not every CI secret.
-    secrets:
-      LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
-
   # changes: change-detection runs on a free ubuntu-latest runner instead of a
   # scarce macOS pool slot. `swift-mk ci-changed` only diffs files with git and
   # classifies paths: a generated-project consumer takes the nil-graph path and
@@ -426,6 +262,33 @@ jobs:
             printf 'changed=true\n'
           } >> "${GITHUB_OUTPUT}"
 
+  # Each gate invokes the shared planner separately at its DAG boundary. These
+  # two routes become eligible together after change detection, but each makes
+  # its own /capacity request and can choose a different runner.
+  route-build:
+    name: Route Build
+    needs: [changes]
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/_plan-runners.yml
+    with:
+      runner: ${{ inputs.runner }}
+      local-pool-capacity-url: ${{ needs.changes.outputs.run_build == 'false' && '' || inputs.local-pool-capacity-url }}
+      local-pool-label: ${{ inputs.local-pool-label }}
+    secrets:
+      LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
+
+  route-test:
+    name: Route Test
+    needs: [changes]
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/_plan-runners.yml
+    with:
+      runner: ${{ inputs.runner }}
+      local-pool-capacity-url: ${{ needs.changes.outputs.run_build == 'false' && '' || inputs.local-pool-capacity-url }}
+      local-pool-label: ${{ inputs.local-pool-label }}
+    secrets:
+      LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
+
   # ── Build ──────────────────────────────────────────────────────────────────
   # build-pool: first attempt on the planned runner (pool or hosted).
   # build-hosted: hosted-only fallback that runs when build-pool fails or is
@@ -433,17 +296,17 @@ jobs:
   # build: tiny aggregator that is the single required status check for Build.
   build-pool:
     name: Build (pool attempt)
-    needs: [plan-runners, changes]
+    needs: [route-build, changes]
     # !cancelled() forces this to run when changes fails (empty run means full CI);
-    # requiring plan-runners success keeps runs-on well-defined, so a plan-runners
+    # requiring route-build success keeps runs-on well-defined, so a routing
     # failure surfaces as a Build failure rather than an empty runner label.
-    if: ${{ !cancelled() && needs.plan-runners.result == 'success' }}
+    if: ${{ !cancelled() && needs.route-build.result == 'success' }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: build
       # Route to ubuntu on an index-confirmed skip so a docs-only push does not
-      # occupy a macOS pool slot (see the Quality job note).
-      runner: ${{ needs.changes.outputs.run_build == 'false' && 'ubuntu-latest' || needs.plan-runners.outputs.build_label }}
+      # occupy a macOS pool slot.
+      runner: ${{ needs.changes.outputs.run_build == 'false' && 'ubuntu-latest' || needs.route-build.outputs.label }}
       run: ${{ needs.changes.outputs.run_build }}
       xcode-version: ${{ inputs.xcode-version }}
       cache-profile: ${{ inputs.cache-profile }}
@@ -462,15 +325,13 @@ jobs:
 
   build-hosted:
     name: Build (hosted fallback)
-    needs: [plan-runners, build-pool]
+    needs: [route-build, build-pool]
     # !cancelled() defeats GitHub's implicit skip so the fallback runs whenever the
     # pool attempt did not succeed and the run is still alive; on_pool gates it to
-    # pool-routed runs. When the whole run is cancelled, by a newer push or by the
-    # pool watchdog, cancelled() is true so this job and the aggregators skip and
-    # the run cancels cleanly. A newer push then supersedes instead of queueing
-    # behind the older run, and a watchdog-cancelled run is reran to hosted by
-    # ci-infra-retry.yml, which itself skips a run superseded by a newer push.
-    if: ${{ !cancelled() && needs.plan-runners.outputs.on_pool == 'true' && needs.build-pool.result != 'success' }}
+    # pool-routed runs. `!= 'success'` covers failed and skipped pool attempts. When
+    # the whole run is cancelled by a newer push or the pool watchdog, this job and
+    # the aggregators skip so the run cancels cleanly and ci-infra-retry.yml reruns.
+    if: ${{ !cancelled() && needs.route-build.outputs.on_pool == 'true' && needs.build-pool.result != 'success' }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: build
@@ -492,11 +353,9 @@ jobs:
 
   build:
     name: Build
-    # !cancelled(), not always(): the aggregator reports the required check on
-    # every live run but skips when the run is cancelled, so a superseded or
-    # watchdog-cancelled run cancels cleanly. Skipping also keeps the run's only
-    # non-success job conclusions cancelled/skipped, which is what ci-infra-retry.yml
-    # needs to rerun a watchdog-cancelled run to hosted.
+    # !cancelled(), not always(): report the required check on every live run but
+    # skip when the run is cancelled, so a superseded or watchdog-cancelled run
+    # cancels cleanly and ci-infra-retry.yml can rerun it on hosted.
     if: ${{ !cancelled() }}
     needs: [build-pool, build-hosted]
     runs-on: ubuntu-latest
@@ -512,7 +371,7 @@ jobs:
           if [[ "${POOL_RESULT}" == "success" ]] || [[ "${HOSTED_RESULT}" == "success" ]]; then
             printf 'Build passed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}"
           elif [[ "${POOL_RESULT}" == "skipped" ]] && [[ "${HOSTED_RESULT}" == "skipped" ]]; then
-            printf 'Build skipped (pool=skipped, hosted=skipped); plan-runners or an upstream step failed\n' >&2
+            printf 'Build skipped (pool=skipped, hosted=skipped); routing or an upstream step failed\n' >&2
             exit 1
           else
             printf 'Build failed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}" >&2
@@ -526,16 +385,16 @@ jobs:
   # test: tiny aggregator that is the single required status check for Test.
   test-pool:
     name: Test (pool attempt)
-    needs: [plan-runners, changes]
-    # See build-pool: fail-safe on a changes failure, but require plan-runners
+    needs: [route-test, changes]
+    # See build-pool: fail-safe on a changes failure, but require route-test
     # success so the runner label is always well-defined.
-    if: ${{ !cancelled() && needs.plan-runners.result == 'success' }}
+    if: ${{ !cancelled() && needs.route-test.result == 'success' }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: test
       # Route to ubuntu on an index-confirmed skip so a docs-only push does not
-      # occupy a macOS pool slot (see the Quality job note).
-      runner: ${{ needs.changes.outputs.run_build == 'false' && 'ubuntu-latest' || needs.plan-runners.outputs.test_label }}
+      # occupy a macOS pool slot.
+      runner: ${{ needs.changes.outputs.run_build == 'false' && 'ubuntu-latest' || needs.route-test.outputs.label }}
       run: ${{ needs.changes.outputs.run_build }}
       xcode-version: ${{ inputs.xcode-version }}
       cache-profile: ${{ inputs.cache-profile }}
@@ -554,9 +413,9 @@ jobs:
 
   test-hosted:
     name: Test (hosted fallback)
-    needs: [plan-runners, test-pool]
+    needs: [route-test, test-pool]
     # See the build-hosted note: !cancelled() + on_pool + a failed pool attempt.
-    if: ${{ !cancelled() && needs.plan-runners.outputs.on_pool == 'true' && needs.test-pool.result != 'success' }}
+    if: ${{ !cancelled() && needs.route-test.outputs.on_pool == 'true' && needs.test-pool.result != 'success' }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: test
@@ -594,10 +453,173 @@ jobs:
           if [[ "${POOL_RESULT}" == "success" ]] || [[ "${HOSTED_RESULT}" == "success" ]]; then
             printf 'Test passed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}"
           elif [[ "${POOL_RESULT}" == "skipped" ]] && [[ "${HOSTED_RESULT}" == "skipped" ]]; then
-            printf 'Test skipped (pool=skipped, hosted=skipped); plan-runners or an upstream step failed\n' >&2
+            printf 'Test skipped (pool=skipped, hosted=skipped); routing or an upstream step failed\n' >&2
             exit 1
           else
             printf 'Test failed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}" >&2
+            exit 1
+          fi
+
+  # ── Deadcode ───────────────────────────────────────────────────────────────
+  # Deadcode routes after Build so its pool attempt can replay Build's compile
+  # cache. Its hosted fallback runs after any unsuccessful pool attempt.
+  route-deadcode:
+    name: Route Deadcode
+    needs: [changes, build]
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/_plan-runners.yml
+    with:
+      runner: ${{ inputs.runner }}
+      local-pool-capacity-url: ${{ needs.changes.outputs.run_build == 'false' && '' || inputs.local-pool-capacity-url }}
+      local-pool-label: ${{ inputs.local-pool-label }}
+    secrets:
+      LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
+
+  deadcode-pool:
+    name: Deadcode (pool attempt)
+    needs: [route-deadcode, changes, build]
+    if: ${{ !cancelled() && needs.route-deadcode.result == 'success' }}
+    uses: ./.github/workflows/_ci-gate.yml
+    with:
+      gate: lint-deadcode
+      runner: ${{ needs.changes.outputs.run_build == 'false' && 'ubuntu-latest' || needs.route-deadcode.outputs.label }}
+      run: ${{ needs.changes.outputs.run_build }}
+      xcode-version: ${{ inputs.xcode-version }}
+      cache-profile: ${{ inputs.cache-profile }}
+      cache-version: ${{ inputs.cache-version }}
+      extra-cache-paths: ${{ inputs.extra-cache-paths }}
+      brew-packages: ${{ inputs.brew-packages }}
+      setup-target: ${{ inputs.setup-target }}
+      make-args: ${{ inputs.make-args }}
+      apple-team-id: ${{ inputs.apple-team-id }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      fetch-depth: ${{ inputs.fetch-depth }}
+    secrets: inherit
+
+  deadcode-hosted:
+    name: Deadcode (hosted fallback)
+    needs: [route-deadcode, deadcode-pool]
+    # See the build-hosted note: !cancelled() + on_pool + a failed pool attempt.
+    if: ${{ !cancelled() && needs.route-deadcode.outputs.on_pool == 'true' && needs.deadcode-pool.result != 'success' }}
+    uses: ./.github/workflows/_ci-gate.yml
+    with:
+      gate: lint-deadcode
+      runner: ${{ inputs.runner }}
+      xcode-version: ${{ inputs.xcode-version }}
+      cache-profile: ${{ inputs.cache-profile }}
+      cache-version: ${{ inputs.cache-version }}
+      extra-cache-paths: ${{ inputs.extra-cache-paths }}
+      brew-packages: ${{ inputs.brew-packages }}
+      setup-target: ${{ inputs.setup-target }}
+      make-args: ${{ inputs.make-args }}
+      apple-team-id: ${{ inputs.apple-team-id }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      fetch-depth: ${{ inputs.fetch-depth }}
+    secrets: inherit
+
+  deadcode:
+    name: Deadcode
+    # !cancelled(): see the Build aggregator note.
+    if: ${{ !cancelled() }}
+    needs: [deadcode-pool, deadcode-hosted]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Check deadcode result
+        env:
+          POOL_RESULT: ${{ needs.deadcode-pool.result }}
+          HOSTED_RESULT: ${{ needs.deadcode-hosted.result }}
+        run: |
+          if [[ "${POOL_RESULT}" == "success" ]] || [[ "${HOSTED_RESULT}" == "success" ]]; then
+            printf 'Deadcode passed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}"
+          elif [[ "${POOL_RESULT}" == "skipped" ]] && [[ "${HOSTED_RESULT}" == "skipped" ]]; then
+            printf 'Deadcode skipped (pool=skipped, hosted=skipped); routing or an upstream step failed\n' >&2
+            exit 1
+          else
+            printf 'Deadcode failed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}" >&2
+            exit 1
+          fi
+
+  # ── Lint ───────────────────────────────────────────────────────────────────
+  # Lint combines the five non-compiling checks in one reusable gate job.
+  route-lint:
+    name: Route Lint
+    needs: [changes, build]
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/_plan-runners.yml
+    with:
+      runner: ${{ inputs.runner }}
+      local-pool-capacity-url: ${{ needs.changes.outputs.run_lint == 'false' && '' || inputs.local-pool-capacity-url }}
+      local-pool-label: ${{ inputs.local-pool-label }}
+    secrets:
+      LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
+
+  lint-pool:
+    name: Lint (pool attempt)
+    needs: [route-lint, changes, build]
+    if: ${{ !cancelled() && needs.route-lint.result == 'success' }}
+    uses: ./.github/workflows/_ci-gate.yml
+    with:
+      gate: lint
+      runner: ${{ needs.changes.outputs.run_lint == 'false' && 'ubuntu-latest' || needs.route-lint.outputs.label }}
+      run: ${{ needs.changes.outputs.run_lint }}
+      xcode-version: ${{ inputs.xcode-version }}
+      cache-profile: ${{ inputs.cache-profile }}
+      cache-version: ${{ inputs.cache-version }}
+      extra-cache-paths: ${{ inputs.extra-cache-paths }}
+      brew-packages: ${{ inputs.brew-packages }}
+      setup-target: ${{ inputs.setup-target }}
+      make-args: ${{ inputs.make-args }}
+      apple-team-id: ${{ inputs.apple-team-id }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      fetch-depth: ${{ inputs.fetch-depth }}
+    secrets: inherit
+
+  lint-hosted:
+    name: Lint (hosted fallback)
+    needs: [route-lint, lint-pool]
+    # See the build-hosted note: !cancelled() + on_pool + a failed pool attempt.
+    if: ${{ !cancelled() && needs.route-lint.outputs.on_pool == 'true' && needs.lint-pool.result != 'success' }}
+    uses: ./.github/workflows/_ci-gate.yml
+    with:
+      gate: lint
+      runner: ${{ inputs.runner }}
+      xcode-version: ${{ inputs.xcode-version }}
+      cache-profile: ${{ inputs.cache-profile }}
+      cache-version: ${{ inputs.cache-version }}
+      extra-cache-paths: ${{ inputs.extra-cache-paths }}
+      brew-packages: ${{ inputs.brew-packages }}
+      setup-target: ${{ inputs.setup-target }}
+      make-args: ${{ inputs.make-args }}
+      apple-team-id: ${{ inputs.apple-team-id }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      fetch-depth: ${{ inputs.fetch-depth }}
+    secrets: inherit
+
+  lint:
+    name: Lint
+    # !cancelled(): see the Build aggregator note.
+    if: ${{ !cancelled() }}
+    needs: [lint-pool, lint-hosted]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Check lint result
+        env:
+          POOL_RESULT: ${{ needs.lint-pool.result }}
+          HOSTED_RESULT: ${{ needs.lint-hosted.result }}
+        run: |
+          if [[ "${POOL_RESULT}" == "success" ]] || [[ "${HOSTED_RESULT}" == "success" ]]; then
+            printf 'Lint passed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}"
+          elif [[ "${POOL_RESULT}" == "skipped" ]] && [[ "${HOSTED_RESULT}" == "skipped" ]]; then
+            printf 'Lint skipped (pool=skipped, hosted=skipped); routing or an upstream step failed\n' >&2
+            exit 1
+          else
+            printf 'Lint failed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}" >&2
             exit 1
           fi
 
@@ -607,19 +629,31 @@ jobs:
   # fails or is cancelled (a pool runner that disconnects ends as cancelled).
   # extra-targets: tiny aggregator that is the single required status check.
   # Both attempts skip when there are no bespoke targets to run.
+  route-extra-targets:
+    name: Route Extra Targets
+    needs: [changes, build, test, deadcode, lint]
+    # !cancelled() defeats the implicit skip once the required gates finish, while
+    # skipping on a cancelled run; the explicit result checks keep it gated on
+    # every upstream gate succeeding.
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.test.result == 'success' && needs.deadcode.result == 'success' && needs.lint.result == 'success' && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') }}
+    uses: ./.github/workflows/_plan-runners.yml
+    with:
+      runner: ${{ inputs.runner }}
+      local-pool-capacity-url: ${{ needs.changes.outputs.run == 'false' && '' || inputs.local-pool-capacity-url }}
+      local-pool-label: ${{ inputs.local-pool-label }}
+    secrets:
+      LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
+
   extra-targets-pool:
     name: Extra Targets (pool attempt)
-    # !cancelled() defeats the implicit skip so this runs once the required gates
-    # finish, while still skipping on a cancelled run; the explicit result checks
-    # keep it gated on every upstream gate actually succeeding.
-    if: ${{ !cancelled() && needs.plan-runners.result == 'success' && needs.quality.result == 'success' && needs.build.result == 'success' && needs.test.result == 'success' && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') }}
-    needs: [plan-runners, changes, quality, build, test]
+    needs: [route-extra-targets, changes, build, test, deadcode, lint]
+    if: ${{ !cancelled() && needs.route-extra-targets.result == 'success' }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: extra-targets
       # Route to ubuntu on an index-confirmed skip so a docs-only push does not
-      # occupy a macOS pool slot (see the Quality job note).
-      runner: ${{ needs.changes.outputs.run == 'false' && 'ubuntu-latest' || needs.plan-runners.outputs.extra_targets_label }}
+      # occupy a macOS pool slot.
+      runner: ${{ needs.changes.outputs.run == 'false' && 'ubuntu-latest' || needs.route-extra-targets.outputs.label }}
       run: ${{ needs.changes.outputs.run }}
       extra-targets: ${{ inputs.extra-targets }}
       targets: ${{ inputs.targets }}
@@ -640,11 +674,11 @@ jobs:
 
   extra-targets-hosted:
     name: Extra Targets (hosted fallback)
-    needs: [plan-runners, extra-targets-pool]
-    # See the build-hosted note: !cancelled(). This runs only when the caller
-    # configured extra targets, expressed inline below since the reusable planner
-    # carries no such output.
-    if: ${{ !cancelled() && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') && needs.plan-runners.outputs.on_pool == 'true' && needs.extra-targets-pool.result != 'success' }}
+    needs: [route-extra-targets, extra-targets-pool]
+    # See the build-hosted note: !cancelled(). Runs only when the caller configured
+    # extra targets, expressed inline since the reusable planner carries no such
+    # output.
+    if: ${{ !cancelled() && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') && needs.route-extra-targets.outputs.on_pool == 'true' && needs.extra-targets-pool.result != 'success' }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: extra-targets
