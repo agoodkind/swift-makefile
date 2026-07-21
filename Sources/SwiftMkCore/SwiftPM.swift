@@ -204,14 +204,26 @@ public enum SwiftPM {
     }
   }
 
-  /// `swift package describe --type json` for the package, captured. A read-only query
-  /// (no artifact, so no gate), wrapped in the build lock because it resolves the
-  /// package and may write `.build`. Returns nil on a nonzero status.
-  public static func describePackageJSON(_ request: Request = Request()) -> String? {
+  /// `swift package describe --type json` for the package. A read-only query (no
+  /// artifact, so no gate), wrapped in the build lock because it resolves the package
+  /// and may write `.build`. The JSON on stdout is captured; the resolution progress on
+  /// stderr forwards live, so a slow dependency resolve shows output rather than running
+  /// silent. A positive `timeoutSeconds` bounds the resolve and kills the process tree on
+  /// timeout, so a stalled network resolve fails fast instead of hanging. Returns nil on a
+  /// nonzero status or a timeout.
+  public static func describePackageJSON(
+    _ request: Request = Request(),
+    timeoutSeconds: Double = 0
+  ) -> String? {
     Output.debug("swiftpm: describing package targets")
     let arguments = ["package"] + packageArguments(request) + ["describe", "--type", "json"]
     let result = BuildLock.withLock {
-      Shell.run("swift", arguments, environment: request.environment)
+      Shell.runStreamingStderr(
+        "swift", arguments, environment: request.environment, timeoutSeconds: timeoutSeconds)
+    }
+    if result.timedOut {
+      Output.error("swiftpm: swift package describe timed out after \(Int(timeoutSeconds))s")
+      return nil
     }
     guard result.status == 0 else {
       return nil
