@@ -102,7 +102,7 @@ jobs:
       # itself when self-hosted here, or the .swift-makefile helper checkout for
       # consumers. A reusable workflow can set this at job level, so no env step.
       SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
-      INSTRUMENT: ${{ contains(github.event.pull_request.labels.*.name, 'ci-instrument') }}
+      INSTRUMENT: ${{ contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') }}
     steps:
       # Hard-fail on an unknown gate so a typo cannot run setup and then skip
       # every make step, which would otherwise be a false-green CI run.
@@ -221,7 +221,7 @@ jobs:
       - name: Start CI instrumentation
         if: ${{ inputs.run != 'false' && env.INSTRUMENT == 'true' }}
         shell: bash
-        run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/ci-instrument/start.sh" "${RUNNER_TEMP}/ci-instrument" "${SWIFT_MK_HELPER_ROOT}"
+        run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/ci-diagnostics/start.sh" "${RUNNER_TEMP}/ci-diagnostics" "${SWIFT_MK_HELPER_ROOT}"
 
       - name: Run setup target
         if: ${{ inputs.run != 'false' && (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.setup-target != '' }}
@@ -308,13 +308,13 @@ jobs:
       - name: Stop CI instrumentation
         if: ${{ always() && env.INSTRUMENT == 'true' }}
         shell: bash
-        run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/ci-instrument/stop.sh" "${RUNNER_TEMP}/ci-instrument"
+        run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/ci-diagnostics/stop.sh" "${RUNNER_TEMP}/ci-diagnostics"
 
       - name: Upload CI instrumentation
         if: ${{ always() && env.INSTRUMENT == 'true' }}
         uses: actions/upload-artifact@v4
         with:
-          name: ci-instrument-${{ inputs.gate }}-${{ inputs.runner }}
-          path: ${{ runner.temp }}/ci-instrument
+          name: ci-diagnostics-${{ inputs.gate }}-${{ inputs.runner }}
+          path: ${{ runner.temp }}/ci-diagnostics
           overwrite: true
           if-no-files-found: ignore

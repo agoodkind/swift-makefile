@@ -49,7 +49,7 @@ main() {
     CHILD_PIDS+=("$logstream_pid")
     echo "$logstream_pid" > "$out_dir/logstream.pid"
 
-    nohup bash "$helper_root/.github/actions/ci-instrument/watchdog.sh" \
+    nohup bash "$helper_root/.github/actions/ci-diagnostics/watchdog.sh" \
         "$out_dir" 180 "$max_runtime" > "$out_dir/watchdog.log" 2>&1 &
     watchdog_pid=$!
     CHILD_PIDS+=("$watchdog_pid")
