@@ -28,6 +28,7 @@ main() {
     for subsystem in \
         com.apple.securityd \
         com.apple.security \
+        com.apple.Authorization \
         com.apple.trustd \
         com.apple.network; do
         sudo -n log config --reset --subsystem "$subsystem" 2>/dev/null || true
