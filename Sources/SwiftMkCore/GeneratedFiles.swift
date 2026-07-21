@@ -64,15 +64,22 @@ public enum GeneratedFiles {
       return false
     }
     let outputURL = URL(fileURLWithPath: plan.outputPath)
+    let wrote: Bool
     do {
       try FileManager.default.createDirectory(
         at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-      try rendered.write(to: outputURL, atomically: true, encoding: .utf8)
+      // Write only when the rendered content differs, so a re-render of unchanged
+      // inputs does not churn the file's mtime and force a downstream recompile.
+      wrote = try Text.writeIfChanged(rendered, toFile: plan.outputPath)
     } catch {
       Output.error("generate: could not write \(plan.outputPath): \(error)")
       return false
     }
-    Output.info("generate: rendered \(plan.outputPath)")
+    if wrote {
+      Output.info("generate: rendered \(plan.outputPath)")
+    } else {
+      Output.debug("generate: unchanged \(plan.outputPath)")
+    }
     return true
   }
 }

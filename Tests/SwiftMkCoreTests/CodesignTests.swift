@@ -22,7 +22,7 @@ func importSigningCertActionUsesRunnerKeyedKeychainName() throws {
   #expect(action.contains("id: keychain"))
   #expect(action.contains("RUNNER_NAME:-runner"))
   #expect(action.contains("swift_mk_signing_"))
-  #expect(action.contains("keychain: ${{ steps.keychain.outputs.name }}"))
+  #expect(action.contains("keychain: ${{ steps.keychain.outputs.path_noext }}"))
   #expect(action.contains(#"KEYCHAIN_PATH: ${{ steps.keychain.outputs.path }}"#))
   #expect(action.contains(#"security delete-keychain "$KEYCHAIN_PATH""#))
   #expect(action.contains(#"security find-identity -v -p codesigning "$KEYCHAIN_PATH""#))
@@ -37,7 +37,9 @@ func importSigningCertActionOutputsExplicitKeychainPath() throws {
   #expect(action.contains("  keychain:"))
   #expect(action.contains("value: ${{ steps.keychain.outputs.path }}"))
   #expect(
-    action.contains(#"keychain_path="${HOME}/Library/Keychains/${keychain_name}.keychain-db""#))
+    action.contains(#"keychain_base="${HOME}/Library/Keychains/${keychain_name}""#))
+  #expect(action.contains(#"keychain_path="${keychain_base}.keychain-db""#))
+  #expect(action.contains(#"printf 'path_noext=%s\n' "$keychain_base" >> "$GITHUB_OUTPUT""#))
   #expect(action.contains(#"printf 'path=%s\n' "$keychain_path" >> "$GITHUB_OUTPUT""#))
 }
 

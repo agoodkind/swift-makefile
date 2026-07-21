@@ -51,6 +51,31 @@ public enum Text {
     try body.write(toFile: path, atomically: true, encoding: .utf8)
   }
 
+  /// Write UTF-8 `text` to `path` only when it differs from what is already there,
+  /// and report whether a write happened. Delegates to the `Data` form so both share
+  /// one write path and one change check.
+  @discardableResult
+  public static func writeIfChanged(_ text: String, toFile path: String) throws -> Bool {
+    try writeIfChanged(Data(text.utf8), to: URL(fileURLWithPath: path))
+  }
+
+  /// Write `data` to `url` only when it differs from what is already there, and
+  /// report whether a write happened. An atomic write replaces the file, giving it a
+  /// new inode and modification time even when the bytes are identical, and a
+  /// generated file sitting in a compiled source tree then re-triggers the whole
+  /// downstream recompile on every run. Skipping the no-op write keeps the file's
+  /// mtime stable so incremental builds stay incremental. A missing or unreadable
+  /// file compares as different, so the write still happens on any doubt.
+  @discardableResult
+  public static func writeIfChanged(_ data: Data, to url: URL) throws -> Bool {
+    if FileManager.default.contents(atPath: url.path) == data {
+      return false
+    }
+    Output.debug("writeIfChanged: writing \(url.path)")
+    try data.write(to: url, options: .atomic)
+    return true
+  }
+
   /// Join comma-separated default and extra patterns into one ERE alternation.
   public static func excludePattern(_ defaults: String, _ extra: String) -> String {
     let combined = defaults + "," + extra
