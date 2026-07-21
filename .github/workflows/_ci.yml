@@ -190,10 +190,10 @@ jobs:
   quality-hosted:
     name: Quality hosted / ${{ matrix.name }}
     needs: [plan-runners, quality-pool]
-    # See build-hosted: always() + on_pool + a failed pool attempt. quality-pool's
+    # See build-hosted: !cancelled() + on_pool + a failed pool attempt. quality-pool's
     # result is the whole-matrix aggregate, so any failed or cancelled pool leg
     # reruns the full hosted matrix; the aggregator then resolves each lint per leg.
-    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && needs.quality-pool.result != 'success' }}
+    if: ${{ !cancelled() && needs.plan-runners.outputs.on_pool == 'true' && needs.quality-pool.result != 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -228,7 +228,8 @@ jobs:
 
   quality:
     name: Quality / ${{ matrix.name }}
-    if: ${{ always() }}
+    # !cancelled(): see the Build aggregator note.
+    if: ${{ !cancelled() }}
     needs: [quality-pool, quality-hosted]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -423,13 +424,14 @@ jobs:
   build-hosted:
     name: Build (hosted fallback)
     needs: [plan-runners, build-pool]
-    # always() defeats GitHub's implicit skip so the fallback runs when the pool
-    # attempt did not succeed; on_pool gates it to pool-routed runs. The check is
-    # `!= 'success'` (not failure/cancelled only) because a sibling pool job the
-    # watchdog cancels (for example a quality-pool leg) puts the run into a
-    # cancelling state, which makes this single-job pool attempt end as `skipped`
-    # rather than `cancelled`; the fallback must still rescue that case.
-    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && needs.build-pool.result != 'success' }}
+    # !cancelled() defeats GitHub's implicit skip so the fallback runs whenever the
+    # pool attempt did not succeed and the run is still alive; on_pool gates it to
+    # pool-routed runs. When the whole run is cancelled, by a newer push or by the
+    # pool watchdog, cancelled() is true so this job and the aggregators skip and
+    # the run cancels cleanly. A newer push then supersedes instead of queueing
+    # behind the older run, and a watchdog-cancelled run is reran to hosted by
+    # ci-infra-retry.yml, which itself skips a run superseded by a newer push.
+    if: ${{ !cancelled() && needs.plan-runners.outputs.on_pool == 'true' && needs.build-pool.result != 'success' }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: build
@@ -451,7 +453,12 @@ jobs:
 
   build:
     name: Build
-    if: ${{ always() }}
+    # !cancelled(), not always(): the aggregator reports the required check on
+    # every live run but skips when the run is cancelled, so a superseded or
+    # watchdog-cancelled run cancels cleanly. Skipping also keeps the run's only
+    # non-success job conclusions cancelled/skipped, which is what ci-infra-retry.yml
+    # needs to rerun a watchdog-cancelled run to hosted.
+    if: ${{ !cancelled() }}
     needs: [build-pool, build-hosted]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -509,8 +516,8 @@ jobs:
   test-hosted:
     name: Test (hosted fallback)
     needs: [plan-runners, test-pool]
-    # See the build-hosted note: always() + on_pool + a failed pool attempt.
-    if: ${{ always() && needs.plan-runners.outputs.on_pool == 'true' && needs.test-pool.result != 'success' }}
+    # See the build-hosted note: !cancelled() + on_pool + a failed pool attempt.
+    if: ${{ !cancelled() && needs.plan-runners.outputs.on_pool == 'true' && needs.test-pool.result != 'success' }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: test
@@ -532,7 +539,8 @@ jobs:
 
   test:
     name: Test
-    if: ${{ always() }}
+    # !cancelled(): see the Build aggregator note.
+    if: ${{ !cancelled() }}
     needs: [test-pool, test-hosted]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -562,10 +570,10 @@ jobs:
   # Both attempts skip when there are no bespoke targets to run.
   extra-targets-pool:
     name: Extra Targets (pool attempt)
-    # always() defeats the implicit skip that fires when a needed job uses
-    # if: always() (the build/test aggregates do); the explicit result checks
-    # keep this gated on every upstream gate actually succeeding.
-    if: ${{ !cancelled() && always() && needs.plan-runners.result == 'success' && needs.quality.result == 'success' && needs.build.result == 'success' && needs.test.result == 'success' && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') }}
+    # !cancelled() defeats the implicit skip so this runs once the required gates
+    # finish, while still skipping on a cancelled run; the explicit result checks
+    # keep it gated on every upstream gate actually succeeding.
+    if: ${{ !cancelled() && needs.plan-runners.result == 'success' && needs.quality.result == 'success' && needs.build.result == 'success' && needs.test.result == 'success' && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') }}
     needs: [plan-runners, changes, quality, build, test]
     uses: ./.github/workflows/_ci-gate.yml
     with:
@@ -594,10 +602,10 @@ jobs:
   extra-targets-hosted:
     name: Extra Targets (hosted fallback)
     needs: [plan-runners, extra-targets-pool]
-    # See the build-hosted note. This runs only when the caller configured extra
-    # targets, expressed inline below since the reusable planner carries no such
-    # output.
-    if: ${{ always() && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') && needs.plan-runners.outputs.on_pool == 'true' && needs.extra-targets-pool.result != 'success' }}
+    # See the build-hosted note: !cancelled(). This runs only when the caller
+    # configured extra targets, expressed inline below since the reusable planner
+    # carries no such output.
+    if: ${{ !cancelled() && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') && needs.plan-runners.outputs.on_pool == 'true' && needs.extra-targets-pool.result != 'success' }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
       gate: extra-targets
@@ -621,7 +629,8 @@ jobs:
 
   extra-targets:
     name: Extra Targets
-    if: ${{ always() }}
+    # !cancelled(): see the Build aggregator note.
+    if: ${{ !cancelled() }}
     needs: [extra-targets-pool, extra-targets-hosted]
     runs-on: ubuntu-latest
     timeout-minutes: 5
