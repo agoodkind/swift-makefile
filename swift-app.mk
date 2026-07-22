@@ -1,22 +1,22 @@
 # swift-app.mk
 #
-# Shared packaging for a macOS app that ships as a signed .app inside a .dmg and
-# updates through Sparkle. Load it next to swift-build.mk so a consumer Makefile
-# keeps only configuration:
+# Shared packaging for a macOS app that ships as a signed .app inside a .dmg. Load
+# it next to swift-build.mk so a consumer Makefile keeps only configuration:
 #
 #   SWIFT_MK_MODULES := swift-build.mk swift-app.mk
 #
 # swift-build.mk owns `build` (it runs SWIFT_GENERATE_CMD then SWIFT_BUILD_CMD).
-# swift-app.mk owns everything after the build: bundle assembly, codesign, dmg,
-# and the Sparkle appcast. The build invocation itself stays a consumer hook
-# (SWIFT_BUILD_CMD) because the xcodebuild/tuist line differs per project.
+# swift-app.mk owns everything after the build: bundle assembly, codesign, and dmg.
+# The build invocation itself stays a consumer hook (SWIFT_BUILD_CMD) because the
+# xcodebuild/tuist line differs per project. Framework-specific packaging (for
+# example an auto-update framework's inside-out nested signing, or an update feed)
+# is a consumer concern: sign nested code at build time with the swift-mk
+# codesign-run primitive, and keep any feed generation in the consumer.
 #
 # Targets:
 #   app                     Assemble the built .app into SWIFT_APP_PRODUCTS_DIR and codesign it.
 #   dmg                     Stage the app and build a UDZO .dmg (asserts one staged .app).
 #   release-assets          Copy the dmg to the versioned release name.
-#   prepare-sparkle-updates Run Sparkle generate_appcast over the staged dmg.
-#   sparkle-appcast         release-assets then prepare-sparkle-updates.
 #
 # Required:
 #   SWIFT_APP_NAME          App identity. Defaults derive bundle, scheme, dmg from it.
@@ -31,16 +31,12 @@
 #   SWIFT_APP_BUILT_APP_PATH         ?= $(SWIFT_APP_XCODE_PRODUCTS_DIR)/$(SWIFT_APP_BUNDLE_NAME).app
 #   SWIFT_APP_DEST                   ?= $(SWIFT_APP_PRODUCTS_DIR)/$(SWIFT_APP_BUNDLE_NAME).app
 #   SWIFT_APP_SIGN_IDENTITY          ?=                          Empty skips all codesign steps
-#   SWIFT_APP_SPARKLE_FRAMEWORK      ?= $(SWIFT_APP_DEST)/Contents/Frameworks/Sparkle.framework
 #   SWIFT_APP_DMG_VOLUME_NAME        ?= $(SWIFT_APP_NAME)
 #   SWIFT_APP_DMG_NAME               ?= $(SWIFT_APP_NAME)-$(SWIFT_APP_CONFIGURATION).dmg
 #   SWIFT_APP_DMG_PATH               ?= $(SWIFT_APP_PRODUCTS_DIR)/$(SWIFT_APP_DMG_NAME)
 #   SWIFT_APP_DMG_STAGING_DIR        ?= $(SWIFT_APP_BUILD_DIR)/dmg
 #   SWIFT_APP_RELEASE_DMG_NAME       ?= $(SWIFT_APP_NAME)-$(CURRENT_PROJECT_VERSION).dmg
 #   SWIFT_APP_RELEASE_DMG_PATH       ?= $(SWIFT_APP_PRODUCTS_DIR)/$(SWIFT_APP_RELEASE_DMG_NAME)
-#   SWIFT_APP_SPARKLE_UPDATES_DIR    ?= $(SWIFT_APP_BUILD_DIR)/sparkle-updates
-#   SWIFT_APP_GITHUB_RELEASE_BASE_URL ?=
-#   SWIFT_APP_SPARKLE_APPCAST_TOOL_CMD ?= command -v generate_appcast   Shell command that prints the generate_appcast path
 
 TUIST ?= tuist
 
@@ -62,7 +58,6 @@ ifneq ($(strip $(SWIFT_APP_BUILT_APP_PATH)),)
 SWIFT_MK_FRESH_PRODUCTS := $(SWIFT_APP_BUILT_APP_PATH)
 endif
 SWIFT_APP_SIGN_IDENTITY ?=
-SWIFT_APP_SPARKLE_FRAMEWORK ?= $(SWIFT_APP_DEST)/Contents/Frameworks/Sparkle.framework
 
 SWIFT_APP_DMG_VOLUME_NAME ?= $(SWIFT_APP_NAME)
 SWIFT_APP_DMG_NAME ?= $(SWIFT_APP_NAME)-$(SWIFT_APP_CONFIGURATION).dmg
@@ -71,15 +66,13 @@ SWIFT_APP_DMG_STAGING_DIR ?= $(SWIFT_APP_BUILD_DIR)/dmg
 
 SWIFT_APP_RELEASE_DMG_NAME ?= $(SWIFT_APP_NAME)-$(CURRENT_PROJECT_VERSION).dmg
 SWIFT_APP_RELEASE_DMG_PATH ?= $(SWIFT_APP_PRODUCTS_DIR)/$(SWIFT_APP_RELEASE_DMG_NAME)
-SWIFT_APP_SPARKLE_UPDATES_DIR ?= $(SWIFT_APP_BUILD_DIR)/sparkle-updates
-SWIFT_APP_GITHUB_RELEASE_BASE_URL ?=
-SWIFT_APP_SPARKLE_APPCAST_TOOL_CMD ?= command -v generate_appcast
 
-.PHONY: app app-bundle dmg release-assets prepare-sparkle-updates sparkle-appcast
+.PHONY: app app-bundle dmg release-assets
 
-# Assemble the freshly built bundle into Products and codesign it. The Sparkle
-# helper executables sign first (inside-out) so the outer app signature stays
-# valid; each codesign is guarded so a non-Sparkle app skips it.
+# Assemble the freshly built bundle into Products and sign the outer app. A
+# consumer that embeds a framework with nested signed code signs that nested code
+# at build time (through the swift-mk codesign-run primitive), so its signatures
+# are already valid inside the copied bundle when the outer app is signed here.
 app-bundle: build
 	@if [ -z "$(strip $(SWIFT_APP_NAME))" ]; then echo "swift-app.mk: SWIFT_APP_NAME is not set"; exit 1; fi
 	@if [ ! -d "$(SWIFT_APP_BUILT_APP_PATH)" ]; then echo "swift-app.mk: built app not found at $(SWIFT_APP_BUILT_APP_PATH)"; exit 1; fi
@@ -87,18 +80,6 @@ app-bundle: build
 	@rm -rf "$(SWIFT_APP_DEST)"
 	@cp -R "$(SWIFT_APP_BUILT_APP_PATH)" "$(SWIFT_APP_DEST)"
 	@if [ -n "$(strip $(SWIFT_APP_SIGN_IDENTITY))" ]; then \
-		for item in \
-			"$(SWIFT_APP_SPARKLE_FRAMEWORK)/Versions/B/Autoupdate" \
-			"$(SWIFT_APP_SPARKLE_FRAMEWORK)/Versions/B/Updater.app" \
-			"$(SWIFT_APP_SPARKLE_FRAMEWORK)/Versions/B/XPCServices/Downloader.xpc" \
-			"$(SWIFT_APP_SPARKLE_FRAMEWORK)/Versions/B/XPCServices/Installer.xpc"; do \
-			if [ -e "$$item" ]; then \
-				codesign --force --sign "$(SWIFT_APP_SIGN_IDENTITY)" --timestamp --options runtime --preserve-metadata=identifier,entitlements,flags "$$item"; \
-			fi; \
-		done; \
-		if [ -e "$(SWIFT_APP_SPARKLE_FRAMEWORK)" ]; then \
-			codesign --force --sign "$(SWIFT_APP_SIGN_IDENTITY)" --timestamp --options runtime --preserve-metadata=identifier,entitlements,flags "$(SWIFT_APP_SPARKLE_FRAMEWORK)"; \
-		fi; \
 		codesign --force --sign "$(SWIFT_APP_SIGN_IDENTITY)" --timestamp --options runtime --preserve-metadata=identifier,entitlements,flags "$(SWIFT_APP_DEST)"; \
 	fi
 
@@ -128,20 +109,3 @@ dmg: app
 
 release-assets: dmg
 	@cp "$(SWIFT_APP_DMG_PATH)" "$(SWIFT_APP_RELEASE_DMG_PATH)"
-
-# Resolve the generate_appcast tool at recipe time (Sparkle installs it under the
-# build dir during the build, so it does not exist at parse time).
-prepare-sparkle-updates:
-	@test -f "$(SWIFT_APP_RELEASE_DMG_PATH)"
-	@rm -rf "$(SWIFT_APP_SPARKLE_UPDATES_DIR)"
-	@mkdir -p "$(SWIFT_APP_SPARKLE_UPDATES_DIR)"
-	@cp "$(SWIFT_APP_RELEASE_DMG_PATH)" "$(SWIFT_APP_SPARKLE_UPDATES_DIR)/"
-	@appcast_tool="$$( $(SWIFT_APP_SPARKLE_APPCAST_TOOL_CMD) )"; \
-	if [ -z "$$appcast_tool" ]; then echo "prepare-sparkle-updates: could not resolve generate_appcast via SWIFT_APP_SPARKLE_APPCAST_TOOL_CMD"; exit 1; fi; \
-	if [ -n "$${SPARKLE_PRIVATE_KEY_FILE:-}" ]; then \
-		"$$appcast_tool" --ed-key-file "$${SPARKLE_PRIVATE_KEY_FILE}" --download-url-prefix "$(SWIFT_APP_GITHUB_RELEASE_BASE_URL)" "$(SWIFT_APP_SPARKLE_UPDATES_DIR)"; \
-	else \
-		"$$appcast_tool" --download-url-prefix "$(SWIFT_APP_GITHUB_RELEASE_BASE_URL)" "$(SWIFT_APP_SPARKLE_UPDATES_DIR)"; \
-	fi
-
-sparkle-appcast: release-assets prepare-sparkle-updates
