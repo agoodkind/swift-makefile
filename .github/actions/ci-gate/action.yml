@@ -1,0 +1,324 @@
+name: CI gate
+description: Run one shared Build, Test, Quality, or Extra Targets gate.
+
+inputs:
+  gate:
+    description: Gate to run. Must be build, test, quality, or extra-targets.
+    required: true
+  run:
+    description: Whether the gate should execute or report an indexed skip.
+    required: false
+    default: "true"
+  runner:
+    description: Runner label used in the diagnostics artifact name.
+    required: true
+  xcode-version:
+    description: Xcode version selected by the build environment action.
+    required: false
+    default: latest-stable
+  targets:
+    description: Legacy JSON array alias for bespoke extra targets.
+    required: false
+    default: '["lint","build","test","audit"]'
+  extra-targets:
+    description: JSON array of bespoke make targets.
+    required: false
+    default: '[]'
+  setup-target:
+    description: Optional make target run before the selected gate.
+    required: false
+    default: ""
+  make-args:
+    description: Arguments appended to each make invocation.
+    required: false
+    default: ""
+  brew-packages:
+    description: Brew packages installed before the build environment is prepared.
+    required: false
+    default: ""
+  cache-profile:
+    description: Shared cache profile.
+    required: false
+    default: safe
+  cache-version:
+    description: Cache namespace version.
+    required: false
+    default: v1
+  import-signing-cert:
+    description: Whether to import a Developer ID certificate.
+    required: false
+    default: "false"
+  install-provisioning-profile:
+    description: Whether to install a Developer ID provisioning profile.
+    required: false
+    default: "false"
+  signing-identity-name:
+    description: Expected signing identity name.
+    required: false
+    default: ""
+  apple-team-id:
+    description: Apple developer team identifier.
+    required: false
+    default: ""
+  extra-cache-paths:
+    description: Additional paths included in the shared build cache.
+    required: false
+    default: ""
+  fetch-depth:
+    description: Checkout fetch depth for the repository under test.
+    required: false
+    default: "1"
+  apple-developer-id-p12-base64:
+    description: Base64-encoded Developer ID certificate.
+    required: false
+    default: ""
+  apple-developer-id-p12-password:
+    description: Password for the Developer ID certificate.
+    required: false
+    default: ""
+  apple-developer-id-profile-base64:
+    description: Base64-encoded Developer ID provisioning profile.
+    required: false
+    default: ""
+  apple-notary-key-base64:
+    description: Base64-encoded App Store Connect API key.
+    required: false
+    default: ""
+  apple-notary-key-id:
+    description: App Store Connect API key identifier.
+    required: false
+    default: ""
+  apple-notary-issuer-id:
+    description: App Store Connect issuer identifier.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Validate gate input
+      shell: bash
+      env:
+        GATE: ${{ inputs.gate }}
+      run: |
+        case "${GATE}" in
+          build | test | quality | extra-targets) ;;
+          *)
+            printf 'unknown gate %s; expected build, test, quality, or extra-targets\n' "${GATE}" >&2
+            exit 1
+            ;;
+        esac
+
+    - uses: actions/checkout@v7
+      if: ${{ inputs.run != 'false' && github.repository != 'agoodkind/swift-makefile' }}
+      with:
+        fetch-depth: ${{ inputs.fetch-depth }}
+
+    - name: Checkout swift-makefile helpers
+      if: ${{ inputs.run != 'false' && github.repository != 'agoodkind/swift-makefile' }}
+      uses: actions/checkout@v7
+      with:
+        repository: agoodkind/swift-makefile
+        ref: main
+        path: .swift-makefile
+        fetch-depth: 1
+
+    - name: Resolve extra targets
+      if: ${{ inputs.run != 'false' && inputs.gate == 'extra-targets' }}
+      id: resolve
+      shell: bash
+      env:
+        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+        EXTRA_TARGETS: ${{ inputs.extra-targets }}
+        LEGACY_TARGETS: ${{ inputs.targets }}
+        BUILTIN_TARGETS_JSON: '["build","test","lint","audit","build-check","quality-guard","lint-swiftlint","lint-format","lint-complexity","lint-deadcode","swiftcheck-extra"]'
+      run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" resolve-extra-targets
+
+    - name: Install brew packages
+      if: ${{ inputs.run != 'false' && (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.brew-packages != '' }}
+      shell: bash
+      env:
+        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+        BREW_PACKAGES: ${{ inputs.brew-packages }}
+      run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/install-brew-packages/install-brew-packages.sh"
+
+    # A local `./` action reference inside a composite action resolves against the
+    # caller workspace, not swift-makefile, so consumers need the `@main` remote
+    # form. Keep the engine-vs-consumer guard on every nested owned action.
+    - name: Setup Swift build env (swift-makefile)
+      if: ${{ inputs.run != 'false' && (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && github.repository == 'agoodkind/swift-makefile' }}
+      uses: ./.github/actions/setup-build-env
+      with:
+        xcode-version: ${{ inputs.xcode-version }}
+        github-token: ${{ github.token }}
+        cache-profile: ${{ inputs.cache-profile }}
+        cache-version: ${{ inputs.cache-version }}
+        extra-cache-paths: ${{ inputs.extra-cache-paths }}
+        gate: ${{ inputs.gate }}
+
+    - name: Setup Swift build env
+      if: ${{ inputs.run != 'false' && (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && github.repository != 'agoodkind/swift-makefile' }}
+      uses: agoodkind/swift-makefile/.github/actions/setup-build-env@main
+      with:
+        xcode-version: ${{ inputs.xcode-version }}
+        github-token: ${{ github.token }}
+        cache-profile: ${{ inputs.cache-profile }}
+        cache-version: ${{ inputs.cache-version }}
+        extra-cache-paths: ${{ inputs.extra-cache-paths }}
+        gate: ${{ inputs.gate }}
+
+    - name: Validate signing inputs
+      if: ${{ inputs.run != 'false' && (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && (inputs.import-signing-cert == 'true' || inputs.install-provisioning-profile == 'true') }}
+      shell: bash
+      env:
+        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+        IMPORT_SIGNING_CERT: ${{ inputs.import-signing-cert }}
+        INSTALL_PROVISIONING_PROFILE: ${{ inputs.install-provisioning-profile }}
+        HAS_SIGNING_CERT: ${{ inputs.apple-developer-id-p12-base64 != '' }}
+        HAS_SIGNING_PASSWORD: ${{ inputs.apple-developer-id-p12-password != '' }}
+        HAS_PROVISIONING_PROFILE: ${{ inputs.apple-developer-id-profile-base64 != '' }}
+      run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" validate-signing-inputs
+
+    - name: Install signing certificate (swift-makefile)
+      id: cert-local
+      if: ${{ inputs.run != 'false' && (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.import-signing-cert == 'true' && github.repository == 'agoodkind/swift-makefile' }}
+      uses: ./.github/actions/import-signing-cert
+      with:
+        p12-base64: ${{ inputs.apple-developer-id-p12-base64 }}
+        p12-password: ${{ inputs.apple-developer-id-p12-password }}
+        identity-name: ${{ inputs.signing-identity-name }}
+
+    - name: Install signing certificate
+      id: cert-remote
+      if: ${{ inputs.run != 'false' && (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.import-signing-cert == 'true' && github.repository != 'agoodkind/swift-makefile' }}
+      uses: agoodkind/swift-makefile/.github/actions/import-signing-cert@main
+      with:
+        p12-base64: ${{ inputs.apple-developer-id-p12-base64 }}
+        p12-password: ${{ inputs.apple-developer-id-p12-password }}
+        identity-name: ${{ inputs.signing-identity-name }}
+
+    - name: Install provisioning profile (swift-makefile)
+      id: profile-local
+      if: ${{ inputs.run != 'false' && (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.install-provisioning-profile == 'true' && github.repository == 'agoodkind/swift-makefile' }}
+      uses: ./.github/actions/install-provisioning-profile
+      with:
+        profile-base64: ${{ inputs.apple-developer-id-profile-base64 }}
+
+    - name: Install provisioning profile
+      id: profile-remote
+      if: ${{ inputs.run != 'false' && (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.install-provisioning-profile == 'true' && github.repository != 'agoodkind/swift-makefile' }}
+      uses: agoodkind/swift-makefile/.github/actions/install-provisioning-profile@main
+      with:
+        profile-base64: ${{ inputs.apple-developer-id-profile-base64 }}
+
+    - name: Start CI instrumentation
+      if: ${{ inputs.run != 'false' && contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') }}
+      shell: bash
+      env:
+        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+      run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/ci-diagnostics/start.sh" "${RUNNER_TEMP}/ci-diagnostics" "${SWIFT_MK_HELPER_ROOT}"
+
+    - name: Run setup target
+      if: ${{ inputs.run != 'false' && (inputs.gate != 'extra-targets' || steps.resolve.outputs.count != '0') && inputs.setup-target != '' }}
+      shell: bash
+      env:
+        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+        MAKE_TARGET: ${{ inputs.setup-target }}
+        MAKE_ARGS: ${{ inputs.make-args }}
+        CERT_SHA1: ${{ steps.cert-local.outputs.identity-sha1 || steps.cert-remote.outputs.identity-sha1 }}
+        CODE_SIGN_KEYCHAIN: ${{ steps.cert-local.outputs.keychain || steps.cert-remote.outputs.keychain }}
+        TEAM_ID: ${{ inputs.apple-team-id }}
+        PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile-local.outputs.profile-specifier || steps.profile-remote.outputs.profile-specifier }}
+        APPLE_NOTARY_KEY_BASE64: ${{ inputs.apple-notary-key-base64 }}
+        APPLE_NOTARY_KEY_ID: ${{ inputs.apple-notary-key-id }}
+        APPLE_NOTARY_ISSUER_ID: ${{ inputs.apple-notary-issuer-id }}
+      run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
+
+    - name: Run build
+      if: ${{ inputs.run != 'false' && inputs.gate == 'build' }}
+      shell: bash
+      env:
+        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+        MAKE_TARGET: build
+        MAKE_ARGS: ${{ inputs.make-args }}
+        CERT_SHA1: ${{ steps.cert-local.outputs.identity-sha1 || steps.cert-remote.outputs.identity-sha1 }}
+        CODE_SIGN_KEYCHAIN: ${{ steps.cert-local.outputs.keychain || steps.cert-remote.outputs.keychain }}
+        TEAM_ID: ${{ inputs.apple-team-id }}
+        PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile-local.outputs.profile-specifier || steps.profile-remote.outputs.profile-specifier }}
+        APPLE_NOTARY_KEY_BASE64: ${{ inputs.apple-notary-key-base64 }}
+        APPLE_NOTARY_KEY_ID: ${{ inputs.apple-notary-key-id }}
+        APPLE_NOTARY_ISSUER_ID: ${{ inputs.apple-notary-issuer-id }}
+      run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
+
+    - name: Run test
+      if: ${{ inputs.run != 'false' && inputs.gate == 'test' }}
+      shell: bash
+      env:
+        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+        MAKE_TARGET: test
+        MAKE_ARGS: ${{ inputs.make-args }}
+        CERT_SHA1: ${{ steps.cert-local.outputs.identity-sha1 || steps.cert-remote.outputs.identity-sha1 }}
+        CODE_SIGN_KEYCHAIN: ${{ steps.cert-local.outputs.keychain || steps.cert-remote.outputs.keychain }}
+        TEAM_ID: ${{ inputs.apple-team-id }}
+        PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile-local.outputs.profile-specifier || steps.profile-remote.outputs.profile-specifier }}
+        APPLE_NOTARY_KEY_BASE64: ${{ inputs.apple-notary-key-base64 }}
+        APPLE_NOTARY_KEY_ID: ${{ inputs.apple-notary-key-id }}
+        APPLE_NOTARY_ISSUER_ID: ${{ inputs.apple-notary-issuer-id }}
+      run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
+
+    - name: Run extra targets
+      if: ${{ inputs.run != 'false' && inputs.gate == 'extra-targets' && steps.resolve.outputs.count != '0' }}
+      shell: bash
+      env:
+        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+        MAKE_ARGS: ${{ inputs.make-args }}
+        CERT_SHA1: ${{ steps.cert-local.outputs.identity-sha1 || steps.cert-remote.outputs.identity-sha1 }}
+        CODE_SIGN_KEYCHAIN: ${{ steps.cert-local.outputs.keychain || steps.cert-remote.outputs.keychain }}
+        TEAM_ID: ${{ inputs.apple-team-id }}
+        PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile-local.outputs.profile-specifier || steps.profile-remote.outputs.profile-specifier }}
+        APPLE_NOTARY_KEY_BASE64: ${{ inputs.apple-notary-key-base64 }}
+        APPLE_NOTARY_KEY_ID: ${{ inputs.apple-notary-key-id }}
+        APPLE_NOTARY_ISSUER_ID: ${{ inputs.apple-notary-issuer-id }}
+        EXTRA_TARGETS_SHELL: ${{ steps.resolve.outputs.targets_shell }}
+      run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-extra-targets
+
+    - name: Run shared quality guard
+      if: ${{ inputs.run != 'false' && inputs.gate == 'quality' }}
+      shell: bash
+      env:
+        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+        MAKE_TARGET: quality-guard
+        MAKE_ARGS: ${{ inputs.make-args }}
+        TEAM_ID: ${{ inputs.apple-team-id }}
+      run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-team
+
+    - name: Run quality targets
+      if: ${{ inputs.run != 'false' && inputs.gate == 'quality' }}
+      shell: bash
+      env:
+        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+        MAKE_ARGS: ${{ inputs.make-args }}
+        TEAM_ID: ${{ inputs.apple-team-id }}
+      run: |
+        set -euo pipefail
+        for make_target in lint-swiftlint lint-format lint-complexity swiftcheck-extra audit; do
+            MAKE_TARGET="${make_target}" swift \
+                "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" \
+                run-make-with-team
+        done
+
+    - name: Stop CI instrumentation
+      if: ${{ always() && contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') }}
+      shell: bash
+      env:
+        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+      run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/ci-diagnostics/stop.sh" "${RUNNER_TEMP}/ci-diagnostics"
+
+    - name: Upload CI instrumentation
+      if: ${{ always() && contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ci-diagnostics-${{ inputs.gate }}-${{ inputs.runner }}
+        path: ${{ runner.temp }}/ci-diagnostics
+        overwrite: true
+        if-no-files-found: ignore
