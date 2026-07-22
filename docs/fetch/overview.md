@@ -6,7 +6,16 @@ A consumer does not clone the engine. It fetches one engine snapshot into its ow
 
 `bootstrap.mk` fetches only `swift.mk`. It reads `SWIFT_MK_DEV_DIR` first, so a consumer can test a local engine checkout without changing the committed bootstrap. When no local override supplies the file, it fetches `swift.mk` from the engine repository's `main` ref through `gh api` or `curl`.
 
-After `swift.mk` is present, it owns the rest of the fetch. A standalone `make help` is the exception: once the bootstrap has fetched `swift.mk`, the top-of-file `help` target prints immediately and skips the wider fetch, module load, and toolchain probes. Every other invocation continues through the normal fetch path, so the bootstrap stub stays thin and consumers route through the same fetched engine surface whether the first file came from `SWIFT_MK_DEV_DIR` or from `main`.
+After `swift.mk` is present, it owns the rest of the fetch. A standalone `make help` is the exception: once the bootstrap has fetched `swift.mk`, the top-of-file `help::` target prints immediately and skips the wider fetch, module load, and toolchain probes. Every other invocation continues through the normal fetch path, so the bootstrap stub stays thin and consumers route through the same fetched engine surface whether the first file came from `SWIFT_MK_DEV_DIR` or from `main`.
+
+The engine declares `help` as a double-colon target so a consumer Makefile can append recipes after `include bootstrap.mk`. Content after the include still parses on `make help`, and the fast path remains when `MAKECMDGOALS` is exactly `help`. A consumer may print project lines or delegate to a project tool:
+
+```makefile
+help::
+	@printf '  %-40s %s\n' 'my-target' 'one-line description'
+```
+
+Mixing a single-colon consumer `help:` with the engine `help::` is a Make error.
 
 ## The engine snapshot
 

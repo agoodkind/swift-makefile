@@ -174,6 +174,20 @@ its own `app`, `dmg`, or `release-assets` recipes. Framework-specific packaging,
 such as an auto-update framework's nested code signing or update feed, stays in
 the consumer, which signs nested code through the generic `codesign-run` primitive.
 
+After `include bootstrap.mk`, a consumer may append recipes to the shared `help::`
+double-colon target. Standalone `make help` still uses the engine fast path (it
+skips the wider fetch and toolchain probes when `MAKECMDGOALS` is exactly `help`),
+and consumer content after the include still parses. Append a static line or
+delegate to a project tool:
+
+```makefile
+help::
+	@printf '  %-40s %s\n' 'my-target' 'one-line description'
+```
+
+Do not redefine `help` with a single-colon recipe; that conflicts with the engine
+`help::` target.
+
 ## CI for consumers
 
 All generic CI lives here as reusable workflows; a consumer's workflow files are thin callers that own only the triggers, a few inputs, and `secrets: inherit`.
