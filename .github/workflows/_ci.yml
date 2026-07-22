@@ -1,7 +1,8 @@
 # Reusable Swift CI. Consumers declare setup plus optional bespoke extra
-# targets; the required Build, Test, Deadcode, Lint, and Extra Targets gates live
-# here. Triggers live
-# in the caller (GitHub does not allow them here).
+# targets; the required Build, Test, Lint, and Extra Targets gates live here.
+# Dead-code analysis is not a CI gate: it needs an uncached compile that chokes
+# the pool, so it runs only locally (enforced by LINT_GATES in swift.mk).
+# Triggers live in the caller (GitHub does not allow them here).
 name: CI
 
 on:
@@ -462,88 +463,6 @@ jobs:
             exit 1
           fi
 
-  # ── Deadcode ───────────────────────────────────────────────────────────────
-  # Deadcode routes after Build so its pool attempt can replay Build's compile
-  # cache. Its hosted fallback runs after any unsuccessful pool attempt.
-  route-deadcode:
-    name: Route Deadcode
-    needs: [changes, build]
-    if: ${{ !cancelled() }}
-    uses: ./.github/workflows/_plan-runners.yml
-    with:
-      runner: ${{ inputs.runner }}
-      local-pool-capacity-url: ${{ needs.changes.outputs.run_build == 'false' && '' || inputs.local-pool-capacity-url }}
-      local-pool-label: ${{ inputs.local-pool-label }}
-    secrets:
-      LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
-
-  deadcode-pool:
-    name: Deadcode (pool attempt)
-    needs: [route-deadcode, changes, build]
-    if: ${{ !cancelled() && needs.route-deadcode.result == 'success' }}
-    uses: ./.github/workflows/_ci-gate.yml
-    with:
-      gate: lint-deadcode
-      runner: ${{ needs.changes.outputs.run_build == 'false' && 'ubuntu-latest' || needs.route-deadcode.outputs.label }}
-      run: ${{ needs.changes.outputs.run_build }}
-      xcode-version: ${{ inputs.xcode-version }}
-      cache-profile: ${{ inputs.cache-profile }}
-      cache-version: ${{ inputs.cache-version }}
-      extra-cache-paths: ${{ inputs.extra-cache-paths }}
-      brew-packages: ${{ inputs.brew-packages }}
-      setup-target: ${{ inputs.setup-target }}
-      make-args: ${{ inputs.make-args }}
-      apple-team-id: ${{ inputs.apple-team-id }}
-      timeout-minutes: ${{ inputs.timeout-minutes }}
-      fetch-depth: ${{ inputs.fetch-depth }}
-    secrets: inherit
-
-  deadcode-hosted:
-    name: Deadcode (hosted fallback)
-    needs: [route-deadcode, deadcode-pool]
-    # See the build-hosted note: !cancelled() + on_pool + a failed pool attempt.
-    if: ${{ !cancelled() && needs.route-deadcode.outputs.on_pool == 'true' && needs.deadcode-pool.result != 'success' }}
-    uses: ./.github/workflows/_ci-gate.yml
-    with:
-      gate: lint-deadcode
-      runner: ${{ inputs.runner }}
-      xcode-version: ${{ inputs.xcode-version }}
-      cache-profile: ${{ inputs.cache-profile }}
-      cache-version: ${{ inputs.cache-version }}
-      extra-cache-paths: ${{ inputs.extra-cache-paths }}
-      brew-packages: ${{ inputs.brew-packages }}
-      setup-target: ${{ inputs.setup-target }}
-      make-args: ${{ inputs.make-args }}
-      apple-team-id: ${{ inputs.apple-team-id }}
-      timeout-minutes: ${{ inputs.timeout-minutes }}
-      fetch-depth: ${{ inputs.fetch-depth }}
-    secrets: inherit
-
-  deadcode:
-    name: Deadcode
-    # !cancelled(): see the Build aggregator note.
-    if: ${{ !cancelled() }}
-    needs: [deadcode-pool, deadcode-hosted]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - name: Check deadcode result
-        env:
-          POOL_RESULT: ${{ needs.deadcode-pool.result }}
-          HOSTED_RESULT: ${{ needs.deadcode-hosted.result }}
-        run: |
-          if [[ "${POOL_RESULT}" == "success" ]] || [[ "${HOSTED_RESULT}" == "success" ]]; then
-            printf 'Deadcode passed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}"
-          elif [[ "${POOL_RESULT}" == "skipped" ]] && [[ "${HOSTED_RESULT}" == "skipped" ]]; then
-            printf 'Deadcode skipped (pool=skipped, hosted=skipped); routing or an upstream step failed\n' >&2
-            exit 1
-          else
-            printf 'Deadcode failed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}" >&2
-            exit 1
-          fi
-
   # ── Lint ───────────────────────────────────────────────────────────────────
   # Lint combines the five non-compiling checks in one reusable gate job.
   route-lint:
@@ -633,11 +552,11 @@ jobs:
   # Both attempts skip when there are no bespoke targets to run.
   route-extra-targets:
     name: Route Extra Targets
-    needs: [changes, build, test, deadcode, lint]
+    needs: [changes, build, test, lint]
     # !cancelled() defeats the implicit skip once the required gates finish, while
     # skipping on a cancelled run; the explicit result checks keep it gated on
     # every upstream gate succeeding.
-    if: ${{ !cancelled() && needs.build.result == 'success' && needs.test.result == 'success' && needs.deadcode.result == 'success' && needs.lint.result == 'success' && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') }}
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.test.result == 'success' && needs.lint.result == 'success' && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') }}
     uses: ./.github/workflows/_plan-runners.yml
     with:
       runner: ${{ inputs.runner }}
@@ -648,7 +567,7 @@ jobs:
 
   extra-targets-pool:
     name: Extra Targets (pool attempt)
-    needs: [route-extra-targets, changes, build, test, deadcode, lint]
+    needs: [route-extra-targets, changes, build, test, lint]
     if: ${{ !cancelled() && needs.route-extra-targets.result == 'success' }}
     uses: ./.github/workflows/_ci-gate.yml
     with:
