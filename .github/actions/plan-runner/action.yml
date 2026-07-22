@@ -1,0 +1,122 @@
+name: Plan runner
+description: Select the self-hosted pool when capacity is available, otherwise use the hosted runner.
+
+inputs:
+  runner:
+    description: Hosted runner label used as the fallback.
+    required: false
+    default: macos-latest
+  local-pool-capacity-url:
+    description: Pool capacity endpoint. An empty value forces the hosted runner.
+    required: false
+    default: "https://darwin-gh-broker.silver-flare.com/capacity"
+  local-pool-label:
+    description: Self-hosted runner label selected when the pool has capacity.
+    required: false
+    default: agk-local-macos-26
+  pool-wait-timeout:
+    description: Seconds to wait while both the pool and hosted runners are busy.
+    required: false
+    default: "1800"
+  capacity-token:
+    description: Bearer token for the pool capacity endpoint.
+    required: false
+    default: ""
+
+outputs:
+  label:
+    description: Selected runner label.
+    value: ${{ steps.pick.outputs.label }}
+  on_pool:
+    description: Whether the selected label is the self-hosted pool.
+    value: ${{ steps.pick.outputs.on_pool }}
+
+runs:
+  using: composite
+  steps:
+    - name: Pick runner label
+      id: pick
+      shell: bash
+      env:
+        CAPACITY_URL: ${{ inputs.local-pool-capacity-url }}
+        CAPACITY_TOKEN: ${{ inputs.capacity-token }}
+        POOL_LABEL: ${{ inputs.local-pool-label }}
+        HOSTED_LABEL: ${{ inputs.runner }}
+        REPO: ${{ github.repository }}
+        RUN_ID: ${{ github.run_id }}
+        POOL_WAIT_TIMEOUT: ${{ inputs.pool-wait-timeout }}
+        POLL_INTERVAL: "15"
+        IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        FORCE_HOSTED: ${{ contains(github.event.pull_request.labels.*.name, 'ci-force-hosted') }}
+        FORCE_POOL: ${{ contains(github.event.pull_request.labels.*.name, 'ci-force-pool') }}
+      run: |
+        set -euo pipefail
+
+        emit() {
+          local label="$1" on_pool
+          if [[ "${label}" != "${HOSTED_LABEL}" ]]; then
+            on_pool=true
+          else
+            on_pool=false
+          fi
+          {
+            printf 'label=%s\n' "${label}"
+            printf 'on_pool=%s\n' "${on_pool}"
+          } >> "${GITHUB_OUTPUT}"
+        }
+
+        if [[ "${FORCE_HOSTED}" == "true" ]]; then
+          echo "ci-force-hosted label set; routing to hosted"
+          emit "${HOSTED_LABEL}"
+          exit 0
+        fi
+
+        if [[ "${IS_FORK_PR}" == "true" || -z "${CAPACITY_URL}" ]]; then
+          emit "${HOSTED_LABEL}"
+          exit 0
+        fi
+
+        if [[ "${FORCE_POOL}" == "true" ]]; then
+          echo "ci-force-pool label set; routing to pool"
+          emit "${POOL_LABEL}"
+          exit 0
+        fi
+
+        sep='?'
+        case "${CAPACITY_URL}" in *\?*) sep='&' ;; esac
+        auth=()
+        if [[ -n "${CAPACITY_TOKEN}" ]]; then
+          auth+=(-H "Authorization: Bearer ${CAPACITY_TOKEN}")
+        fi
+
+        started=$(date +%s)
+        deadline=$(( started + POOL_WAIT_TIMEOUT ))
+        while :; do
+          response=$(curl -sf --max-time 5 "${auth[@]}" \
+            "${CAPACITY_URL}${sep}repo=${REPO}&run_id=${RUN_ID}" 2>/dev/null || printf '')
+          if [[ -z "${response}" ]]; then
+            echo "capacity endpoint unreachable; routing to hosted"
+            emit "${HOSTED_LABEL}"
+            exit 0
+          fi
+          available=$(printf '%s' "${response}" | jq -r '.available // false' 2>/dev/null || printf 'false')
+          hosted_free=$(printf '%s' "${response}" | jq -r '.hosted_free // true' 2>/dev/null || printf 'true')
+          if [[ "${available}" == "true" ]]; then
+            echo "pool slot available; routing to pool"
+            emit "${POOL_LABEL}"
+            exit 0
+          fi
+          if [[ "${hosted_free}" == "true" ]]; then
+            echo "pool busy, hosted has headroom; routing to hosted"
+            emit "${HOSTED_LABEL}"
+            exit 0
+          fi
+          now=$(date +%s)
+          if (( now >= deadline )); then
+            echo "pool busy and hosted full for ${POOL_WAIT_TIMEOUT}s; routing to hosted as last resort"
+            emit "${HOSTED_LABEL}"
+            exit 0
+          fi
+          echo "pool busy and hosted full; waiting ${POLL_INTERVAL}s (elapsed $(( now - started ))s / ${POOL_WAIT_TIMEOUT}s)"
+          sleep "${POLL_INTERVAL}"
+        done
