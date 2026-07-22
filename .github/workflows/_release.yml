@@ -118,19 +118,40 @@ env:
 
 jobs:
   # Decide pool-or-hosted for the macOS jobs, reusing the same capacity check the
-  # CI gates use, so release is infra-agnostic.
+  # CI gates use, so release is infra-agnostic. This runs the plan-runner action
+  # as a normal job, so the check reads `Release / swift / Route` with no reusable
+  # workflow tail. The job id stays `plan-runners` so build and notarize keep
+  # their needs and their `build_label` output reference. The engine uses the
+  # local action after checkout; consumers fetch it via @main.
   plan-runners:
-    # Displayed check segment; the job id stays `plan-runners` so build/notarize
-    # needs and outputs are unchanged.
-    name: Route
-    uses: ./.github/workflows/_plan-runners.yml
-    with:
-      runner: ${{ inputs.runner }}
-      local-pool-capacity-url: ${{ inputs.local-pool-capacity-url }}
-      local-pool-label: ${{ inputs.local-pool-label }}
-    # Pass only the capacity token the planner uses, not the Apple signing/notary secrets.
-    secrets:
-      LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
+    name: Route Release Job
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    outputs:
+      build_label: ${{ steps.plan-local.outputs.label || steps.plan-remote.outputs.label }}
+    steps:
+      - uses: actions/checkout@v7
+        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
+      - name: Route (swift-makefile)
+        id: plan-local
+        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
+        uses: ./.github/actions/plan-runner
+        with:
+          runner: ${{ inputs.runner }}
+          local-pool-capacity-url: ${{ inputs.local-pool-capacity-url }}
+          local-pool-label: ${{ inputs.local-pool-label }}
+          capacity-token: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
+      - name: Route
+        id: plan-remote
+        if: ${{ github.repository != 'agoodkind/swift-makefile' }}
+        uses: agoodkind/swift-makefile/.github/actions/plan-runner@main
+        with:
+          runner: ${{ inputs.runner }}
+          local-pool-capacity-url: ${{ inputs.local-pool-capacity-url }}
+          local-pool-label: ${{ inputs.local-pool-label }}
+          capacity-token: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
 
   meta:
     name: Meta
