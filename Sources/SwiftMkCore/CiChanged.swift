@@ -56,7 +56,7 @@ extension CiChanged {
   ]
   private static let buildGateFamilies: Set<GateFamily> = [.build]
   private static let lintGateFamilies: Set<GateFamily> = [.lint]
-  private static let allGateFamilies: Set<GateFamily> = [.build, .lint]
+  static let allGateFamilies: Set<GateFamily> = [.build, .lint]
   private static let githubWorkflowComponentCount = 2
   private static let shaCharacterCount = 40
   private static let nameStatusMinimumFields = 2
@@ -169,12 +169,14 @@ extension CiChanged {
   }
 
   public static func run() -> Int32 {
-    let decision = decide()
+    // decideWithinDeadline (CiChanged+Deadline.swift) bounds the whole detector so an
+    // unbounded git call or resolve cannot wedge the job; it fails safe to a full run.
+    let decision = decideWithinDeadline()
     emitOutputs(families: decision.families, reason: decision.reason)
     return 0
   }
 
-  private struct Decision {
+  struct Decision {
     let families: Set<GateFamily>
     let reason: String
   }
@@ -225,7 +227,7 @@ extension CiChanged {
     let lintSources: Set<String>
   }
 
-  private static func decide() -> Decision {
+  static func decide() -> Decision {
     let start = Date()
     let eventName = Env.get("SWIFT_MK_EVENT_NAME")
     let head = Env.get("SWIFT_MK_DIFF_HEAD", "HEAD")
@@ -350,7 +352,7 @@ extension CiChanged {
     }
   }
 
-  private static func fullRunDecision(reason: String) -> Decision {
+  static func fullRunDecision(reason: String) -> Decision {
     Decision(families: allGateFamilies, reason: reason)
   }
 
