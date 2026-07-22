@@ -73,6 +73,40 @@ probe_codesign() {
     rm -f "${scratch}"
 }
 
+# probe_codesign_session LABEL LAUNCHER...: run, inside the session the launcher
+# reaches, a user-list set followed by codesign against a scratch Mach-O, and
+# record the exit code. The launcher is a command prefix such as
+# `launchctl asuser <uid>`. The inner script sets the user keychain search list
+# to the signing keychain (honored in a login session), prints the session it
+# landed in, then signs, so the recorded rc and managername show whether that
+# launcher is a viable broker fix.
+probe_codesign_session() {
+    local label="$1"
+    shift
+    local scratch rc inner
+
+    scratch="$(mktemp -t codesign-sess)"
+    cp /bin/echo "${scratch}"
+    if ! file "${scratch}" | grep -q 'Mach-O'; then
+        printf 'codesign-session[%s]: scratch is not a Mach-O, probe invalid\n' "${label}"
+        rm -f "${scratch}"
+        return 0
+    fi
+
+    # Build the in-session script with quoted paths. Keep stderr on every command
+    # because the list set is a precondition whose failure explains a codesign
+    # failure, and the managername shows which session codesign actually ran in.
+    inner="$(printf 'security list-keychains -d user -s %q %q; /bin/launchctl managername; codesign --verbose=4 --force --sign %q --keychain %q %q' \
+        "${keychain}" "${system_keychain}" "${identity_sha1}" "${keychain}" "${scratch}")"
+
+    printf '\n=== codesign-session[%s]: %s ===\n' "${label}" "$*"
+    rc=0
+    "$@" /bin/sh -c "${inner}" || rc=$?
+    printf 'codesign-session[%s] rc=%s\n' "${label}" "${rc}"
+
+    rm -f "${scratch}"
+}
+
 diagnostics() {
     printf 'captured: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     printf 'user: %s (uid %s)\n' "$(id -un)" "$(id -u)"
@@ -121,25 +155,32 @@ diagnostics() {
     # Baseline: the state the real build sees.
     probe_codesign baseline
 
-    # Fix candidates. Each puts the signing keychain into a different search list
-    # and re-probes codesign. None needs the keychain password, so each is
-    # testable. The first candidate whose codesign rc is 0 is the fix to apply in
-    # import-signing-cert. These mutate only this throwaway slot keychain.
-    printf '\n### FIX A: list-keychains -s (default domain) ###\n'
-    run /usr/bin/security list-keychains -s "${keychain}" "${system_keychain}"
-    run /usr/bin/security list-keychains
-    probe_codesign fixA-default-domain
+    # Session mechanism probes. Prior runs proved no security list-keychains
+    # variant adds the signing keychain to the search list in the System session,
+    # so codesign cannot resolve the identity here. The broker fix runs the runner
+    # in the admin user's login session instead. These probes test whether
+    # launchctl asuser reaches such a session for this uid and whether codesign
+    # succeeds there, so the broker change is verified before it is written.
+    local admin_uid
+    admin_uid="$(id -u)"
+    printf '\n### SESSION MECHANISM PROBES (uid %s) ###\n' "${admin_uid}"
 
-    printf '\n### FIX B: list-keychains -d dynamic -s (session list) ###\n'
-    run /usr/bin/security list-keychains -d dynamic -s "${keychain}" "${system_keychain}"
-    run /usr/bin/security list-keychains
-    probe_codesign fixB-dynamic-list
+    # Is passwordless sudo available. asuser needs root, and the guest agent runs
+    # as non-root admin, so the broker fix depends on this.
+    run sudo -n /usr/bin/true
 
-    printf '\n### FIX C: default-keychain -d user -s signing + re-assert user list ###\n'
-    run /usr/bin/security default-keychain -d user -s "${keychain}"
-    run /usr/bin/security list-keychains -d user -s "${keychain}" "${system_keychain}"
-    run /usr/bin/security list-keychains
-    probe_codesign fixC-default-plus-user-list
+    # Which session each launcher reaches. A non-System managername means the
+    # launcher moved into a login session where user keychains are honored.
+    run /bin/launchctl asuser "${admin_uid}" /bin/launchctl managername
+    run sudo -n /bin/launchctl asuser "${admin_uid}" /bin/launchctl managername
+
+    # codesign inside the login session. Each launcher sets the user search list
+    # to include the signing keychain, prints the session it landed in, then signs
+    # a scratch Mach-O. rc=0 identifies the launcher the broker should use.
+    probe_codesign_session asuser-nosudo /bin/launchctl asuser "${admin_uid}"
+    probe_codesign_session asuser-sudo sudo -n /bin/launchctl asuser "${admin_uid}"
+    probe_codesign_session asuser-sudo-asadmin \
+        sudo -n /bin/launchctl asuser "${admin_uid}" sudo -u admin
 }
 
 # One recovery boundary: the diagnostic is best-effort and must not fail the
