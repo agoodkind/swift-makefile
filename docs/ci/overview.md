@@ -40,6 +40,8 @@ The `plan-runners` reusable workflow chooses the runner label for each heavy gat
 
 The pool path and hosted path are a paired attempt, not two required checks. Build, Test, each Quality leg, and Extra Targets try the planned label first. When the planned label was the pool and that attempt does not succeed, the hosted fallback runs on the hosted runner. The small aggregator jobs keep the visible required checks stable, so reviewers see Build, Test, each `Quality / ...` check, and Extra Targets rather than separate pool and hosted required statuses. Change detection does not take part in this pool routing, because it runs on Linux (see Change detection runs on Linux).
 
+Two pull-request labels override the route for that run and skip the capacity check. `ci-force-hosted` pins every gate to the hosted runner. `ci-force-pool` pins every gate to the self-hosted pool. `ci-force-hosted` wins when both are set. `ci-force-pool` never applies to a fork pull request, since the fork guard routes untrusted code to hosted before the pool override is read.
+
 The caller workflow keeps one live CI run per ref with `cancel-in-progress: true`. A newer push cancels the older run, and the infra retry workflow treats that as a superseding run rather than a pool outage.
 
 ## Pool outage backstops
