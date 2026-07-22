@@ -3,8 +3,9 @@
 # workflow covers the one case the broker cannot, which is being fully down or
 # unreachable, so it cannot cancel. It finds pool-label jobs stuck queued past a
 # threshold and cancels their runs, so CI never hangs even when the broker is dead.
-# A cancelled run is picked up by ci-infra-retry, which reruns the cancelled jobs;
-# on the rerun plan-runners routes them to hosted because capacity is unavailable.
+# The cancelled run stays cancelled: the automatic rerun-to-hosted in
+# ci-infra-retry is disabled, so a stranded pool run must be re-triggered by a new
+# push once the pool is healthy again.
 name: Pool watchdog
 
 on:

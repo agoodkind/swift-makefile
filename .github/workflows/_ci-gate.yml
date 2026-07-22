@@ -1,5 +1,5 @@
-# Reusable heavy-gate body for the Swift CI. One job runs the Build, Test, Lint,
-# Extra Targets, or an individual quality target selected by `gate`.
+# Reusable heavy-gate body for the Swift CI. One job runs the Build, Test, Quality,
+# or Extra Targets gate selected by `gate`.
 # _ci.yml calls this once per pool attempt and once per hosted fallback, so the
 # guarded setup/sign/make
 # sequence lives here instead of being duplicated across every gate's jobs. This is
@@ -17,9 +17,9 @@ name: CI gate
 on:
   workflow_call:
     inputs:
-      # build | test | lint | extra-targets | an individual quality target
-      # (lint-swiftlint, lint-format, lint-complexity, swiftcheck-extra, audit).
-      # Dead-code analysis is not a CI gate; it runs only locally.
+      # build | test | quality | extra-targets. The quality gate bundles the five
+      # non-compiling checks (SwiftLint, Format, Complexity, Swiftcheck Extra,
+      # Audit). Dead-code analysis is not a CI gate; it runs only locally.
       gate:
         type: string
         required: true
@@ -97,7 +97,7 @@ env:
 
 jobs:
   gate:
-    name: ${{ inputs.gate }}
+    name: Run ${{ inputs.gate }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
@@ -117,10 +117,9 @@ jobs:
           GATE: ${{ inputs.gate }}
         run: |
           case "${GATE}" in
-            build | test | lint | extra-targets) ;;
-            lint-swiftlint | lint-format | lint-complexity | swiftcheck-extra | audit) ;;
+            build | test | quality | extra-targets) ;;
             *)
-              printf 'unknown gate %s; expected build, test, lint, extra-targets, or an individual quality target\n' "${GATE}" >&2
+              printf 'unknown gate %s; expected build, test, quality, or extra-targets\n' "${GATE}" >&2
               exit 1
               ;;
           esac
@@ -288,11 +287,11 @@ jobs:
           EXTRA_TARGETS_SHELL: ${{ steps.resolve.outputs.targets_shell }}
         run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-extra-targets
 
-      # The Lint gate and the individual quality targets share the
-      # preflight/build-tooling guard, then use run-make-with-team because none
-      # of them need signing. Deadcode is not a CI gate; it runs only locally.
+      # The Quality gate runs the shared preflight/build-tooling guard, then the
+      # five non-compiling targets via run-make-with-team because none of them
+      # need signing. Deadcode is not a CI gate; it runs only locally.
       - name: Run shared quality guard
-        if: ${{ inputs.run != 'false' && contains(fromJSON('["lint","lint-swiftlint","lint-format","lint-complexity","swiftcheck-extra","audit"]'), inputs.gate) }}
+        if: ${{ inputs.run != 'false' && inputs.gate == 'quality' }}
         shell: bash
         env:
           MAKE_TARGET: quality-guard
@@ -300,8 +299,8 @@ jobs:
           TEAM_ID: ${{ inputs.apple-team-id }}
         run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-team
 
-      - name: Run lint targets
-        if: ${{ inputs.run != 'false' && inputs.gate == 'lint' }}
+      - name: Run quality targets
+        if: ${{ inputs.run != 'false' && inputs.gate == 'quality' }}
         shell: bash
         env:
           MAKE_ARGS: ${{ inputs.make-args }}
@@ -313,15 +312,6 @@ jobs:
                   "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" \
                   run-make-with-team
           done
-
-      - name: Run quality gate
-        if: ${{ inputs.run != 'false' && contains(fromJSON('["lint-swiftlint","lint-format","lint-complexity","swiftcheck-extra","audit"]'), inputs.gate) }}
-        shell: bash
-        env:
-          MAKE_TARGET: ${{ inputs.gate }}
-          MAKE_ARGS: ${{ inputs.make-args }}
-          TEAM_ID: ${{ inputs.apple-team-id }}
-        run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-team
 
       - name: Stop CI instrumentation
         if: ${{ always() && env.INSTRUMENT == 'true' }}

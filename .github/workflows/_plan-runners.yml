@@ -36,6 +36,12 @@ on:
       pool-wait-timeout:
         type: number
         default: 1800
+      # Cosmetic label so each caller's planner job is distinguishable in the
+      # run's job list (for example "Plan runner (build)"). Empty keeps the bare
+      # "Plan runner" name.
+      for-gate:
+        type: string
+        default: ""
     secrets:
       # Bearer token for the pool's guarded /capacity endpoint. When set (with a
       # non-empty local-pool-capacity-url) the check authenticates; absent or
@@ -73,7 +79,7 @@ env:
 
 jobs:
   plan:
-    name: Plan runner
+    name: ${{ inputs.for-gate != '' && format('Plan runner ({0})', inputs.for-gate) || 'Plan runner' }}
     runs-on: ubuntu-latest
     # Covers the default pool-wait-timeout (1800s) plus curl/jq overhead. The
     # wait runs on this free ubuntu runner, so a long wait costs no macOS time.
@@ -102,6 +108,11 @@ jobs:
           POLL_INTERVAL: "15"
           # Evaluates to "true" for fork PRs; everything else is trusted.
           IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          # PR-label overrides for the runner route. ci-force-hosted pins every gate
+          # to the hosted runner; ci-force-pool pins them to the self-hosted pool.
+          # Both are diagnostic overrides that skip the capacity check.
+          FORCE_HOSTED: ${{ contains(github.event.pull_request.labels.*.name, 'ci-force-hosted') }}
+          FORCE_POOL: ${{ contains(github.event.pull_request.labels.*.name, 'ci-force-pool') }}
         run: |
           set -euo pipefail
 
@@ -125,10 +136,27 @@ jobs:
             } >> "${GITHUB_OUTPUT}"
           }
 
+          # ci-force-hosted wins over everything, including ci-force-pool, and is
+          # safe on any event since hosted is the untrusted-safe target.
+          if [[ "${FORCE_HOSTED}" == "true" ]]; then
+            echo "ci-force-hosted label set; routing to hosted"
+            emit "${HOSTED_LABEL}"
+            exit 0
+          fi
+
           # Untrusted event or no pool configured: never curl the internal
-          # endpoint; route straight to hosted.
+          # endpoint; route straight to hosted. This also blocks ci-force-pool on a
+          # fork PR, so untrusted code can never be pinned onto the pool.
           if [[ "${IS_FORK_PR}" == "true" || -z "${CAPACITY_URL}" ]]; then
             emit "${HOSTED_LABEL}"
+            exit 0
+          fi
+
+          # ci-force-pool pins to the pool without the capacity check. It sits after
+          # the fork guard, so it only applies to trusted PRs.
+          if [[ "${FORCE_POOL}" == "true" ]]; then
+            echo "ci-force-pool label set; routing to pool"
+            emit "${POOL_LABEL}"
             exit 0
           fi
 

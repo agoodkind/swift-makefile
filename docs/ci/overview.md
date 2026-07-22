@@ -38,7 +38,9 @@ CI prefers a self-hosted pool and falls back to GitHub-hosted runners, so a pool
 
 The `plan-runners` reusable workflow chooses the runner label for each heavy gate before any macOS job starts. It runs on `ubuntu-latest`, calls the broker's `/capacity` endpoint, and emits labels for Build, Test, Quality, and Extra Targets. A true capacity response routes the gates to the self-hosted pool label. An empty capacity URL, a fork pull request, a failed request, a malformed response, or a false capacity response routes every gate to the hosted runner input.
 
-The pool path and hosted path are a paired attempt, not two required checks. Build, Test, each Quality leg, and Extra Targets try the planned label first. When the planned label was the pool and that attempt does not succeed, the hosted fallback runs on the hosted runner. The small aggregator jobs keep the visible required checks stable, so reviewers see Build, Test, each `Quality / ...` check, and Extra Targets rather than separate pool and hosted required statuses. Change detection does not take part in this pool routing, because it runs on Linux (see Change detection runs on Linux).
+The first attempt and the retry are a pair, not two required checks. Build, Test, each Quality leg, and Extra Targets run once on the planned label. That first job names itself after where it ran, `self-hosted` or `github-hosted`, so a green check states the runner directly. When the planned label was the self-hosted pool and that attempt does not succeed, a `github-hosted retry` job runs on the GitHub-hosted runner. The small aggregator jobs keep the visible required checks stable, so reviewers see Build, Test, each `Quality / ...` check, and Extra Targets rather than separate self-hosted and github-hosted required statuses. Change detection does not take part in this pool routing, because it runs on Linux (see Change detection runs on Linux).
+
+Two pull-request labels override the route for that run and skip the capacity check. `ci-force-hosted` pins every gate to the hosted runner. `ci-force-pool` pins every gate to the self-hosted pool. `ci-force-hosted` wins when both are set. `ci-force-pool` never applies to a fork pull request, since the fork guard routes untrusted code to hosted before the pool override is read.
 
 The caller workflow keeps one live CI run per ref with `cancel-in-progress: true`. A newer push cancels the older run, and the infra retry workflow treats that as a superseding run rather than a pool outage.
 
@@ -46,7 +48,9 @@ The caller workflow keeps one live CI run per ref with `cancel-in-progress: true
 
 The broker handles normal overflow by reporting truthful capacity before a job routes to the pool. The scheduled pool watchdog covers the case where the broker is down or unreachable after a run already queued a pool-labelled job. It scans queued and in-progress runs for jobs stuck on the pool label past the threshold, then cancels the whole run.
 
-`ci-infra-retry.yml` reruns only an infra-cancelled first attempt. It skips a run with a real job failure, skips a run superseded by a newer push, and uses the full rerun endpoint because a run with only cancelled jobs may have no failed jobs to rerun. On the rerun, `plan-runners` sees unavailable capacity and routes the gates to hosted.
+The cancelled run stays cancelled and does not auto-recover. A new push re-triggers CI once the pool is healthy, and `plan-runners` then routes the gates to the pool or to hosted based on current capacity.
+
+The automatic rerun in `ci-infra-retry.yml` is disabled. A cancelled run carries no signal for who cancelled it, so the auto-rerun could not tell a human GitHub-UI cancel from a pool-watchdog infra cancel and reran manual cancels. The workflow keeps only a `workflow_dispatch` trigger, so it never auto-reruns; re-enable the `workflow_run` trigger once an infra-vs-manual cancel signal exists.
 
 ## Opt-in CI diagnostics
 
