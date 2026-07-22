@@ -73,40 +73,6 @@ probe_codesign() {
     rm -f "${scratch}"
 }
 
-# probe_codesign_session LABEL LAUNCHER...: run, inside the session the launcher
-# reaches, a user-list set followed by codesign against a scratch Mach-O, and
-# record the exit code. The launcher is a command prefix such as
-# `launchctl asuser <uid>`. The inner script sets the user keychain search list
-# to the signing keychain (honored in a login session), prints the session it
-# landed in, then signs, so the recorded rc and managername show whether that
-# launcher is a viable broker fix.
-probe_codesign_session() {
-    local label="$1"
-    shift
-    local scratch rc inner
-
-    scratch="$(mktemp -t codesign-sess)"
-    cp /bin/echo "${scratch}"
-    if ! file "${scratch}" | grep -q 'Mach-O'; then
-        printf 'codesign-session[%s]: scratch is not a Mach-O, probe invalid\n' "${label}"
-        rm -f "${scratch}"
-        return 0
-    fi
-
-    # Build the in-session script with quoted paths. Keep stderr on every command
-    # because the list set is a precondition whose failure explains a codesign
-    # failure, and the managername shows which session codesign actually ran in.
-    inner="$(printf 'security list-keychains -d user -s %q %q; /bin/launchctl managername; codesign --verbose=4 --force --sign %q --keychain %q %q' \
-        "${keychain}" "${system_keychain}" "${identity_sha1}" "${keychain}" "${scratch}")"
-
-    printf '\n=== codesign-session[%s]: %s ===\n' "${label}" "$*"
-    rc=0
-    "$@" /bin/sh -c "${inner}" || rc=$?
-    printf 'codesign-session[%s] rc=%s\n' "${label}" "${rc}"
-
-    rm -f "${scratch}"
-}
-
 diagnostics() {
     printf 'captured: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     printf 'user: %s (uid %s)\n' "$(id -un)" "$(id -u)"
@@ -155,32 +121,68 @@ diagnostics() {
     # Baseline: the state the real build sees.
     probe_codesign baseline
 
-    # Session mechanism probes. Prior runs proved no security list-keychains
-    # variant adds the signing keychain to the search list in the System session,
-    # so codesign cannot resolve the identity here. The broker fix runs the runner
-    # in the admin user's login session instead. These probes test whether
-    # launchctl asuser reaches such a session for this uid and whether codesign
-    # succeeds there, so the broker change is verified before it is written.
-    local admin_uid
-    admin_uid="$(id -u)"
-    printf '\n### SESSION MECHANISM PROBES (uid %s) ###\n' "${admin_uid}"
-
-    # Is passwordless sudo available. asuser needs root, and the guest agent runs
-    # as non-root admin, so the broker fix depends on this.
+    # Hypothesis test, not a known fix. Verified: no security list-keychains
+    # variant changes the running session's effective list, and entering the
+    # existing boot Aqua session with launchctl asuser still fails. Two competing
+    # explanations remain and this run discriminates them:
+    #   H1 search-list: codesign resolves the identity only through the session's
+    #     effective search list, which never contains the per-job keychain here.
+    #   H2 key-access: the identity is found but the private key cannot be used
+    #     in this session, and codesign reports that as "no identity found".
+    # Each fresh-session primitive below sets admin's user-domain list first, then
+    # runs an inner script that prints the session name, the effective list, and
+    # find-identity (default) BEFORE codesign. If a session's effective list gains
+    # the keychain and find-identity default sees it, H1 is testable there; if it
+    # does and codesign still fails, that is evidence for H2.
+    printf '\n### FRESH SESSION HYPOTHESIS PROBES ###\n'
     run sudo -n /usr/bin/true
 
-    # Which session each launcher reaches. A non-System managername means the
-    # launcher moved into a login session where user keychains are honored.
-    run /bin/launchctl asuser "${admin_uid}" /bin/launchctl managername
-    run sudo -n /bin/launchctl asuser "${admin_uid}" /bin/launchctl managername
+    # Set the login user's (admin) user-domain list under admin's own home before
+    # any session is created. A login session reads the list from the login
+    # user's home plist, so this is the state a fresh admin session would inherit.
+    run env HOME=/Users/admin /usr/bin/security list-keychains -d user -s "${keychain}" "${system_keychain}"
+    run env HOME=/Users/admin /usr/bin/security list-keychains -d user
 
-    # codesign inside the login session. Each launcher sets the user search list
-    # to include the signing keychain, prints the session it landed in, then signs
-    # a scratch Mach-O. rc=0 identifies the launcher the broker should use.
-    probe_codesign_session asuser-nosudo /bin/launchctl asuser "${admin_uid}"
-    probe_codesign_session asuser-sudo sudo -n /bin/launchctl asuser "${admin_uid}"
-    probe_codesign_session asuser-sudo-asadmin \
-        sudo -n /bin/launchctl asuser "${admin_uid}" sudo -u admin
+    local inner scratch
+    scratch="$(mktemp -t codesign-fresh)"
+    cp /bin/echo "${scratch}"
+    if ! file "${scratch}" | grep -q 'Mach-O'; then
+        printf 'fresh-session: scratch is not a Mach-O, probe invalid\n'
+        rm -f "${scratch}"
+        return 0
+    fi
+
+    # Inner script observed inside whatever session the primitive creates. It
+    # reports the session, its effective search list, the default-search identity
+    # lookup, then signs through the explicit keychain and the default search,
+    # recording each exit code so H1 and H2 look different in the output.
+    # The $(...) and $HOME in this template must expand inside the fresh session
+    # at runtime, not now, so single quotes are intentional. Only the %q paths are
+    # substituted by printf here.
+    # shellcheck disable=SC2016
+    inner="$(printf 'echo whoami=$(id -un) home=$HOME; echo managername=$(/bin/launchctl managername); echo "--- effective list ---"; /usr/bin/security list-keychains; echo "--- find-identity default ---"; /usr/bin/security find-identity -v -p codesigning; echo "--- codesign explicit-keychain ---"; /usr/bin/codesign --verbose=4 --force --sign %q --keychain %q %q; echo fresh-codesign-explicit-rc=$?; echo "--- codesign default-search ---"; /usr/bin/codesign --verbose=4 --force --sign %q %q; echo fresh-codesign-default-rc=$?' \
+        "${identity_sha1}" "${keychain}" "${scratch}" "${identity_sha1}" "${scratch}")"
+
+    local rc
+
+    # Primitive 1: /usr/bin/login opens a new security session via PAM. It has no
+    # command argument on macOS, so the inner script is fed on stdin to the login
+    # shell. This is the primitive most likely to create a genuinely fresh session.
+    printf '\n=== fresh session via login -fpq admin (stdin) ===\n'
+    rc=0
+    printf '%s\n' "${inner}" | sudo -n /usr/bin/login -fpq admin || rc=$?
+    printf 'fresh-login outer rc=%s\n' "${rc}"
+
+    # Primitive 2 (control): sudo -u admin -i runs a login shell but may inherit
+    # the caller's System audit session rather than create a new one. Comparing
+    # its managername and effective list against primitive 1 shows whether a new
+    # session was actually created.
+    printf '\n=== control session via sudo -u admin -i sh -c ===\n'
+    rc=0
+    sudo -n -u admin -i /bin/sh -c "${inner}" || rc=$?
+    printf 'control-sudo-i outer rc=%s\n' "${rc}"
+
+    rm -f "${scratch}"
 }
 
 # One recovery boundary: the diagnostic is best-effort and must not fail the
