@@ -40,7 +40,7 @@ public enum Codesign {
     preserveMetadata: String? = nil
   ) -> [String] {
     var arguments = ["--force", "--timestamp", "--sign", identity]
-    let trimmedPreserve = preserveMetadata?.trimmingCharacters(in: .whitespaces) ?? ""
+    let trimmedPreserve = preserveMetadata?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     switch mode {
     case .binary:
       arguments += ["--options", "runtime"]
