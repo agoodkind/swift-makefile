@@ -100,6 +100,21 @@ func binaryModeWithPreserveMetadataKeepsExistingIdentifier() {
 }
 
 @Test
+func preserveMetadataTrimsSurroundingNewlinesAndSpaces() {
+  let arguments = Codesign.arguments(
+    path: "/tmp/Updater.app",
+    mode: .binary,
+    identity: "X",
+    identifier: "ignored.when.preserving",
+    preserveMetadata: "  identifier,entitlements,flags\n")
+  #expect(
+    arguments == [
+      "--force", "--timestamp", "--sign", "X", "--options", "runtime",
+      "--preserve-metadata=identifier,entitlements,flags", "/tmp/Updater.app",
+    ])
+}
+
+@Test
 func dmgModeSkipsHardenedRuntime() {
   let arguments = Codesign.arguments(
     path: "/tmp/App.dmg",
