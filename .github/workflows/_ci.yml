@@ -153,6 +153,22 @@ jobs:
     # toolchain install; actions/checkout and actions/cache run unchanged inside it.
     container: swift:6.3
     timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      # Pin SwiftPM's cache to one absolute literal path so the cache step and the swift
+      # process reference the identical location, instead of each resolving `~`/HOME on
+      # its own (the container sets HOME to /github/home, but the cache action's tilde
+      # expansion and swift's HOME are not guaranteed to agree). SwiftPM honors
+      # XDG_CACHE_HOME, placing its clone cache at $XDG_CACHE_HOME/org.swift.swiftpm. A
+      # literal path is required here because the `runner` context is not available in a
+      # job-level env; the container filesystem is shared across steps, so /tmp persists
+      # for the whole job.
+      XDG_CACHE_HOME: /tmp/swiftpm-cache
+      # Default the detector to info, overriding the workflow-level SWIFT_MK_LOG_LEVEL
+      # (empty unless labeled) for this job only, so the detector's essential phase logs
+      # (diff base, git diff, build-graph read, classification) always show. The
+      # ci-diagnostics label still raises this to debug, matching the reusable gate's own
+      # expression, so a labeled run additionally gets the per-git-call debug lines.
+      SWIFT_MK_LOG_LEVEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') && 'debug' || 'info' }}
     permissions:
       contents: read
     outputs:
@@ -169,28 +185,52 @@ jobs:
 
       - name: Trust the workspace for git
         shell: bash
-        # This job runs in a container as root, but actions/checkout writes the
-        # working tree as the runner UID. git then refuses to operate on it
-        # ("detected dubious ownership") from any later step, because checkout only
-        # marks the tree safe in its own temporary HOME. Without this, every git call
-        # the detector makes (merge-base, diff) fails and it runs every gate. Mark the
-        # workspace safe in the container's global config so the detector's git works;
-        # $GITHUB_WORKSPACE is the repo path for the engine and every consumer alike.
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+        # This job runs in a container as root, but actions/checkout writes each working
+        # tree as the runner UID. git then refuses to operate on it ("detected dubious
+        # ownership") from any later step, because checkout only marks the tree safe in
+        # its own temporary HOME. Without this, the detector's git calls (merge-base,
+        # diff) and the engine checkout's build both fail. Trust every path in this
+        # ephemeral container so the workspace and the .swift-makefile engine checkout
+        # both work; the container is CI-controlled and discarded after the job.
+        run: git config --global --add safe.directory '*'
 
-      # Keep the local-vs-consumer split: the engine repo uses its local copy of
-      # the action, and consumers inherit it via @main. continue-on-error keeps a
-      # Linux swift-mk build failure from failing the job: the detect step below
-      # falls back to a full run when the binary is missing.
-      - name: Setup Linux swift-mk
-        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
-        continue-on-error: true
-        uses: ./.github/actions/setup-linux-swift-mk
+      - name: Cache SwiftPM dependency resolution
+        uses: actions/cache@v5
+        with:
+          # The detect step's `swift package describe` resolves the described repo's
+          # dependency graph, cloning every dependency over the network when this cache
+          # is cold. That resolve is the slow, occasionally stalling part of the changes
+          # job. Cache SwiftPM's clone cache so the resolve reuses cloned repositories
+          # instead of hitting the network. The path matches XDG_CACHE_HOME above, so the
+          # cache action and swift agree on one literal location. Key on the manifests so
+          # a dependency change rotates the key; restore-keys lets a manifest change still
+          # restore the previous cache and update it rather than cold-clone. Package.resolved
+          # is gitignored in swift-makefile's own repo, so hashFiles falls back to
+          # Package.swift alone there.
+          path: /tmp/swiftpm-cache/org.swift.swiftpm
+          key: swiftpm-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Package.swift', '**/Package.resolved') }}
+          restore-keys: |
+            swiftpm-deps-${{ runner.os }}-${{ runner.arch }}-
 
+      # Check out the swift-makefile engine at one uniform path so a single setup step
+      # builds swift-mk for the engine and every consumer alike. A step's `uses:` cannot
+      # take an expression, so the ref is what varies: the engine tests its own in-PR
+      # action by checking out this run's sha, and consumers pin @main. This keeps
+      # swift-makefile dogfooding its own action (its PR runs the PR's action) while
+      # avoiding two near-duplicate setup steps guarded by github.repository.
+      - name: Check out the swift-makefile engine
+        uses: actions/checkout@v7
+        with:
+          repository: agoodkind/swift-makefile
+          ref: ${{ github.repository == 'agoodkind/swift-makefile' && github.sha || 'main' }}
+          path: .swift-makefile
+          fetch-depth: 1
+
+      # continue-on-error keeps a Linux swift-mk build failure from failing the job: the
+      # detect step below falls back to a full run when the binary is missing.
       - name: Setup Linux swift-mk
-        if: ${{ github.repository != 'agoodkind/swift-makefile' }}
         continue-on-error: true
-        uses: agoodkind/swift-makefile/.github/actions/setup-linux-swift-mk@main
+        uses: ./.swift-makefile/.github/actions/setup-linux-swift-mk
 
       - name: Detect changes
         id: detect

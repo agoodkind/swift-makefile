@@ -197,6 +197,7 @@ extension CiChanged {
       guard isAncestor(base: diffBase, head: head) else {
         return .decision(fullRunDecision(reason: "diff base is not an ancestor of head"))
       }
+      Output.report("ci-changed: diff base \(diffBase) from the push range on \(defaultBranch)")
       return .base(diffBase)
     }
     let mergeBase = featureBranchMergeBase(
@@ -217,22 +218,33 @@ extension CiChanged {
     eventName == pushEventName || eventName == pullRequestEventName
   }
 
+  private struct ClassifyInputs {
+    let changedPaths: [String]
+    let deletedPaths: Set<String>
+    let extraDirs: [String]
+    let lintSources: Set<String>
+  }
+
   private static func decide() -> Decision {
+    let start = Date()
     let eventName = Env.get("SWIFT_MK_EVENT_NAME")
     let head = Env.get("SWIFT_MK_DIFF_HEAD", "HEAD")
-    guard isSupportedEvent(eventName) else {
-      let event = eventName.isEmpty ? "(unset)" : eventName
-      return fullRunDecision(reason: "unsupported event: \(event)")
-    }
-
     let defaultBranch = Env.get("SWIFT_MK_DEFAULT_BRANCH")
+    let extraDirsRaw = Env.get("SWIFT_MK_CI_EXTRA_DIRS")
+    logInputContext(eventName: eventName, head: head, defaultBranch: defaultBranch)
+    guard isSupportedEvent(eventName) else {
+      return fullRunDecision(reason: "unsupported event: \(display(eventName))")
+    }
     if defaultBranch.isEmpty {
       return fullRunDecision(reason: "missing default branch")
     }
 
     let base: String
-    let isPullRequest = eventName == pullRequestEventName
-    switch resolveDiffBase(defaultBranch: defaultBranch, head: head, isPullRequest: isPullRequest) {
+    switch resolveDiffBase(
+      defaultBranch: defaultBranch,
+      head: head,
+      isPullRequest: eventName == pullRequestEventName)
+    {
     case .base(let value):
       base = value
     case .decision(let decision):
@@ -242,44 +254,100 @@ extension CiChanged {
     guard let repoRoot = gitOutput(["rev-parse", "--show-toplevel"]) else {
       return fullRunDecision(reason: "could not resolve git toplevel")
     }
-    // Operate from the repository root so the graph read, which resolves the project
-    // relative to the working directory, shares the repo-root base with the git diff and
-    // the lint set. This keeps the detector correct when it is invoked from a subdirectory.
-    // A failed chdir leaves the reads on an unknown base, so it fails safe to a full run.
+    // Operate from the repository root so the graph read, the diff, and the lint set share
+    // one base. A failed chdir leaves the reads on an unknown base, so it fails safe.
     guard FileManager.default.changeCurrentDirectoryPath(repoRoot) else {
       return fullRunDecision(reason: "could not change to repo root")
     }
+    Output.report("ci-changed: diffing \(base)..\(head)")
     guard let changedFiles = changedFiles(base: base, head: head) else {
       return fullRunDecision(reason: "git diff failed")
     }
     if changedFiles.isEmpty {
+      Output.report("ci-changed: no changed files between \(base) and \(head)")
       return Decision(families: [], reason: "no changed files")
     }
+    logChangedFiles(changedFiles)
 
-    let changedPaths = changedFiles.map { standardizePath($0.path, root: repoRoot) }
-    let deletedPaths = Set(
-      changedFiles.filter(\.deleted).map { standardizePath($0.path, root: repoRoot) })
-    let extraDirs = Env.words(Env.get("SWIFT_MK_CI_EXTRA_DIRS")).map { directory in
-      standardizePath(directory, root: repoRoot)
-    }
-    // The lint gate lints exactly this set (every tracked and untracked-not-ignored
-    // `.swift`), anchored to the same repo root as the changed paths, so a linted source
-    // is never pruned by the build graph.
-    let lintContext = PathContext(pwd: repoRoot + "/", cwd: repoRoot + "/")
-    let lintSources = Set(
-      LintSourceSet.resolve(context: lintContext).map { standardizePath($0, root: repoRoot) })
-
+    let inputs = classifyInputs(
+      changedFiles: changedFiles, repoRoot: repoRoot, extraDirsRaw: extraDirsRaw)
     let resolved = readGraph(root: repoRoot)
     if resolved.failed {
       return fullRunDecision(reason: "could not read the build graph")
     }
     let result = classify(
-      changedPaths: changedPaths,
+      changedPaths: inputs.changedPaths,
       graph: resolved.graph,
-      extraDirs: extraDirs,
-      deletedPaths: deletedPaths,
-      lintSources: lintSources)
+      extraDirs: inputs.extraDirs,
+      deletedPaths: inputs.deletedPaths,
+      lintSources: inputs.lintSources)
+    Output.report(
+      "ci-changed: decided run_build=\(result.families.contains(.build)) "
+        + "run_lint=\(result.families.contains(.lint)) in \(elapsed(since: start)); "
+        + "reason: \(result.reason)")
     return Decision(families: result.families, reason: result.reason)
+  }
+
+  /// Log the full input context so a diagnostic run shows exactly what the detector saw:
+  /// the event, the head and base shas the workflow passed, the default and feature branch
+  /// names, and the consumer's extra dirs. These lines carry the data, not just a phase
+  /// label, so a wrong classification or a stall is diagnosable from the log alone.
+  private static func logInputContext(eventName: String, head: String, defaultBranch: String) {
+    Output.report(
+      "ci-changed: context event=\(display(eventName)) head=\(display(head)) "
+        + "default_branch=\(display(defaultBranch)) "
+        + "ref_name=\(display(Env.get("SWIFT_MK_REF_NAME"))) "
+        + "diff_base=\(display(Env.get("SWIFT_MK_DIFF_BASE"))) "
+        + "extra_dirs=\(display(Env.get("SWIFT_MK_CI_EXTRA_DIRS")))")
+  }
+
+  /// Standardize the changed set, deleted set, consumer extra dirs, and the lint source set
+  /// against one repo root, and log the lint-set size. The lint gate lints every tracked
+  /// and untracked-not-ignored `.swift`, anchored to the same root as the changed paths, so
+  /// a linted source is never pruned by the build graph.
+  private static func classifyInputs(
+    changedFiles: [ChangedFile], repoRoot: String, extraDirsRaw: String
+  ) -> ClassifyInputs {
+    let changedPaths = changedFiles.map { standardizePath($0.path, root: repoRoot) }
+    let deletedPaths = Set(
+      changedFiles.filter(\.deleted).map { standardizePath($0.path, root: repoRoot) })
+    let extraDirs = Env.words(extraDirsRaw).map { standardizePath($0, root: repoRoot) }
+    let lintContext = PathContext(pwd: repoRoot + "/", cwd: repoRoot + "/")
+    let lintSources = Set(
+      LintSourceSet.resolve(context: lintContext).map { standardizePath($0, root: repoRoot) })
+    Output.report("ci-changed: lint source set has \(lintSources.count) file(s)")
+    return ClassifyInputs(
+      changedPaths: changedPaths,
+      deletedPaths: deletedPaths,
+      extraDirs: extraDirs,
+      lintSources: lintSources)
+  }
+
+  /// `value` for a log line, or `(unset)` when empty, so an empty environment input reads
+  /// as an explicit absence rather than a blank the reader must guess at.
+  private static func display(_ value: String) -> String {
+    value.isEmpty ? "(unset)" : value
+  }
+
+  /// Seconds since `start`, one decimal, for the log lines that time a phase.
+  private static func elapsed(since start: Date) -> String {
+    String(format: "%.1fs", Date().timeIntervalSince(start))
+  }
+
+  private static let changedFileLogLimit = 50
+
+  /// Log the changed set with each path's status, capped so a large diff cannot flood the
+  /// log. The status letter is `D` for a delete (including the old side of a rename) and
+  /// `M` otherwise, matching how `changedFiles` folds a rename into a delete plus an add.
+  private static func logChangedFiles(_ files: [ChangedFile]) {
+    Output.report("ci-changed: \(files.count) changed path(s):")
+    for file in files.prefix(changedFileLogLimit) {
+      Output.report("ci-changed:   \(file.deleted ? "D" : "M") \(file.path)")
+    }
+    let overflow = files.count - changedFileLogLimit
+    if overflow > 0 {
+      Output.report("ci-changed:   ... and \(overflow) more")
+    }
   }
 
   private static func fullRunDecision(reason: String) -> Decision {
@@ -288,9 +356,11 @@ extension CiChanged {
 
   // MARK: Git
 
-  /// Run a git subcommand, logging the invocation on the diagnostic boundary. Every
-  /// git call in this type routes through here, so the process boundary has one
-  /// explicit, auditable place to report.
+  /// Run a git subcommand, logging the invocation at debug on the diagnostic boundary.
+  /// Every git call in this type routes through here, so the process boundary has one
+  /// explicit, auditable place to report. At debug level (the ci-diagnostics label) this
+  /// line prints for every git call and shows which command is running when the detector
+  /// stalls; the info-level phase lines carry the summary on every run.
   private static func runGit(_ arguments: [String]) -> Shell.Result {
     Output.debug("ci-changed: git \(arguments.joined(separator: " "))")
     return Shell.run("git", arguments)
@@ -302,6 +372,7 @@ extension CiChanged {
     isPullRequest: Bool
   ) -> String? {
     if let base = gitOutput(["merge-base", "origin/\(defaultBranch)", head]) {
+      Output.report("ci-changed: diff base \(base) from origin/\(defaultBranch) merge-base")
       return base
     }
     // GitHub checks out `refs/pull/N/merge`, a merge of the base branch (HEAD^1) and
@@ -312,11 +383,13 @@ extension CiChanged {
     // events: on a push, HEAD is a real commit whose parents (if it is a merge) are
     // unrelated to the default branch, so the fast path is restricted to pull requests.
     if isPullRequest, let base = gitOutput(["merge-base", "HEAD^1", "HEAD^2"]) {
+      Output.report("ci-changed: diff base \(base) from the pull-request merge ref parents")
       return base
     }
     // Fallback for a checkout that is not a merge ref: `origin/<default>` is absent
     // and a plain `git fetch origin <default>` updates only FETCH_HEAD, so fetch into
     // the remote-tracking ref explicitly and retry.
+    Output.report("ci-changed: fetching origin/\(defaultBranch) to compute the merge-base")
     let fetch = runGit([
       "fetch", "--no-tags", "origin",
       "+refs/heads/\(defaultBranch):refs/remotes/origin/\(defaultBranch)",
@@ -326,7 +399,11 @@ extension CiChanged {
         "ci-changed: fetch of \(defaultBranch) for merge-base failed (status \(fetch.status)): "
           + fetch.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
     }
-    return gitOutput(["merge-base", "origin/\(defaultBranch)", head])
+    guard let base = gitOutput(["merge-base", "origin/\(defaultBranch)", head]) else {
+      return nil
+    }
+    Output.report("ci-changed: diff base \(base) from origin/\(defaultBranch) after fetch")
+    return base
   }
 
   private struct ChangedFile {

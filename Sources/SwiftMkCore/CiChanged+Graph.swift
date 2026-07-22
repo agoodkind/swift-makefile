@@ -13,6 +13,14 @@ import XcodeProj
 // MARK: - CiChanged build graph
 
 extension CiChanged {
+  /// Bound the change-detection build-graph read. `swift package describe` resolves the
+  /// dependency graph, which clones dependencies over the network when the SwiftPM cache
+  /// is cold. Without a bound a stalled resolve hangs the detector to the job timeout, so
+  /// cap it and fail safe to a full run. A cold resolve on a healthy network finishes well
+  /// under this; a timeout means run everything this once, which is safe and self-corrects
+  /// once the cache warms.
+  private static let describeTimeoutSeconds: Double = 120
+
   /// Read the fresh build graph at head for the working directory's build system, so a
   /// changed file's relevance comes from what the build actually compiles rather than a
   /// stale index. The return value is the graph and whether the read failed. A nil graph
@@ -25,23 +33,37 @@ extension CiChanged {
   static func readGraph(root: String) -> (graph: Graph?, failed: Bool) {
     switch DeadcodeScan.projectShape() {
     case .swiftPMOnly:
-      guard let json = SwiftPM.describePackageJSON() else {
-        Output.error("ci-changed: swift package describe failed")
+      Output.report("ci-changed: reading the SwiftPM build graph via swift package describe")
+      let start = Date()
+      guard let json = SwiftPM.describePackageJSON(timeoutSeconds: describeTimeoutSeconds) else {
+        Output.error("ci-changed: swift package describe failed or timed out")
         return (nil, true)
       }
       guard let graph = parseDescribe(json, root: root) else {
         return (nil, true)
       }
+      Output.report(
+        "ci-changed: build graph has \(graph.sources.count) source(s) and "
+          + "\(graph.resourcePrefixes.count) resource prefix(es), describe took "
+          + String(format: "%.1fs", Date().timeIntervalSince(start)))
       return (graph, false)
     case .project(let project):
+      Output.report(
+        "ci-changed: reading the Xcode build graph from "
+          + ((project.path as NSString).lastPathComponent))
       do {
         let graph = try xcodeGraph(projectPath: project.path, isWorkspace: project.isWorkspace)
+        Output.report(
+          "ci-changed: build graph has \(graph.sources.count) source(s) and "
+            + "\(graph.resourcePrefixes.count) resource prefix(es)")
         return (graph, false)
       } catch {
         Output.error("ci-changed: could not read xcode project: \(error)")
         return (nil, true)
       }
     case .manifestWithoutProject:
+      Output.report(
+        "ci-changed: generated project without a committed graph; using path rules")
       return (nil, false)
     }
   }

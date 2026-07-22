@@ -12,3 +12,6 @@ DerivedData/
 *.xcworkspace
 .sdd-briefs/
 .superpowers/
+# The ubuntu changes job checks the engine out here to build swift-mk from one
+# uniform path; keep this runtime checkout out of the repo's own status and lint set.
+.swift-makefile/

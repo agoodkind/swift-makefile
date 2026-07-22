@@ -34,6 +34,15 @@ public enum Output {
     emit(message + "\n", to: .standardOutput)
   }
 
+  /// Write a line to standard output and record it in the structured log, unconditionally.
+  /// Use for a command whose progress must always appear in the captured step output and in
+  /// the run's log file, independent of `SWIFT_MK_LOG_LEVEL`. This tees to both sinks, so a
+  /// diagnostic is never only in the on-disk log where a CI reader cannot see it.
+  public static func report(_ message: String) {
+    Logging.record(message, level: "info")
+    emit(message + "\n", to: .standardOutput)
+  }
+
   /// Write a line to standard error, terminated by a single newline.
   public static func logError(_ message: String) {
     emit(message + "\n", to: .standardError)
