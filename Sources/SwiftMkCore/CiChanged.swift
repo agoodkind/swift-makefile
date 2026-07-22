@@ -233,6 +233,22 @@ extension CiChanged {
     let head = Env.get("SWIFT_MK_DIFF_HEAD", "HEAD")
     let defaultBranch = Env.get("SWIFT_MK_DEFAULT_BRANCH")
     let extraDirsRaw = Env.get("SWIFT_MK_CI_EXTRA_DIRS")
+
+    // Resolve the repository root and change into it before the first log line, so the whole
+    // run, the diff, the graph read, and the lint set share one base and a subdirectory
+    // invocation writes its logs to one `.make/logs` under the root. `gitOutput` resolves the
+    // root with git, which honors git's discovery rules (`GIT_DIR`, `GIT_WORK_TREE`,
+    // `GIT_CEILING_DIRECTORIES`, mount boundaries). It logs at debug, so under
+    // `SWIFT_MK_LOG_LEVEL=debug` a subdirectory invocation writes that one boundary line to the
+    // subdirectory before the chdir; CI always runs the detector from the root, so its logs
+    // never split. A failed resolve or chdir fails safe to a full run.
+    guard let repoRoot = gitOutput(["rev-parse", "--show-toplevel"]) else {
+      return fullRunDecision(reason: "could not resolve git toplevel")
+    }
+    guard FileManager.default.changeCurrentDirectoryPath(repoRoot) else {
+      return fullRunDecision(reason: "could not change to repo root")
+    }
+
     logInputContext(eventName: eventName, head: head, defaultBranch: defaultBranch)
     guard isSupportedEvent(eventName) else {
       return fullRunDecision(reason: "unsupported event: \(display(eventName))")
@@ -253,14 +269,6 @@ extension CiChanged {
       return decision
     }
 
-    guard let repoRoot = gitOutput(["rev-parse", "--show-toplevel"]) else {
-      return fullRunDecision(reason: "could not resolve git toplevel")
-    }
-    // Operate from the repository root so the graph read, the diff, and the lint set share
-    // one base. A failed chdir leaves the reads on an unknown base, so it fails safe.
-    guard FileManager.default.changeCurrentDirectoryPath(repoRoot) else {
-      return fullRunDecision(reason: "could not change to repo root")
-    }
     Output.report("ci-changed: diffing \(base)..\(head)")
     guard let changedFiles = changedFiles(base: base, head: head) else {
       return fullRunDecision(reason: "git diff failed")

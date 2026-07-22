@@ -201,9 +201,17 @@ public enum Shell {
     }
     var timedOut = false
     let status: Int32
-    if timeoutSeconds > 0, group.wait(timeout: .now() + timeoutSeconds) == .timedOut {
-      timedOut = true
-      status = terminateProcessGroupAndReap(spawned, drainGroup: group)
+    if timeoutSeconds > 0 {
+      // Bound the whole child, not just the pipes. Waiting only on the drain group lets a
+      // child that closes stdout and stderr but then hangs slip past the timeout, because
+      // the pipes hit EOF at once while the process keeps running. reapOrTerminate bounds
+      // the child's exit by the deadline through a single background waitpid, and on a
+      // deadline it kills the group and lets that same reaper collect the status, so the
+      // pid is waited on exactly once.
+      let outcome = reapOrTerminate(
+        spawned, drainGroup: group, deadline: .now() + timeoutSeconds)
+      status = outcome.status
+      timedOut = outcome.timedOut
     } else {
       group.wait()
       status = reapProcessBlocking(spawned.processIdentifier)

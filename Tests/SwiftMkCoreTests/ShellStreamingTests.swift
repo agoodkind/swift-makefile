@@ -54,6 +54,24 @@ func shellRunStreamingStderrTimesOut() {
 }
 
 @Test(.timeLimit(.minutes(1)))
+func shellRunStreamingStderrTimesOutWhenChildClosesStreamsThenHangs() {
+  let startedAt = Date()
+  // The child redirects stdout and stderr to /dev/null, closing the pipe write ends so
+  // the drain group hits EOF immediately, then spins without exiting. The timeout must
+  // still fire because it bounds the process, not just the pipes. A design that waited
+  // on the drain group and then reaped unbounded would hang here forever.
+  let result = Shell.runStreamingStderr(
+    "/bin/sh",
+    ["-c", "exec >/dev/null 2>&1; while :; do :; done"],
+    timeoutSeconds: 0.5)
+  let elapsedSeconds = Date().timeIntervalSince(startedAt)
+
+  #expect(result.timedOut)
+  #expect(result.status != 0)
+  #expect(elapsedSeconds < 3)
+}
+
+@Test(.timeLimit(.minutes(1)))
 func shellRunStreamingStderrReapsProcessTreeOnTimeout() throws {
   let temporaryDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(
     "swift-mk-shell-timeout-\(UUID().uuidString)", isDirectory: true)
