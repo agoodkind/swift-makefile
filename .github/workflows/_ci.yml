@@ -302,7 +302,7 @@ jobs:
   # cancelled (a pool runner that disconnects mid-job ends as cancelled).
   # build: tiny aggregator that is the single required status check for Build.
   build-pool:
-    name: Build (pool attempt)
+    name: Build (${{ needs.changes.outputs.run_build == 'false' && 'skipped' || (needs.route-build.outputs.on_pool == 'true' && 'self-hosted' || 'github-hosted') }})
     needs: [route-build, changes]
     # !cancelled() forces this to run when changes fails (empty run means full CI);
     # requiring route-build success keeps runs-on well-defined, so a routing
@@ -331,7 +331,7 @@ jobs:
     secrets: inherit
 
   build-hosted:
-    name: Build (hosted fallback)
+    name: Build (github-hosted retry)
     needs: [route-build, build-pool]
     # !cancelled() defeats GitHub's implicit skip so the fallback runs whenever the
     # pool attempt did not succeed and the run is still alive; on_pool gates it to
@@ -391,7 +391,7 @@ jobs:
   # cancelled (a pool runner that disconnects mid-job ends as cancelled).
   # test: tiny aggregator that is the single required status check for Test.
   test-pool:
-    name: Test (pool attempt)
+    name: Test (${{ needs.changes.outputs.run_build == 'false' && 'skipped' || (needs.route-test.outputs.on_pool == 'true' && 'self-hosted' || 'github-hosted') }})
     needs: [route-test, changes]
     # See build-pool: fail-safe on a changes failure, but require route-test
     # success so the runner label is always well-defined.
@@ -419,7 +419,7 @@ jobs:
     secrets: inherit
 
   test-hosted:
-    name: Test (hosted fallback)
+    name: Test (github-hosted retry)
     needs: [route-test, test-pool]
     # See the build-hosted note: !cancelled() + on_pool + a failed pool attempt.
     if: ${{ !cancelled() && needs.route-test.outputs.on_pool == 'true' && needs.test-pool.result != 'success' }}
@@ -482,7 +482,7 @@ jobs:
       LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
 
   lint-pool:
-    name: Lint (pool attempt)
+    name: Lint (${{ needs.changes.outputs.run_lint == 'false' && 'skipped' || (needs.route-lint.outputs.on_pool == 'true' && 'self-hosted' || 'github-hosted') }})
     needs: [route-lint, changes, build]
     if: ${{ !cancelled() && needs.route-lint.result == 'success' }}
     uses: ./.github/workflows/_ci-gate.yml
@@ -503,7 +503,7 @@ jobs:
     secrets: inherit
 
   lint-hosted:
-    name: Lint (hosted fallback)
+    name: Lint (github-hosted retry)
     needs: [route-lint, lint-pool]
     # See the build-hosted note: !cancelled() + on_pool + a failed pool attempt.
     if: ${{ !cancelled() && needs.route-lint.outputs.on_pool == 'true' && needs.lint-pool.result != 'success' }}
@@ -570,7 +570,7 @@ jobs:
       LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
 
   extra-targets-pool:
-    name: Extra Targets (pool attempt)
+    name: Extra Targets (${{ needs.changes.outputs.run == 'false' && 'skipped' || (needs.route-extra-targets.outputs.on_pool == 'true' && 'self-hosted' || 'github-hosted') }})
     needs: [route-extra-targets, changes, build, test, lint]
     if: ${{ !cancelled() && needs.route-extra-targets.result == 'success' }}
     uses: ./.github/workflows/_ci-gate.yml
@@ -598,7 +598,7 @@ jobs:
     secrets: inherit
 
   extra-targets-hosted:
-    name: Extra Targets (hosted fallback)
+    name: Extra Targets (github-hosted retry)
     needs: [route-extra-targets, extra-targets-pool]
     # See the build-hosted note: !cancelled(). Runs only when the caller configured
     # extra targets, expressed inline since the reusable planner carries no such
