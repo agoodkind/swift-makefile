@@ -85,12 +85,13 @@ func binaryModeAddsKeychainWhenSet() {
 }
 
 @Test
-func sparkleModePreservesMetadata() {
+func binaryModeWithPreserveMetadataKeepsExistingIdentifier() {
   let arguments = Codesign.arguments(
     path: "/tmp/Updater.app",
-    mode: .sparkle,
+    mode: .binary,
     identity: "X",
-    identifier: "ignored.when.sparkle")
+    identifier: "ignored.when.preserving",
+    preserveMetadata: "identifier,entitlements,flags")
   #expect(
     arguments == [
       "--force", "--timestamp", "--sign", "X", "--options", "runtime",
