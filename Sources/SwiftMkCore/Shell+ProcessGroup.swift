@@ -262,6 +262,31 @@ extension Shell {
     }
   }
 
+  /// Reap `processIdentifier` without blocking past `deadline`. `reapProcessBlocking`
+  /// waits in `waitpid` until the child exits, which never happens for a child that
+  /// closed its stdout and stderr but then hung; waiting on it would defeat the timeout
+  /// the change detector relies on. This runs the blocking reap on a background queue and
+  /// waits for it bounded by `deadline`, returning the decoded exit code when the child is
+  /// reaped in time, or nil when the deadline passes with the child still running so the
+  /// caller can kill it. The wait is a `DispatchGroup` timeout, so there is no sleep. If
+  /// the deadline fires, the caller SIGKILLs the group and reaps; the background `waitpid`
+  /// then loses the reap race and returns harmlessly, holding no resource.
+  static func reapProcessWithDeadline(
+    _ processIdentifier: pid_t, deadline: DispatchTime
+  ) -> Int32? {
+    let group = DispatchGroup()
+    let holder = ReapStatusHolder()
+    group.enter()
+    DispatchQueue.global().async {
+      holder.store(reapProcessBlocking(processIdentifier))
+      group.leave()
+    }
+    if group.wait(timeout: deadline) == .timedOut {
+      return nil
+    }
+    return holder.load()
+  }
+
   /// Kill a timed-out child's whole process group and reap it. Send SIGTERM to the
   /// group, wait a bounded grace for the tree to exit by waiting on the drain group
   /// (which completes when both pipe read ends hit EOF once every process holding
@@ -334,5 +359,28 @@ extension Shell {
       }
       return body(base)
     }
+  }
+}
+
+// MARK: - ReapStatusHolder
+
+/// A lock-guarded box that carries a reaped exit status from the background reap queue
+/// back to `reapProcessWithDeadline` on the calling thread. A reference type so the async
+/// reap and the caller share one value; an `NSLock` guards every access, which is why the
+/// unchecked `Sendable` conformance is sound.
+private final class ReapStatusHolder: @unchecked Sendable {
+  private let lock = NSLock()
+  private var status: Int32 = 0
+
+  func store(_ value: Int32) {
+    lock.lock()
+    defer { lock.unlock() }
+    status = value
+  }
+
+  func load() -> Int32 {
+    lock.lock()
+    defer { lock.unlock() }
+    return status
   }
 }
