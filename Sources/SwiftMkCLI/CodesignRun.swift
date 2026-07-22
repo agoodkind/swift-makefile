@@ -20,8 +20,14 @@ struct CodesignRun: ParsableCommand {
     abstract: "Sign artifacts with the resolved identity and canonical flags."
   )
 
-  @Option(name: .long, help: "Artifact kind: binary, sparkle, or dmg.")
+  @Option(name: .long, help: "Artifact kind: binary or dmg.")
   var mode: String = "binary"
+
+  @Option(
+    name: .customLong("preserve-metadata"),
+    help: "codesign --preserve-metadata value; re-signs nested code in place, skips --identifier."
+  )
+  var preserveMetadata: String?
 
   @Option(name: .long, help: "Bundle identifier applied to every path.")
   var identifier: String?
@@ -60,6 +66,7 @@ struct CodesignRun: ParsableCommand {
         identifierPrefix: identifierPrefix,
         bundlesDirectory: bundlesIn,
         keychain: keychain,
+        preserveMetadata: preserveMetadata,
         localXcconfigPaths: [localXcconfig]
       )
     else {
