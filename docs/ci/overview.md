@@ -46,7 +46,9 @@ The caller workflow keeps one live CI run per ref with `cancel-in-progress: true
 
 The broker handles normal overflow by reporting truthful capacity before a job routes to the pool. The scheduled pool watchdog covers the case where the broker is down or unreachable after a run already queued a pool-labelled job. It scans queued and in-progress runs for jobs stuck on the pool label past the threshold, then cancels the whole run.
 
-`ci-infra-retry.yml` reruns only an infra-cancelled first attempt. It skips a run with a real job failure, skips a run superseded by a newer push, and uses the full rerun endpoint because a run with only cancelled jobs may have no failed jobs to rerun. On the rerun, `plan-runners` sees unavailable capacity and routes the gates to hosted.
+The cancelled run stays cancelled and does not auto-recover. A new push re-triggers CI once the pool is healthy, and `plan-runners` then routes the gates to the pool or to hosted based on current capacity.
+
+The automatic rerun in `ci-infra-retry.yml` is disabled. A cancelled run carries no signal for who cancelled it, so the auto-rerun could not tell a human GitHub-UI cancel from a pool-watchdog infra cancel and reran manual cancels. The workflow keeps only a `workflow_dispatch` trigger, so it never auto-reruns; re-enable the `workflow_run` trigger once an infra-vs-manual cancel signal exists.
 
 ## Opt-in CI diagnostics
 
