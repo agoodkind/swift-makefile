@@ -5,11 +5,15 @@ name: CI infra retry
 # failed. This reruns such a run once, and on the rerun plan-runners routes to
 # hosted because the pool is unavailable. A run with any real job failure, or a
 # run superseded by a newer push, is never rerun.
+#
+# DISABLED: the workflow_run auto-trigger is removed because a cancelled run
+# carries no signal for who cancelled it, so this reran runs a human cancelled
+# from the GitHub UI, not only pool-watchdog infra cancels. Only workflow_dispatch
+# remains, so nothing auto-reruns a cancel. Re-enable by restoring the
+# workflow_run trigger once an infra-vs-manual cancel signal exists.
 
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
+  workflow_dispatch:
 
 permissions:
   actions: write
