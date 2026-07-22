@@ -7,7 +7,7 @@
 	swift-mk-bin swift-mk-notice quality-guard lint-swiftlint-scope lint-swiftlint-baseline-scope lint-swiftlint-baseline-scope-accept-new \
 	swift-mk-sync update-swift-mk smoke-fetch update-consumers update-consumers-dry-run log-audit install-hooks xcode-file-header
 
-help:
+help::
 	@printf '%s\n' 'Canonical entry points:'
 	@printf '  %-40s %s\n' 'build' 'run build-check, then execute SWIFT_BUILD_CMD'
 	@printf '  %-40s %s\n' 'build FORCE=1' 'force a full build, skipping the freshness no-op'

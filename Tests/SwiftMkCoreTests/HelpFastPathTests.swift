@@ -57,6 +57,21 @@ func mixedGoalRetainsNormalBootstrapPath() throws {
   #expect(fetchedFiles != standaloneHelpFiles)
 }
 
+@Test
+func consumerHelpAppendStaysOnFastPath() throws {
+  let appendedLine = "consumer-help-append"
+  let harness = try HelpFastPathHarness(appendedHelpLine: appendedLine)
+  defer { harness.cleanup() }
+
+  let result = harness.runMake(["help"])
+  #expect(result.status == 0, Comment(rawValue: result.combined))
+  #expect(result.stdout.contains("Canonical entry points:"))
+  #expect(result.stdout.contains(appendedLine))
+  #expect(try harness.tripwireLogLines().isEmpty)
+  #expect(!FileManager.default.fileExists(atPath: harness.swiftMkBinPath))
+  #expect(try Set(harness.relativeMakeFiles()) == standaloneHelpFiles)
+}
+
 // MARK: - HelpFastPathHarness
 
 private struct HelpFastPathHarness {
@@ -67,7 +82,7 @@ private struct HelpFastPathHarness {
   let repositoryRoot: URL
   let swiftMkBinPath: String
 
-  init() throws {
+  init(appendedHelpLine: String? = nil) throws {
     let fileManager = FileManager.default
     root = fileManager.temporaryDirectory.appendingPathComponent(
       "swift-mk-help-fast-path-\(UUID().uuidString)",
@@ -82,7 +97,7 @@ private struct HelpFastPathHarness {
     try fileManager.createDirectory(at: binDirectory, withIntermediateDirectories: true)
     try fileManager.createDirectory(at: consumerRoot, withIntermediateDirectories: true)
     try installBootstrap()
-    try installConsumerMakefile()
+    try installConsumerMakefile(appendedHelpLine: appendedHelpLine)
     try installTripwires()
   }
 
@@ -170,13 +185,20 @@ private struct HelpFastPathHarness {
     try FileManager.default.copyItem(at: bootstrapSource, to: bootstrapDestination)
   }
 
-  private func installConsumerMakefile() throws {
-    let makefile = """
+  private func installConsumerMakefile(appendedHelpLine: String? = nil) throws {
+    var makefile = """
       SWIFT_MK_MODULES := swift-build.mk xcconfig.mk
       SWIFT_BUILD_CMD := printf 'build\\n'
 
       include bootstrap.mk
       """
+    if let appendedHelpLine {
+      makefile += """
+
+        help::
+        \t@printf '%s\\n' '\(appendedHelpLine)'
+        """
+    }
     let makefileURL = consumerRoot.appendingPathComponent("Makefile")
     try makefile.write(to: makefileURL, atomically: true, encoding: .utf8)
   }
