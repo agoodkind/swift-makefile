@@ -17,36 +17,41 @@ import Foundation
 public enum Codesign {
   /// The artifact kinds the canonical channel signs, each with its fixed flag
   /// set. `binary` is a bare executable or bundle (hardened runtime plus
-  /// timestamp), `sparkle` re-signs vendored Sparkle internals in place without
-  /// discarding their metadata, and `dmg` signs a disk image, which takes no
-  /// hardened runtime.
+  /// timestamp) and `dmg` signs a disk image, which takes no hardened runtime.
+  /// Re-signing vendored, already-signed nested code in place is not a separate
+  /// kind: sign it as `binary` and pass `preserveMetadata` so codesign keeps the
+  /// artifact's existing identifier, entitlements, and flags.
   public enum Mode: String, Sendable {
     case binary
     case dmg
-    case sparkle
   }
 
   /// The codesign argument list for one path, pure so tests cover every mode
-  /// without spawning codesign.
+  /// without spawning codesign. `preserveMetadata` is the verbatim value for
+  /// codesign's `--preserve-metadata` flag (for example
+  /// `identifier,entitlements,flags`); when set, codesign keeps the existing
+  /// identifier, so no `--identifier` is derived.
   static func arguments(
     path: String,
     mode: Mode,
     identity: String,
     identifier: String?,
-    keychain: String? = nil
+    keychain: String? = nil,
+    preserveMetadata: String? = nil
   ) -> [String] {
     var arguments = ["--force", "--timestamp", "--sign", identity]
+    let trimmedPreserve = preserveMetadata?.trimmingCharacters(in: .whitespaces) ?? ""
     switch mode {
     case .binary:
       arguments += ["--options", "runtime"]
-      if let identifier, !identifier.isEmpty {
+      if trimmedPreserve.isEmpty, let identifier, !identifier.isEmpty {
         arguments += ["--identifier", identifier]
       }
-    case .sparkle:
-      arguments += ["--options", "runtime"]
-      arguments += ["--preserve-metadata=identifier,entitlements,flags"]
     case .dmg:
       break
+    }
+    if !trimmedPreserve.isEmpty {
+      arguments += ["--preserve-metadata=\(trimmedPreserve)"]
     }
     let trimmedKeychain = keychain?.trimmingCharacters(in: .whitespaces) ?? ""
     if !trimmedKeychain.isEmpty {
@@ -118,6 +123,7 @@ public enum Codesign {
     identifierPrefix: String? = nil,
     bundlesDirectory: String? = nil,
     keychain: String? = nil,
+    preserveMetadata: String? = nil,
     localXcconfigPaths: [String] = ["Config/local.xcconfig"]
   ) -> Bool {
     let identity = resolveIdentity(localXcconfigPaths: localXcconfigPaths)
@@ -153,7 +159,8 @@ public enum Codesign {
           mode: mode,
           identity: identity,
           identifier: pathIdentifier,
-          keychain: resolvedKeychain))
+          keychain: resolvedKeychain,
+          preserveMetadata: preserveMetadata))
       guard sign.status == 0 else {
         Output.error("codesign-run: signing failed for \(path)")
         Output.emitStandardError(sign.combined)
