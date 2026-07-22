@@ -273,7 +273,7 @@ jobs:
   # two routes become eligible together after change detection, but each makes
   # its own /capacity request and can choose a different runner.
   route-build:
-    name: Route Build
+    name: Route Build Job
     needs: [changes]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
@@ -306,7 +306,7 @@ jobs:
           capacity-token: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
 
   route-test:
-    name: Route Test
+    name: Route Test Job
     needs: [changes]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
@@ -588,7 +588,7 @@ jobs:
   # ── Quality ────────────────────────────────────────────────────────────────
   # Quality combines the five non-compiling checks in one reusable gate job.
   route-quality:
-    name: Route Quality
+    name: Route Quality Job
     needs: [changes, build]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
@@ -732,7 +732,7 @@ jobs:
   # extra-targets: tiny aggregator that is the single required status check.
   # Both attempts skip when there are no bespoke targets to run.
   route-extra-targets:
-    name: Route Extra Targets
+    name: Route Extra Targets Job
     needs: [changes, build, test, quality]
     # !cancelled() defeats the implicit skip once the required gates finish, while
     # skipping on a cancelled run; the explicit result checks keep it gated on
