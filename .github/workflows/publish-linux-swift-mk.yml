@@ -106,7 +106,7 @@ jobs:
           echo "asset_name=${asset_name}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload the binary to the host publish job
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-swift-mk-binary
           path: ${{ runner.temp }}/upload/
