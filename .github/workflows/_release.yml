@@ -418,6 +418,21 @@ jobs:
         with:
           profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
 
+      # With the ci-diagnostics label, capture the signing keychain state and a
+      # direct codesign probe before the build, so a run that fails on the pool
+      # with "no identity found" carries the exact keychain lock state, key
+      # access control list, identity search results, and codesign errSec.
+      - name: Capture signing diagnostics
+        if: ${{ inputs.ephemeral && contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') && env.HAS_SIGNING == 'true' }}
+        shell: bash
+        env:
+          SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+          SIGNING_KEYCHAIN: ${{ steps.cert.outputs.keychain }}
+          SIGNING_IDENTITY_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
+        run: |
+          bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/ci-diagnostics/capture-signing.sh" \
+            "${RUNNER_TEMP}/ci-diagnostics" "${SIGNING_KEYCHAIN}" "${SIGNING_IDENTITY_SHA1}"
+
       # Signing values pass as make command-line variables only when present, so
       # a secretless run never clobbers a consumer's ?= defaults with empties.
       # Notary credentials are exposed too: a consumer whose build hook must
