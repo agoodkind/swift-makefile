@@ -231,6 +231,19 @@ extension CiChanged {
     let head = Env.get("SWIFT_MK_DIFF_HEAD", "HEAD")
     let defaultBranch = Env.get("SWIFT_MK_DEFAULT_BRANCH")
     let extraDirsRaw = Env.get("SWIFT_MK_CI_EXTRA_DIRS")
+
+    // Change to the repository root before the first log line, so the whole run logs to
+    // one `.make/logs` under the repo root rather than splitting when ci-changed is
+    // invoked from a subdirectory (the first Output write fixes the log location). The
+    // graph read, the diff, and the lint set then also share this one base. A failed
+    // chdir leaves the reads on an unknown base, so it fails safe to a full run.
+    guard let repoRoot = gitOutput(["rev-parse", "--show-toplevel"]) else {
+      return fullRunDecision(reason: "could not resolve git toplevel")
+    }
+    guard FileManager.default.changeCurrentDirectoryPath(repoRoot) else {
+      return fullRunDecision(reason: "could not change to repo root")
+    }
+
     logInputContext(eventName: eventName, head: head, defaultBranch: defaultBranch)
     guard isSupportedEvent(eventName) else {
       return fullRunDecision(reason: "unsupported event: \(display(eventName))")
@@ -251,14 +264,6 @@ extension CiChanged {
       return decision
     }
 
-    guard let repoRoot = gitOutput(["rev-parse", "--show-toplevel"]) else {
-      return fullRunDecision(reason: "could not resolve git toplevel")
-    }
-    // Operate from the repository root so the graph read, the diff, and the lint set share
-    // one base. A failed chdir leaves the reads on an unknown base, so it fails safe.
-    guard FileManager.default.changeCurrentDirectoryPath(repoRoot) else {
-      return fullRunDecision(reason: "could not change to repo root")
-    }
     Output.report("ci-changed: diffing \(base)..\(head)")
     guard let changedFiles = changedFiles(base: base, head: head) else {
       return fullRunDecision(reason: "git diff failed")
