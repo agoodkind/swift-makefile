@@ -773,12 +773,19 @@ jobs:
           capacity-token: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
 
   extra-targets-pool:
-    name: Extra Targets (${{ needs.changes.outputs.run == 'false' && 'skipped' || (needs.route-extra-targets.outputs.on_pool == 'true' && 'self-hosted' || 'github-hosted') }})
+    # Run whenever routing succeeded or was skipped, so this job is not truly skipped in the
+    # common cases and its dynamic name is evaluated instead of rendering its raw ${{ }} text in
+    # the checks list (a skipped job's name is not evaluated). route-extra-targets is skipped when
+    # there are no bespoke targets or a gate did not pass; in that case this job runs on ubuntu as
+    # a no-op and its name shows "skipped". When routing succeeded it does the real work on the
+    # routed runner. A routing failure is left out, so this job skips and the aggregator reports a
+    # failure, exactly like build-pool/test-pool/quality-pool do on a routing failure.
+    name: Extra Targets (${{ (needs.route-extra-targets.result != 'success' || needs.changes.outputs.run == 'false') && 'skipped' || (needs.route-extra-targets.outputs.on_pool == 'true' && 'self-hosted' || 'github-hosted') }})
     needs: [route-extra-targets, changes, build, test, quality]
-    if: ${{ !cancelled() && needs.route-extra-targets.result == 'success' }}
-    # Route to ubuntu on an index-confirmed skip so a docs-only push does not
-    # occupy a macOS pool slot.
-    runs-on: ${{ needs.changes.outputs.run == 'false' && 'ubuntu-latest' || needs.route-extra-targets.outputs.label }}
+    if: ${{ !cancelled() && (needs.route-extra-targets.result == 'success' || needs.route-extra-targets.result == 'skipped') }}
+    # The real runner only when doing real work; otherwise ubuntu for the no-op, so a run with
+    # no bespoke targets does not occupy a macOS pool slot.
+    runs-on: ${{ (needs.route-extra-targets.result == 'success' && needs.changes.outputs.run != 'false') && needs.route-extra-targets.outputs.label || 'ubuntu-latest' }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
@@ -792,8 +799,11 @@ jobs:
         uses: ./.github/actions/ci-gate
         with: &extra-targets-pool-inputs
           gate: extra-targets
-          runner: ${{ needs.changes.outputs.run == 'false' && 'ubuntu-latest' || needs.route-extra-targets.outputs.label }}
-          run: ${{ needs.changes.outputs.run }}
+          runner: ${{ (needs.route-extra-targets.result == 'success' && needs.changes.outputs.run != 'false') && needs.route-extra-targets.outputs.label || 'ubuntu-latest' }}
+          # No-op when routing was skipped (no bespoke targets or a gate did not pass). When
+          # routing succeeded, pass the detector output through unchanged so an empty value keeps
+          # the detector's fail-safe (empty means run), matching the other gates.
+          run: ${{ needs.route-extra-targets.result != 'success' && 'false' || needs.changes.outputs.run }}
           extra-targets: ${{ inputs.extra-targets }}
           targets: ${{ inputs.targets }}
           xcode-version: ${{ inputs.xcode-version }}
@@ -880,19 +890,13 @@ jobs:
         env:
           POOL_RESULT: ${{ needs.extra-targets-pool.result }}
           HOSTED_RESULT: ${{ needs.extra-targets-hosted.result }}
-          # True when bespoke targets are configured, so both attempts skipping
-          # means an upstream gate failed rather than a legitimate no-op.
-          HAS_EXTRA: ${{ inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]' }}
+        # extra-targets-pool always runs (it no-ops green when there are no bespoke targets or a
+        # gate did not pass), so a skipped pool means the run was cancelled, and the only real
+        # failure is a bespoke target that failed on both the pool and the hosted retry.
         run: |
           if [[ "${POOL_RESULT}" == "success" ]] || [[ "${HOSTED_RESULT}" == "success" ]]; then
-            printf 'Extra targets passed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}"
-          elif [[ "${POOL_RESULT}" == "skipped" ]] && [[ "${HOSTED_RESULT}" == "skipped" ]]; then
-            if [[ "${HAS_EXTRA}" == "true" ]]; then
-              printf 'Extra targets were configured but both attempts skipped; an upstream gate failed\n' >&2
-              exit 1
-            fi
-            printf 'Extra targets skipped (no bespoke targets configured)\n'
+            printf 'Extra Targets passed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}"
           else
-            printf 'Extra targets failed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}" >&2
+            printf 'Extra Targets failed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}" >&2
             exit 1
           fi
