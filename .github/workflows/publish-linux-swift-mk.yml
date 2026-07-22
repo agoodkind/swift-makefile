@@ -1,0 +1,161 @@
+name: Publish Linux swift-mk
+
+# Build the Linux swift-mk change-detection binary once per engine change and publish it
+# as an asset on a rolling GitHub release, so every consumer's `changes` job downloads one
+# prebuilt binary instead of rebuilding it. A GitHub Actions cache cannot serve this: cache
+# entries are scoped by ref, so a cache saved on one consumer PR is never restorable from
+# another PR, which made every consumer rebuild the ~460 MB binary. A release asset is not
+# ref-scoped, so any run of any repo can download it.
+on:
+  push:
+    branches: [main]
+    # Only the engine inputs that change the compiled binary or its cache key. These mirror the
+    # file set setup-linux-swift-mk hashes for its key, so the published binary tracks the same
+    # source; Package.resolved is included because it is tracked and feeds that hash.
+    paths:
+      - "Sources/**"
+      - "Package.swift"
+      - "Package.resolved"
+      - "scripts/swift-mk-build.sh"
+      - ".github/actions/setup-linux-swift-mk/action.yml"
+      - ".github/workflows/publish-linux-swift-mk.yml"
+  # Allow a manual rebuild-and-publish, e.g. after a base-image bump changes the runtime id.
+  workflow_dispatch:
+
+# Serialize so two main pushes cannot upload the same asset at once; cancel an older
+# in-flight publish since only the newest engine build should win.
+concurrency:
+  group: publish-linux-swift-mk
+  cancel-in-progress: true
+
+jobs:
+  # Build in the Swift container, which has the toolchain but not the GitHub CLI, then hand the
+  # artifact to a host job that has gh. Splitting the two avoids installing gh into the
+  # container image. This job only reads the repo and uploads a workflow artifact, so it needs
+  # no write permission; the release write is confined to the publish job below.
+  build:
+    runs-on: ubuntu-latest
+    container: swift:6.3
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      asset_name: ${{ steps.build.outputs.asset_name }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Trust the workspace for git
+        shell: bash
+        # The container runs as root while actions/checkout writes the tree as the runner
+        # UID, so git refuses to operate on it ("detected dubious ownership") until the
+        # workspace is marked safe.
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Build and name the Linux swift-mk binary
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Compute the source hash BEFORE building, from the checked-in files only, with the
+          # identical recipe setup-linux-swift-mk uses in its Resolve step (which also runs
+          # before any build). `swift build` can rewrite Package.resolved, so hashing after the
+          # build would diverge from the consumer's pre-build hash and every consumer would miss.
+          # The hash pairs each file's content digest with its repo-relative path and sorts, so
+          # emission order does not matter.
+          source_hash=$(
+            {
+              find "${GITHUB_WORKSPACE}/Sources" -type f -print0 2>/dev/null \
+                | while IFS= read -r -d '' path; do
+                    content_hash=$(shasum < "${path}" | awk '{ print $1 }')
+                    printf '%s  %s\n' "${content_hash}" "${path#"${GITHUB_WORKSPACE}/"}"
+                  done
+              for manifest in Package.swift Package.resolved scripts/swift-mk-build.sh; do
+                if [ -f "${GITHUB_WORKSPACE}/${manifest}" ]; then
+                  content_hash=$(shasum < "${GITHUB_WORKSPACE}/${manifest}" | awk '{ print $1 }')
+                  printf '%s  %s\n' "${content_hash}" "${manifest}"
+                fi
+              done
+            } | LC_ALL=C sort | shasum | awk '{ print $1 }'
+          )
+          # Build swift-mk exactly as setup-linux-swift-mk does, so the published binary is
+          # what a from-source build would produce.
+          bin="${RUNNER_TEMP}/swift-mk"
+          SWIFT_MK_BIN="${bin}" SWIFT_MK_BUILD_REPO="${GITHUB_WORKSPACE}" \
+              bash "${GITHUB_WORKSPACE}/scripts/swift-mk-build.sh" resolve
+          if [ ! -x "${bin}" ]; then
+              echo "publish-linux-swift-mk: build did not produce ${bin}" >&2
+              exit 1
+          fi
+          # Fold the Swift toolchain and container runtime into the name with the identical
+          # recipe setup-linux-swift-mk uses, so a consumer downloads only a binary built from
+          # the same source under the same Swift, glibc, and base OS.
+          runtime_id=$(
+            {
+              swift --version 2>/dev/null
+              getconf GNU_LIBC_VERSION 2>/dev/null
+              cat /etc/os-release 2>/dev/null
+            } | shasum | awk '{ print $1 }'
+          )
+          asset_name="swift-mk-linux-${source_hash}-${runtime_id}"
+          out="${RUNNER_TEMP}/upload"
+          mkdir -p "${out}"
+          cp "${bin}" "${out}/${asset_name}"
+          # A sidecar checksum the consumer verifies before executing the binary, catching a
+          # corrupt or truncated download.
+          ( cd "${out}" && shasum -a 256 "${asset_name}" > "${asset_name}.sha256" )
+          echo "asset_name=${asset_name}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload the binary to the host publish job
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-swift-mk-binary
+          path: ${{ runner.temp }}/upload/
+          if-no-files-found: error
+          retention-days: 1
+
+  # Publish on the host runner, which has gh preinstalled, so no gh install is needed in the
+  # Swift container. Only this job writes the release, so it is the only job granted write.
+  publish:
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download the built binary
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-swift-mk-binary
+          path: upload
+
+      - name: Publish to the rolling release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ASSET_NAME: ${{ needs.build.outputs.asset_name }}
+        run: |
+          set -euo pipefail
+          tag="linux-swift-mk"
+          # Create the rolling release once; keep it a non-latest prerelease so it never
+          # shadows the versioned product releases in the repo's Releases list.
+          if ! gh release view "${tag}" >/dev/null 2>&1; then
+              gh release create "${tag}" \
+                  --title "Linux swift-mk (rolling)" \
+                  --notes "Prebuilt Linux swift-mk change-detection binary, rebuilt on each engine change and consumed by setup-linux-swift-mk. Not a product release." \
+                  --prerelease \
+                  --latest=false
+          fi
+          # Upload the binary and its checksum, replacing any prior asset of the same name.
+          gh release upload "${tag}" upload/* --clobber
+          # Prune every other asset so the rolling release cannot grow past GitHub's per-release
+          # asset cap over many engine changes. Pruning runs AFTER the upload, so the current
+          # pair is always present; a consumer whose engine predates the current one misses and
+          # rebuilds, which is the safe fallback.
+          gh release view "${tag}" --json assets --jq '.assets[].name' \
+            | while IFS= read -r name; do
+                case "${name}" in
+                  "${ASSET_NAME}" | "${ASSET_NAME}.sha256") ;;
+                  *) gh release delete-asset "${tag}" "${name}" --yes ;;
+                esac
+              done

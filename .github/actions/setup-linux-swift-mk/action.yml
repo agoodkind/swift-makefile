@@ -71,8 +71,69 @@ runs:
         )
         echo "hash=${source_hash}-${runtime_id}" >> "${GITHUB_OUTPUT}"
 
+    # Prefer a prebuilt binary from the engine's rolling release over rebuilding. The
+    # release asset is not ref-scoped, so unlike actions/cache it is reachable from any
+    # consumer PR, which is what eliminates the constant rebuild. swift-makefile is public,
+    # so the asset downloads over plain HTTPS with no token; keeping the token out of this
+    # step means the untrusted binary never runs its `--help` probe with a credential in its
+    # environment. The asset is keyed on the SAME source-plus-runtime hash as the cache, so a
+    # consumer only ever downloads a binary built from its exact checked-out source; a consumer
+    # on a newer main (publish not caught up) misses and builds from source rather than run a
+    # stale detector. A miss (curl missing, download fails, checksum mismatch, or the binary
+    # will not launch) falls through to the cache and from-source build below.
+    - name: Download prebuilt swift-mk
+      id: download
+      shell: bash
+      env:
+        ASSET: swift-mk-linux-${{ steps.swift-mk-src.outputs.hash }}
+      run: |
+        set -uo pipefail
+        toolchain="${HOME}/.swift-mk-ci-toolchain"
+        bin="${toolchain}/swift-mk"
+        rm -rf "${toolchain}"
+        mkdir -p "${toolchain}"
+        base="https://github.com/agoodkind/swift-makefile/releases/download/linux-swift-mk"
+        # The Swift container ships no gh, curl, or wget, so install curl to fetch the asset
+        # over HTTPS. A failed install leaves curl absent and the download falls through to the
+        # source build, so it is best-effort. Every step here has a time bound so a stalled apt
+        # mirror, a hung download, or a wedged binary probe falls back to the source build
+        # rather than sitting until the whole changes job times out.
+        if ! command -v curl >/dev/null 2>&1; then
+            timeout 180 apt-get update -qq >/dev/null 2>&1 \
+              && timeout 180 apt-get install -y -qq --no-install-recommends curl >/dev/null 2>&1 \
+              || true
+        fi
+        # Download the binary and its checksum, verify the checksum, then probe that the binary
+        # launches. No `set -e`, so any failing link in this chain yields hit=false and a clean
+        # fallback rather than aborting the composite action. curl caps its own connect and total
+        # time; the probe is wrapped in `timeout`.
+        download_ok=false
+        if command -v curl >/dev/null 2>&1 \
+            && curl -fsSL --connect-timeout 15 --max-time 180 \
+                 "${base}/${ASSET}" -o "${toolchain}/${ASSET}" \
+            && curl -fsSL --connect-timeout 15 --max-time 60 \
+                 "${base}/${ASSET}.sha256" -o "${toolchain}/${ASSET}.sha256"; then
+            if ( cd "${toolchain}" && shasum -a 256 -c "${ASSET}.sha256" ) >/dev/null 2>&1; then
+                mv "${toolchain}/${ASSET}" "${bin}"
+                if chmod +x "${bin}" && timeout 30 "${bin}" --help >/dev/null 2>&1; then
+                    download_ok=true
+                fi
+            fi
+        fi
+        if [ "${download_ok}" = true ]; then
+            echo "downloaded prebuilt swift-mk (${ASSET})"
+            rm -f "${toolchain}/${ASSET}.sha256"
+            echo "hit=true" >> "${GITHUB_OUTPUT}"
+            printf 'SWIFT_MK_BIN=%s\n' "${bin}" >> "${GITHUB_ENV}"
+        else
+            echo "no usable prebuilt swift-mk for ${ASSET}; will restore cache or build"
+            rm -rf "${toolchain}"
+            echo "hit=false" >> "${GITHUB_OUTPUT}"
+        fi
+
     - name: Restore swift-mk toolchain
       id: swift-mk-toolchain
+      if: ${{ steps.download.outputs.hit != 'true' }}
       uses: actions/cache@v5
       with:
         path: ~/.swift-mk-ci-toolchain
@@ -82,6 +143,7 @@ runs:
 
     - name: Build swift-mk
       id: build
+      if: ${{ steps.download.outputs.hit != 'true' }}
       shell: bash
       env:
         SWIFT_MK_SRC: ${{ steps.swift-mk-src.outputs.dir }}
