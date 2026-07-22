@@ -197,7 +197,7 @@ extension CiChanged {
       guard isAncestor(base: diffBase, head: head) else {
         return .decision(fullRunDecision(reason: "diff base is not an ancestor of head"))
       }
-      Output.info("ci-changed: diff base \(diffBase) from the push range on \(defaultBranch)")
+      Output.report("ci-changed: diff base \(diffBase) from the push range on \(defaultBranch)")
       return .base(diffBase)
     }
     let mergeBase = featureBranchMergeBase(
@@ -259,12 +259,12 @@ extension CiChanged {
     guard FileManager.default.changeCurrentDirectoryPath(repoRoot) else {
       return fullRunDecision(reason: "could not change to repo root")
     }
-    Output.info("ci-changed: diffing \(base)..\(head)")
+    Output.report("ci-changed: diffing \(base)..\(head)")
     guard let changedFiles = changedFiles(base: base, head: head) else {
       return fullRunDecision(reason: "git diff failed")
     }
     if changedFiles.isEmpty {
-      Output.info("ci-changed: no changed files between \(base) and \(head)")
+      Output.report("ci-changed: no changed files between \(base) and \(head)")
       return Decision(families: [], reason: "no changed files")
     }
     logChangedFiles(changedFiles)
@@ -281,7 +281,7 @@ extension CiChanged {
       extraDirs: inputs.extraDirs,
       deletedPaths: inputs.deletedPaths,
       lintSources: inputs.lintSources)
-    Output.info(
+    Output.report(
       "ci-changed: decided run_build=\(result.families.contains(.build)) "
         + "run_lint=\(result.families.contains(.lint)) in \(elapsed(since: start)); "
         + "reason: \(result.reason)")
@@ -293,7 +293,7 @@ extension CiChanged {
   /// names, and the consumer's extra dirs. These lines carry the data, not just a phase
   /// label, so a wrong classification or a stall is diagnosable from the log alone.
   private static func logInputContext(eventName: String, head: String, defaultBranch: String) {
-    Output.info(
+    Output.report(
       "ci-changed: context event=\(display(eventName)) head=\(display(head)) "
         + "default_branch=\(display(defaultBranch)) "
         + "ref_name=\(display(Env.get("SWIFT_MK_REF_NAME"))) "
@@ -315,7 +315,7 @@ extension CiChanged {
     let lintContext = PathContext(pwd: repoRoot + "/", cwd: repoRoot + "/")
     let lintSources = Set(
       LintSourceSet.resolve(context: lintContext).map { standardizePath($0, root: repoRoot) })
-    Output.info("ci-changed: lint source set has \(lintSources.count) file(s)")
+    Output.report("ci-changed: lint source set has \(lintSources.count) file(s)")
     return ClassifyInputs(
       changedPaths: changedPaths,
       deletedPaths: deletedPaths,
@@ -340,13 +340,13 @@ extension CiChanged {
   /// log. The status letter is `D` for a delete (including the old side of a rename) and
   /// `M` otherwise, matching how `changedFiles` folds a rename into a delete plus an add.
   private static func logChangedFiles(_ files: [ChangedFile]) {
-    Output.info("ci-changed: \(files.count) changed path(s):")
+    Output.report("ci-changed: \(files.count) changed path(s):")
     for file in files.prefix(changedFileLogLimit) {
-      Output.info("ci-changed:   \(file.deleted ? "D" : "M") \(file.path)")
+      Output.report("ci-changed:   \(file.deleted ? "D" : "M") \(file.path)")
     }
     let overflow = files.count - changedFileLogLimit
     if overflow > 0 {
-      Output.info("ci-changed:   ... and \(overflow) more")
+      Output.report("ci-changed:   ... and \(overflow) more")
     }
   }
 
@@ -372,7 +372,7 @@ extension CiChanged {
     isPullRequest: Bool
   ) -> String? {
     if let base = gitOutput(["merge-base", "origin/\(defaultBranch)", head]) {
-      Output.info("ci-changed: diff base \(base) from origin/\(defaultBranch) merge-base")
+      Output.report("ci-changed: diff base \(base) from origin/\(defaultBranch) merge-base")
       return base
     }
     // GitHub checks out `refs/pull/N/merge`, a merge of the base branch (HEAD^1) and
@@ -383,13 +383,13 @@ extension CiChanged {
     // events: on a push, HEAD is a real commit whose parents (if it is a merge) are
     // unrelated to the default branch, so the fast path is restricted to pull requests.
     if isPullRequest, let base = gitOutput(["merge-base", "HEAD^1", "HEAD^2"]) {
-      Output.info("ci-changed: diff base \(base) from the pull-request merge ref parents")
+      Output.report("ci-changed: diff base \(base) from the pull-request merge ref parents")
       return base
     }
     // Fallback for a checkout that is not a merge ref: `origin/<default>` is absent
     // and a plain `git fetch origin <default>` updates only FETCH_HEAD, so fetch into
     // the remote-tracking ref explicitly and retry.
-    Output.info("ci-changed: fetching origin/\(defaultBranch) to compute the merge-base")
+    Output.report("ci-changed: fetching origin/\(defaultBranch) to compute the merge-base")
     let fetch = runGit([
       "fetch", "--no-tags", "origin",
       "+refs/heads/\(defaultBranch):refs/remotes/origin/\(defaultBranch)",
@@ -402,7 +402,7 @@ extension CiChanged {
     guard let base = gitOutput(["merge-base", "origin/\(defaultBranch)", head]) else {
       return nil
     }
-    Output.info("ci-changed: diff base \(base) from origin/\(defaultBranch) after fetch")
+    Output.report("ci-changed: diff base \(base) from origin/\(defaultBranch) after fetch")
     return base
   }
 
