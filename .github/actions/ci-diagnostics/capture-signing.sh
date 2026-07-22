@@ -50,17 +50,46 @@ run() {
     # Direct codesign probe against a scratch Mach-O, so the exact errSec that
     # signing hits is captured next to the keychain state above.
     if [[ -n "${identity_sha1}" ]]; then
-        scratch="$(mktemp -t codesign-probe)"
-        cp /bin/echo "${scratch}" 2>/dev/null || printf 'copy /bin/echo failed\n'
-        printf '\n=== codesign --verbose=4 probe (explicit keychain) ===\n'
+        probe_codesign() {
+            local label="$1"
+            local scratch
+            scratch="$(mktemp -t codesign-probe)"
+            cp /bin/echo "${scratch}" 2>/dev/null || printf 'copy /bin/echo failed\n'
+            printf '\n=== codesign probe: %s ===\n' "${label}"
+            if [[ -n "${keychain}" ]]; then
+                codesign --verbose=4 --force --sign "${identity_sha1}" --keychain "${keychain}" "${scratch}" 2>&1
+                printf 'codesign[%s] explicit-keychain rc=%s\n' "${label}" "$?"
+            fi
+            codesign --verbose=4 --force --sign "${identity_sha1}" "${scratch}" 2>&1
+            printf 'codesign[%s] default-search rc=%s\n' "${label}" "$?"
+            rm -f "${scratch}"
+        }
+
+        # Baseline: the state the real build sees.
+        probe_codesign "baseline"
+
+        # Fix candidates. codesign resolves the identity through the session
+        # (dynamic) keychain search list. On the headless pool that list is
+        # [System] and never gets the signing keychain, so each candidate puts
+        # the signing keychain into a different list and re-probes. The first
+        # candidate whose codesign rc is 0 is the fix to apply in
+        # import-signing-cert. These mutate only this throwaway slot keychain.
         if [[ -n "${keychain}" ]]; then
-            codesign --verbose=4 --force --sign "${identity_sha1}" --keychain "${keychain}" "${scratch}" 2>&1
-            printf 'codesign explicit-keychain rc=%s\n' "$?"
+            printf '\n### FIX CANDIDATE A: list-keychains -s (no -d) ###\n'
+            /usr/bin/security list-keychains -s "${keychain}" /Library/Keychains/System.keychain 2>&1 || printf '(set A exit %s)\n' "$?"
+            run /usr/bin/security list-keychains
+            probe_codesign "fixA-session-list"
+
+            printf '\n### FIX CANDIDATE B: unlock + default-keychain -s signing ###\n'
+            /usr/bin/security unlock-keychain -p "" "${keychain}" 2>&1 || printf '(unlock exit %s)\n' "$?"
+            /usr/bin/security default-keychain -s "${keychain}" 2>&1 || printf '(default -s exit %s)\n' "$?"
+            run /usr/bin/security default-keychain
+            probe_codesign "fixB-default-keychain"
+
+            printf '\n### FIX CANDIDATE C: re-run set-key-partition-list for codesign ###\n'
+            /usr/bin/security set-key-partition-list -S apple-tool:,apple:,codesign: -k "" "${keychain}" 2>&1 | tr -cd '[:print:]\t\n' || printf '(partition exit %s)\n' "$?"
+            probe_codesign "fixC-partition-list"
         fi
-        printf '\n=== codesign --verbose=4 probe (default search list) ===\n'
-        codesign --verbose=4 --force --sign "${identity_sha1}" "${scratch}" 2>&1
-        printf 'codesign default-search rc=%s\n' "$?"
-        rm -f "${scratch}"
     fi
 } >"${log}" 2>&1 || true
 
