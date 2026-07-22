@@ -281,6 +281,7 @@ jobs:
       runner: ${{ inputs.runner }}
       local-pool-capacity-url: ${{ needs.changes.outputs.run_build == 'false' && '' || inputs.local-pool-capacity-url }}
       local-pool-label: ${{ inputs.local-pool-label }}
+      for-gate: build
     secrets:
       LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
 
@@ -293,6 +294,7 @@ jobs:
       runner: ${{ inputs.runner }}
       local-pool-capacity-url: ${{ needs.changes.outputs.run_build == 'false' && '' || inputs.local-pool-capacity-url }}
       local-pool-label: ${{ inputs.local-pool-label }}
+      for-gate: test
     secrets:
       LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
 
@@ -478,6 +480,7 @@ jobs:
       runner: ${{ inputs.runner }}
       local-pool-capacity-url: ${{ needs.changes.outputs.run_lint == 'false' && '' || inputs.local-pool-capacity-url }}
       local-pool-label: ${{ inputs.local-pool-label }}
+      for-gate: quality
     secrets:
       LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
 
@@ -566,6 +569,7 @@ jobs:
       runner: ${{ inputs.runner }}
       local-pool-capacity-url: ${{ needs.changes.outputs.run == 'false' && '' || inputs.local-pool-capacity-url }}
       local-pool-label: ${{ inputs.local-pool-label }}
+      for-gate: extra-targets
     secrets:
       LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
 

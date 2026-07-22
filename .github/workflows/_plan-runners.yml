@@ -36,6 +36,12 @@ on:
       pool-wait-timeout:
         type: number
         default: 1800
+      # Cosmetic label so each caller's planner job is distinguishable in the
+      # run's job list (for example "Plan runner (build)"). Empty keeps the bare
+      # "Plan runner" name.
+      for-gate:
+        type: string
+        default: ""
     secrets:
       # Bearer token for the pool's guarded /capacity endpoint. When set (with a
       # non-empty local-pool-capacity-url) the check authenticates; absent or
@@ -73,7 +79,7 @@ env:
 
 jobs:
   plan:
-    name: Plan runner
+    name: ${{ inputs.for-gate != '' && format('Plan runner ({0})', inputs.for-gate) || 'Plan runner' }}
     runs-on: ubuntu-latest
     # Covers the default pool-wait-timeout (1800s) plus curl/jq overhead. The
     # wait runs on this free ubuntu runner, so a long wait costs no macOS time.

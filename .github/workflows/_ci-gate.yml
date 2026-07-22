@@ -97,7 +97,7 @@ env:
 
 jobs:
   gate:
-    name: ${{ inputs.gate }}
+    name: Run ${{ inputs.gate }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
