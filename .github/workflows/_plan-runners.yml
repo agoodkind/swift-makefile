@@ -87,129 +87,34 @@ jobs:
     permissions:
       contents: read
     outputs:
-      label: ${{ steps.pick.outputs.label }}
-      build_label: ${{ steps.pick.outputs.build_label }}
-      test_label: ${{ steps.pick.outputs.test_label }}
-      quality_label: ${{ steps.pick.outputs.quality_label }}
-      extra_targets_label: ${{ steps.pick.outputs.extra_targets_label }}
-      on_pool: ${{ steps.pick.outputs.on_pool }}
+      label: ${{ steps.pick-local.outputs.label || steps.pick-remote.outputs.label }}
+      build_label: ${{ steps.pick-local.outputs.label || steps.pick-remote.outputs.label }}
+      test_label: ${{ steps.pick-local.outputs.label || steps.pick-remote.outputs.label }}
+      quality_label: ${{ steps.pick-local.outputs.label || steps.pick-remote.outputs.label }}
+      extra_targets_label: ${{ steps.pick-local.outputs.label || steps.pick-remote.outputs.label }}
+      on_pool: ${{ steps.pick-local.outputs.on_pool || steps.pick-remote.outputs.on_pool }}
     steps:
-      - name: Pick runner labels
-        id: pick
-        env:
-          CAPACITY_URL: ${{ inputs.local-pool-capacity-url }}
-          CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
-          POOL_LABEL: ${{ inputs.local-pool-label }}
-          HOSTED_LABEL: ${{ inputs.runner }}
-          REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
-          POOL_WAIT_TIMEOUT: ${{ inputs.pool-wait-timeout }}
-          # Seconds between capacity polls while waiting for the pool.
-          POLL_INTERVAL: "15"
-          # Evaluates to "true" for fork PRs; everything else is trusted.
-          IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
-          # PR-label overrides for the runner route. ci-force-hosted pins every gate
-          # to the hosted runner; ci-force-pool pins them to the self-hosted pool.
-          # Both are diagnostic overrides that skip the capacity check.
-          FORCE_HOSTED: ${{ contains(github.event.pull_request.labels.*.name, 'ci-force-hosted') }}
-          FORCE_POOL: ${{ contains(github.event.pull_request.labels.*.name, 'ci-force-pool') }}
-        run: |
-          set -euo pipefail
+      - uses: actions/checkout@v7
+        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
 
-          # Emit the chosen label as the generic output and as the compatibility
-          # aliases. on_pool is true only when a pool label was chosen, so a hosted
-          # fallback never re-runs a gate that already ran on hosted.
-          emit() {
-            local label="$1" on_pool
-            if [[ "${label}" != "${HOSTED_LABEL}" ]]; then
-              on_pool=true
-            else
-              on_pool=false
-            fi
-            {
-              printf 'label=%s\n' "${label}"
-              printf 'build_label=%s\n' "${label}"
-              printf 'test_label=%s\n' "${label}"
-              printf 'quality_label=%s\n' "${label}"
-              printf 'extra_targets_label=%s\n' "${label}"
-              printf 'on_pool=%s\n' "${on_pool}"
-            } >> "${GITHUB_OUTPUT}"
-          }
+      - name: Pick runner label (swift-makefile)
+        id: pick-local
+        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
+        uses: ./.github/actions/plan-runner
+        with:
+          runner: ${{ inputs.runner }}
+          local-pool-capacity-url: ${{ inputs.local-pool-capacity-url }}
+          local-pool-label: ${{ inputs.local-pool-label }}
+          pool-wait-timeout: ${{ inputs.pool-wait-timeout }}
+          capacity-token: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
 
-          # ci-force-hosted wins over everything, including ci-force-pool, and is
-          # safe on any event since hosted is the untrusted-safe target.
-          if [[ "${FORCE_HOSTED}" == "true" ]]; then
-            echo "ci-force-hosted label set; routing to hosted"
-            emit "${HOSTED_LABEL}"
-            exit 0
-          fi
-
-          # Untrusted event or no pool configured: never curl the internal
-          # endpoint; route straight to hosted. This also blocks ci-force-pool on a
-          # fork PR, so untrusted code can never be pinned onto the pool.
-          if [[ "${IS_FORK_PR}" == "true" || -z "${CAPACITY_URL}" ]]; then
-            emit "${HOSTED_LABEL}"
-            exit 0
-          fi
-
-          # ci-force-pool pins to the pool without the capacity check. It sits after
-          # the fork guard, so it only applies to trusted PRs.
-          if [[ "${FORCE_POOL}" == "true" ]]; then
-            echo "ci-force-pool label set; routing to pool"
-            emit "${POOL_LABEL}"
-            exit 0
-          fi
-
-          # Pick the query separator so a capacity URL that already carries a query
-          # string stays valid instead of producing a double '?'.
-          sep='?'
-          case "${CAPACITY_URL}" in *\?*) sep='&' ;; esac
-          # Only send an Authorization header when a token is configured. The
-          # default public /capacity needs no token, and an empty "Bearer " can be
-          # rejected by a proxy in front of the endpoint, which would defeat the
-          # tokenless auto-routing. The quoted array expansion keeps the whole
-          # "Authorization: Bearer <token>" header as one argv entry (no word
-          # splitting), and an empty array expands to nothing under set -u.
-          auth=()
-          if [[ -n "${CAPACITY_TOKEN}" ]]; then
-            auth+=(-H "Authorization: Bearer ${CAPACITY_TOKEN}")
-          fi
-
-          # Prefer the pool. Wait on this free ubuntu runner while the pool has no
-          # free slot AND the broker reports hosted has no headroom, so a job
-          # releases to hosted only when hosted is actually free rather than piling
-          # onto a busy hosted queue. A broker that does not report hosted_free is
-          # treated as hosted-free (jq '// true'), collapsing this to the prior
-          # pool-if-available-else-hosted behavior. A curl error means the broker is
-          # unreachable, so fail open to hosted and never block CI.
-          started=$(date +%s)
-          deadline=$(( started + POOL_WAIT_TIMEOUT ))
-          while :; do
-            response=$(curl -sf --max-time 5 "${auth[@]}" \
-              "${CAPACITY_URL}${sep}repo=${REPO}&run_id=${RUN_ID}" 2>/dev/null || printf '')
-            if [[ -z "${response}" ]]; then
-              echo "capacity endpoint unreachable; routing to hosted"
-              emit "${HOSTED_LABEL}"
-              exit 0
-            fi
-            available=$(printf '%s' "${response}" | jq -r '.available // false' 2>/dev/null || printf 'false')
-            hosted_free=$(printf '%s' "${response}" | jq -r '.hosted_free // true' 2>/dev/null || printf 'true')
-            if [[ "${available}" == "true" ]]; then
-              echo "pool slot available; routing to pool"
-              emit "${POOL_LABEL}"
-              exit 0
-            fi
-            if [[ "${hosted_free}" == "true" ]]; then
-              echo "pool busy, hosted has headroom; routing to hosted"
-              emit "${HOSTED_LABEL}"
-              exit 0
-            fi
-            now=$(date +%s)
-            if (( now >= deadline )); then
-              echo "pool busy and hosted full for ${POOL_WAIT_TIMEOUT}s; routing to hosted as last resort"
-              emit "${HOSTED_LABEL}"
-              exit 0
-            fi
-            echo "pool busy and hosted full; waiting ${POLL_INTERVAL}s (elapsed $(( now - started ))s / ${POOL_WAIT_TIMEOUT}s)"
-            sleep "${POLL_INTERVAL}"
-          done
+      - name: Pick runner label
+        id: pick-remote
+        if: ${{ github.repository != 'agoodkind/swift-makefile' }}
+        uses: agoodkind/swift-makefile/.github/actions/plan-runner@main
+        with:
+          runner: ${{ inputs.runner }}
+          local-pool-capacity-url: ${{ inputs.local-pool-capacity-url }}
+          local-pool-label: ${{ inputs.local-pool-label }}
+          pool-wait-timeout: ${{ inputs.pool-wait-timeout }}
+          capacity-token: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
