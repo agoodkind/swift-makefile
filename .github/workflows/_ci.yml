@@ -185,14 +185,14 @@ jobs:
 
       - name: Trust the workspace for git
         shell: bash
-        # This job runs in a container as root, but actions/checkout writes the
-        # working tree as the runner UID. git then refuses to operate on it
-        # ("detected dubious ownership") from any later step, because checkout only
-        # marks the tree safe in its own temporary HOME. Without this, every git call
-        # the detector makes (merge-base, diff) fails and it runs every gate. Mark the
-        # workspace safe in the container's global config so the detector's git works;
-        # $GITHUB_WORKSPACE is the repo path for the engine and every consumer alike.
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+        # This job runs in a container as root, but actions/checkout writes each working
+        # tree as the runner UID. git then refuses to operate on it ("detected dubious
+        # ownership") from any later step, because checkout only marks the tree safe in
+        # its own temporary HOME. Without this, the detector's git calls (merge-base,
+        # diff) and the engine checkout's build both fail. Trust every path in this
+        # ephemeral container so the workspace and the .swift-makefile engine checkout
+        # both work; the container is CI-controlled and discarded after the job.
+        run: git config --global --add safe.directory '*'
 
       - name: Cache SwiftPM dependency resolution
         uses: actions/cache@v5
@@ -212,21 +212,25 @@ jobs:
           restore-keys: |
             swiftpm-deps-${{ runner.os }}-${{ runner.arch }}-
 
-      # Keep the local-vs-consumer split: the engine repo uses its local copy of
-      # the action, and consumers inherit it via @main. Exactly one of the two steps
-      # runs and the other skips, decided by github.repository; the names differ so the
-      # skipped one is not a confusing duplicate in the step list. continue-on-error
-      # keeps a Linux swift-mk build failure from failing the job: the detect step below
-      # falls back to a full run when the binary is missing.
-      - name: Setup Linux swift-mk (engine checkout)
-        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
-        continue-on-error: true
-        uses: ./.github/actions/setup-linux-swift-mk
+      # Check out the swift-makefile engine at one uniform path so a single setup step
+      # builds swift-mk for the engine and every consumer alike. A step's `uses:` cannot
+      # take an expression, so the ref is what varies: the engine tests its own in-PR
+      # action by checking out this run's sha, and consumers pin @main. This keeps
+      # swift-makefile dogfooding its own action (its PR runs the PR's action) while
+      # avoiding two near-duplicate setup steps guarded by github.repository.
+      - name: Check out the swift-makefile engine
+        uses: actions/checkout@v7
+        with:
+          repository: agoodkind/swift-makefile
+          ref: ${{ github.repository == 'agoodkind/swift-makefile' && github.sha || 'main' }}
+          path: .swift-makefile
+          fetch-depth: 1
 
-      - name: Setup Linux swift-mk (pinned @main)
-        if: ${{ github.repository != 'agoodkind/swift-makefile' }}
+      # continue-on-error keeps a Linux swift-mk build failure from failing the job: the
+      # detect step below falls back to a full run when the binary is missing.
+      - name: Setup Linux swift-mk
         continue-on-error: true
-        uses: agoodkind/swift-makefile/.github/actions/setup-linux-swift-mk@main
+        uses: ./.swift-makefile/.github/actions/setup-linux-swift-mk
 
       - name: Detect changes
         id: detect
