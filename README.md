@@ -168,9 +168,11 @@ The engine runs every build through one of two chokepoints, so the gate, the bui
 
 `bootstrap.sh` writes a small SwiftPM consumer `Makefile` and `bootstrap.mk`.
 Consumers that want shared build-style targets must load `swift-build.mk`.
-A macOS app consumer that ships a signed `.app` in a `.dmg` with Sparkle updates
-loads `swift-build.mk swift-app.mk`, sets `SWIFT_APP_*` config, and does not
-hand-roll its own `app`, `dmg`, or sparkle recipes.
+A macOS app consumer that ships a signed `.app` in a `.dmg` loads
+`swift-build.mk swift-app.mk`, sets `SWIFT_APP_*` config, and does not hand-roll
+its own `app`, `dmg`, or `release-assets` recipes. Framework-specific packaging,
+such as an auto-update framework's nested code signing or update feed, stays in
+the consumer, which signs nested code through the generic `codesign-run` primitive.
 
 ## CI for consumers
 
