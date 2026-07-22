@@ -25,7 +25,7 @@ Each subsystem has a present-tense overview under `docs/<area>/overview.md` that
 - `swift-build.mk` defines shared build, run, generate, clean, deploy, and install targets from consumer-provided commands.
 - `swift-release.mk` defines shared release wrapper targets from consumer-provided commands.
 - `xcconfig.mk` renders `*.template` files into `Derived/Generated/$(TARGET_NAME)/` for Tuist projects that treat one or more xcconfig files as the source of truth. The consumer Makefile `-include`s its xcconfig files, lists the keys it wants exposed (`XCCONFIG_EXPORTED_VARS`), points at its templates dir (`XCCONFIG_TEMPLATES_DIR`), and lists target names (`XCCONFIG_GENERATOR_TARGETS`). The `xcconfig-generate-config` target renders once per target; `xcconfig-generate-project` chains that into `tuist generate --no-open` so the glob inside `Project.swift` finds the generated files. Templates use `[[KEY]]` substitutions. See `swift-mk render-batch --help` for the underlying renderer.
-- `swift-app.mk` defines shared macOS app packaging for an app that ships as a signed `.app` inside a `.dmg` and updates through Sparkle. A consumer loads it with `SWIFT_MK_MODULES := swift-build.mk swift-app.mk`, sets `SWIFT_APP_NAME` plus a few `SWIFT_APP_*` overrides, and gets `app`, `dmg`, `release-assets`, `prepare-sparkle-updates`, and `sparkle-appcast`. `swift-build.mk` still owns `build`; `swift-app.mk` owns everything after the build. The build line stays the consumer's `SWIFT_BUILD_CMD`. See the header of `swift-app.mk` for the full variable surface.
+- `swift-app.mk` defines shared macOS app packaging for an app that ships as a signed `.app` inside a `.dmg`. A consumer loads it with `SWIFT_MK_MODULES := swift-build.mk swift-app.mk`, sets `SWIFT_APP_NAME` plus a few `SWIFT_APP_*` overrides, and gets `app`, `dmg`, and `release-assets`. `swift-build.mk` still owns `build`; `swift-app.mk` owns everything after the build. The build line stays the consumer's `SWIFT_BUILD_CMD`. Framework-specific packaging, such as an auto-update framework's nested code signing or update feed, stays in the consumer, which signs nested code through the generic `codesign-run` primitive. See the header of `swift-app.mk` for the full variable surface.
 - `scripts/` holds only the bash bootstrap, fetch, build, and distribution layer that runs before the binary exists: `swift-mk-fetch-one.sh`, `swift-mk-build.sh`, `swift-mk-sync.sh`, `swift-mk-fleet-update.sh`, `install-hooks.sh`, and `release-build.sh` (the release dmg build hook).
 - `swiftcheck/` contains the shared SwiftSyntax analyzer package.
 
@@ -168,9 +168,11 @@ The engine runs every build through one of two chokepoints, so the gate, the bui
 
 `bootstrap.sh` writes a small SwiftPM consumer `Makefile` and `bootstrap.mk`.
 Consumers that want shared build-style targets must load `swift-build.mk`.
-A macOS app consumer that ships a signed `.app` in a `.dmg` with Sparkle updates
-loads `swift-build.mk swift-app.mk`, sets `SWIFT_APP_*` config, and does not
-hand-roll its own `app`, `dmg`, or sparkle recipes.
+A macOS app consumer that ships a signed `.app` in a `.dmg` loads
+`swift-build.mk swift-app.mk`, sets `SWIFT_APP_*` config, and does not hand-roll
+its own `app`, `dmg`, or `release-assets` recipes. Framework-specific packaging,
+such as an auto-update framework's nested code signing or update feed, stays in
+the consumer, which signs nested code through the generic `codesign-run` primitive.
 
 ## CI for consumers
 

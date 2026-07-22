@@ -20,8 +20,14 @@ struct CodesignRun: ParsableCommand {
     abstract: "Sign artifacts with the resolved identity and canonical flags."
   )
 
-  @Option(name: .long, help: "Artifact kind: binary, sparkle, or dmg.")
+  @Option(name: .long, help: "Artifact kind: binary or dmg.")
   var mode: String = "binary"
+
+  @Option(
+    name: .customLong("preserve-metadata"),
+    help: "codesign --preserve-metadata value; re-signs nested code in place, skips --identifier."
+  )
+  var preserveMetadata: String?
 
   @Option(name: .long, help: "Bundle identifier applied to every path.")
   var identifier: String?
@@ -51,6 +57,13 @@ struct CodesignRun: ParsableCommand {
     guard let parsedMode = Codesign.Mode(rawValue: mode) else {
       throw ValidationError("codesign-run: unknown mode '\(mode)'")
     }
+    // --preserve-metadata re-signs an already-signed bundle in place; a dmg has no
+    // prior signature metadata to preserve, so reject the combination rather than
+    // pass a meaningless flag to codesign.
+    let trimmedPreserve = preserveMetadata?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    if parsedMode == .dmg, !trimmedPreserve.isEmpty {
+      throw ValidationError("codesign-run: --preserve-metadata is not valid with --mode dmg")
+    }
     Output.info("codesign-run: signing \(paths.count) path(s) in \(mode) mode")
     guard
       Codesign.run(
@@ -60,6 +73,7 @@ struct CodesignRun: ParsableCommand {
         identifierPrefix: identifierPrefix,
         bundlesDirectory: bundlesIn,
         keychain: keychain,
+        preserveMetadata: preserveMetadata,
         localXcconfigPaths: [localXcconfig]
       )
     else {
