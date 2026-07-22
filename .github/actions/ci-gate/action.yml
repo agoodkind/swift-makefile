@@ -308,14 +308,14 @@ runs:
         done
 
     - name: Stop CI instrumentation
-      if: ${{ always() && contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') }}
+      if: ${{ always() && inputs.run != 'false' && contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') }}
       shell: bash
       env:
         SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
       run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/ci-diagnostics/stop.sh" "${RUNNER_TEMP}/ci-diagnostics"
 
     - name: Upload CI instrumentation
-      if: ${{ always() && contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') }}
+      if: ${{ always() && inputs.run != 'false' && contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') }}
       uses: actions/upload-artifact@v4
       with:
         name: ci-diagnostics-${{ inputs.gate }}-${{ inputs.runner }}

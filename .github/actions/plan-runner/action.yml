@@ -46,7 +46,7 @@ runs:
         RUN_ID: ${{ github.run_id }}
         POOL_WAIT_TIMEOUT: ${{ inputs.pool-wait-timeout }}
         POLL_INTERVAL: "15"
-        IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        IS_FORK_PR: ${{ (github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && github.event.pull_request.head.repo.full_name != github.repository }}
         FORCE_HOSTED: ${{ contains(github.event.pull_request.labels.*.name, 'ci-force-hosted') }}
         FORCE_POOL: ${{ contains(github.event.pull_request.labels.*.name, 'ci-force-pool') }}
       run: |
@@ -100,7 +100,11 @@ runs:
             exit 0
           fi
           available=$(printf '%s' "${response}" | jq -r '.available // false' 2>/dev/null || printf 'false')
-          hosted_free=$(printf '%s' "${response}" | jq -r '.hosted_free // true' 2>/dev/null || printf 'true')
+          # Default a missing or null hosted_free to true, but keep an explicit
+          # false. `.hosted_free // true` is wrong here because jq's // also
+          # replaces false, which would drop the pool wait whenever the broker
+          # actually reports hosted is full.
+          hosted_free=$(printf '%s' "${response}" | jq -r 'if has("hosted_free") and .hosted_free != null then .hosted_free else true end' 2>/dev/null || printf 'true')
           if [[ "${available}" == "true" ]]; then
             echo "pool slot available; routing to pool"
             emit "${POOL_LABEL}"
