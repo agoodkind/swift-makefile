@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  pull_request:
   workflow_dispatch:
 
 # The caller must grant every permission the called workflow's jobs request,
@@ -20,8 +21,10 @@ jobs:
     # matching CI's `CI / swift / <job>` and dropping the `Release / release`
     # doubling. The job id stays `release`; only the displayed segment changes.
     name: swift
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     uses: ./.github/workflows/_release.yml
     with:
+      ephemeral: ${{ github.event_name == 'pull_request' }}
       # Notarize and staple the signed swift-mk dmg; a dmg is the CLI-friendly
       # format that can carry a stapled ticket. Match only the dmg so the
       # unsigned source tarball is skipped.
@@ -32,3 +35,23 @@ jobs:
       # swift-mk binary, so a non-launching release fails here.
       smoke-asset: swift-mk_darwin_arm64.dmg
     secrets: inherit
+
+  release-dry-run:
+    name: Release (dry run)
+    needs: release
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Require signed release dry run success
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository && needs.release.result != 'success' }}
+        run: |
+          echo "Signed release dry run did not succeed (result: ${{ needs.release.result }})." >&2
+          exit 1
+      - name: Report signed release dry run
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository && needs.release.result == 'success' }}
+        run: echo "Signed release dry run completed without publishing." >> "${GITHUB_STEP_SUMMARY}"
+      - name: Report fork skip
+        if: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+        run: echo "Signed release dry run skipped for a fork pull request." >> "${GITHUB_STEP_SUMMARY}"
