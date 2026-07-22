@@ -201,23 +201,9 @@ public enum Shell {
     }
     var timedOut = false
     let status: Int32
-    if timeoutSeconds > 0 {
-      // Bound the whole child, not just the pipes. The drain group completes when both
-      // read ends hit EOF, but a child that closes its streams and then hangs would keep
-      // running; reaping it under the same deadline turns that into a timeout kill instead
-      // of an unbounded `reapProcessBlocking`.
-      let deadline = DispatchTime.now() + timeoutSeconds
-      let pipesClosedInTime = group.wait(timeout: deadline) != .timedOut
-      let reaped =
-        pipesClosedInTime
-        ? reapProcessWithDeadline(spawned.processIdentifier, deadline: deadline)
-        : nil
-      if let reaped {
-        status = reaped
-      } else {
-        timedOut = true
-        status = terminateProcessGroupAndReap(spawned, drainGroup: group)
-      }
+    if timeoutSeconds > 0, group.wait(timeout: .now() + timeoutSeconds) == .timedOut {
+      timedOut = true
+      status = terminateProcessGroupAndReap(spawned, drainGroup: group)
     } else {
       group.wait()
       status = reapProcessBlocking(spawned.processIdentifier)
