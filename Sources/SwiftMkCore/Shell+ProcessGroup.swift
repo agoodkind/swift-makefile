@@ -262,14 +262,67 @@ extension Shell {
     }
   }
 
-  /// Kill a timed-out child's whole process group and reap it. Send SIGTERM to the
-  /// group, wait a bounded grace for the tree to exit by waiting on the drain group
-  /// (which completes when both pipe read ends hit EOF once every process holding
-  /// the write ends has exited), then SIGKILL the group while the leader is still
-  /// unreaped so its PID cannot be recycled into an unrelated group before the
-  /// signal lands, and so a child that ignored SIGTERM cannot outlive the wrapper
-  /// as a launchd runaway. Every wait here is bounded.
-  static func terminateProcessGroupAndReap(
+  /// Reap the child bounded by `deadline`, or kill its process group and reap on a timeout.
+  /// The run is clean only when both pipe read ends hit EOF and the leader itself exits before
+  /// the deadline; otherwise the whole group is killed. `reapProcessBlocking` is the only
+  /// consuming wait on any path, and it runs while the leader is unreaped, so the leader's pid
+  /// stays held and `kill(-pid, ...)` can never land on a recycled pid.
+  ///
+  /// Two separate conditions matter, and checking only one is a bug each way. Waiting only on
+  /// pipe EOF misses a child that closes its streams and then hangs, since the pipes reach EOF
+  /// while the process keeps running. Waiting only on the leader's exit misses a child that
+  /// exits while a backgrounded descendant keeps a pipe open, since the leader looks done while
+  /// output is still in flight. So this waits for the pipes to drain, and only then confirms the
+  /// leader has exited by the deadline (see `leaderExitedByDeadline`). If either check fails,
+  /// the group is killed. Every wait is a `DispatchGroup` timeout, so there is no sleep.
+  static func reapOrTerminate(
+    _ process: SpawnedStreamingProcess, drainGroup: DispatchGroup, deadline: DispatchTime
+  ) -> (status: Int32, timedOut: Bool) {
+    let processIdentifier = process.processIdentifier
+    let pipesDrained = drainGroup.wait(timeout: deadline) != .timedOut
+    if pipesDrained, leaderExitedByDeadline(processIdentifier, deadline: deadline) {
+      return (reapProcessBlocking(processIdentifier), false)
+    }
+    // Either a descendant still holds a pipe, or the leader closed its streams and kept running,
+    // or the leader's exit could not be confirmed by the deadline. In every case the leader is
+    // unreaped (nothing here consumed it), so its pid is held and the kill is safe.
+    return (terminateAndReap(process, drainGroup: drainGroup), true)
+  }
+
+  /// Report, bounded by `deadline`, whether the leader has exited, without reaping it. A
+  /// background thread blocks in `waitid(P_PID, ..., WEXITED | WNOWAIT)`, which reports the exit
+  /// but leaves the zombie, so the single `reapProcessBlocking` in `reapOrTerminate` still
+  /// collects the status and the leader's pid stays reserved until then. Returns true only when
+  /// the exit is observed before the deadline.
+  ///
+  /// A false return does not join the background thread, so a starved global queue that never
+  /// schedules the thread cannot deadlock the caller; the thread simply ends when the leader
+  /// later exits (on its own or via the caller's SIGKILL) and leaves its throwaway group. That
+  /// `waitid` is non-consuming, so it is safe to still be running when the caller's
+  /// `reapProcessBlocking` reaps: the kernel keeps the zombie waitable, so the reap gets the
+  /// real status regardless of ordering.
+  private static func leaderExitedByDeadline(_ processIdentifier: pid_t, deadline: DispatchTime)
+    -> Bool
+  {
+    let observed = DispatchGroup()
+    observed.enter()
+    DispatchQueue.global().async {
+      var info = siginfo_t()
+      while waitid(P_PID, id_t(processIdentifier), &info, WEXITED | WNOWAIT) == -1,
+        errno == EINTR
+      {
+        // Retry across EINTR; any other result ends the wait.
+      }
+      observed.leave()
+    }
+    return observed.wait(timeout: deadline) == .success
+  }
+
+  /// Kill a still-running child's whole process group and reap it. SIGTERM the group, wait a
+  /// bounded grace on the drain group for the tree to exit and flush, then SIGKILL while the
+  /// leader is still unreaped so its pid cannot be recycled before the signal lands, and reap
+  /// once. This is the only reaper on any kill path, so there is no concurrent `waitpid`.
+  private static func terminateAndReap(
     _ process: SpawnedStreamingProcess, drainGroup: DispatchGroup
   ) -> Int32 {
     let processIdentifier = process.processIdentifier
