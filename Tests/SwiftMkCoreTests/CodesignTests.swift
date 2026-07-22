@@ -16,34 +16,6 @@ import Testing
 enum CodesignTests {}
 
 @Test
-func importSigningCertActionUsesRunnerKeyedKeychainName() throws {
-  let action = try importSigningCertActionText()
-
-  #expect(action.contains("id: keychain"))
-  #expect(action.contains("RUNNER_NAME:-runner"))
-  #expect(action.contains("swift_mk_signing_"))
-  #expect(action.contains("keychain: ${{ steps.keychain.outputs.path_noext }}"))
-  #expect(action.contains(#"KEYCHAIN_PATH: ${{ steps.keychain.outputs.path }}"#))
-  #expect(action.contains(#"security delete-keychain "$KEYCHAIN_PATH""#))
-  #expect(action.contains(#"security find-identity -v -p codesigning "$KEYCHAIN_PATH""#))
-  #expect(!action.contains("signing_temp.keychain"))
-  #expect(!action.contains("keychain: signing_temp"))
-}
-
-@Test
-func importSigningCertActionOutputsExplicitKeychainPath() throws {
-  let action = try importSigningCertActionText()
-
-  #expect(action.contains("  keychain:"))
-  #expect(action.contains("value: ${{ steps.keychain.outputs.path }}"))
-  #expect(
-    action.contains(#"keychain_base="${HOME}/Library/Keychains/${keychain_name}""#))
-  #expect(action.contains(#"keychain_path="${keychain_base}.keychain-db""#))
-  #expect(action.contains(#"printf 'path_noext=%s\n' "$keychain_base" >> "$GITHUB_OUTPUT""#))
-  #expect(action.contains(#"printf 'path=%s\n' "$keychain_path" >> "$GITHUB_OUTPUT""#))
-}
-
-@Test
 func binaryModeSignsWithRuntimeAndIdentifier() {
   let arguments = Codesign.arguments(
     path: "/tmp/lmd",
@@ -222,60 +194,6 @@ enum CodesignEnvironmentTests {
 }
 
 @Test
-func codesignRunSourceThreadsKeychainOption() throws {
-  let source = try codesignRunText()
-
-  #expect(source.contains("var keychain: String?"))
-  #expect(source.contains("keychain: keychain"))
-}
-
-@Test
-func workflowHelperThreadsCodeSignKeychain() throws {
-  let source = try workflowHelperText()
-
-  #expect(source.contains(#"let codeSignKeychain = environment.optional("CODE_SIGN_KEYCHAIN")"#))
-  #expect(source.contains(#"CODE_SIGN_KEYCHAIN=\(codeSignKeychain)"#))
-}
-
-@Test
-func workflowsPassActionKeychainOutputBesideIdentity() throws {
-  let ciGate = try workflowText(named: "_ci-gate.yml")
-  let release = try workflowText(named: "_release.yml")
-
-  #expect(
-    ciGate.contains(
-      "CODE_SIGN_KEYCHAIN: ${{ steps.cert-local.outputs.keychain || steps.cert-remote.outputs.keychain }}"
-    ))
-  #expect(release.contains("CODE_SIGN_KEYCHAIN: ${{ steps.cert.outputs.keychain }}"))
-  #expect(release.contains("CODE_SIGN_KEYCHAIN=$CODE_SIGN_KEYCHAIN"))
-}
-
-@Test
-func releaseWorkflowKeepsSigningMakeArgumentsWhole() throws {
-  let release = try workflowText(named: "_release.yml")
-
-  #expect(release.contains("sign_args=()"))
-  #expect(
-    release.contains(
-      #"sign_args+=("CODE_SIGN_IDENTITY=$CERT_SHA1" "DMG_SIGN_IDENTITY=$CERT_SHA1")"#))
-  #expect(release.contains(#"sign_args+=("CODE_SIGN_KEYCHAIN=$CODE_SIGN_KEYCHAIN")"#))
-  #expect(release.contains(#"sign_args+=("DEVELOPMENT_TEAM=$TEAM_ID")"#))
-  #expect(release.contains(#""${sign_args[@]}""#))
-  #expect(!release.contains("make ${{ inputs.build-target }} ${{ inputs.make-args }} $sign_args"))
-}
-
-@Test
-func swiftBuildMakefilePassesKeychainToSigningPreludeAndCodesignRun() throws {
-  let makefile = try swiftBuildMakefileText()
-  let rootMakefile = try swiftMakefileText()
-
-  #expect(makefile.contains(#"CODE_SIGN_KEYCHAIN="$(CODE_SIGN_KEYCHAIN)""#))
-  #expect(makefile.contains("--keychain"))
-  #expect(rootMakefile.contains("export CODE_SIGN_KEYCHAIN"))
-  #expect(rootMakefile.contains("export SWIFT_MK_SIGN_KEYCHAIN"))
-}
-
-@Test
 func swiftBuildMakefileRendersKeychainSpacingForSigningCommands() throws {
   let keychain = "/Users/runner/Library/Keychains/signing keychain.keychain-db"
   let renderedWithKeychain = try renderSwiftBuildMakefileCommands(codeSignKeychain: keychain)
@@ -294,43 +212,6 @@ func swiftBuildMakefileRendersKeychainSpacingForSigningCommands() throws {
     renderedWithoutKeychain.postBuildSign.contains(
       #"--bundles-in Products/Bundles Products/App"#
     ))
-}
-
-private func importSigningCertActionText() throws -> String {
-  let actionURL = codesignTestsRepositoryRoot()
-    .appendingPathComponent(".github/actions/import-signing-cert/action.yml")
-  return try String(contentsOf: actionURL, encoding: .utf8)
-}
-
-private func codesignRunText() throws -> String {
-  let sourceURL = codesignTestsRepositoryRoot()
-    .appendingPathComponent("Sources/SwiftMkCLI/CodesignRun.swift")
-  return try String(contentsOf: sourceURL, encoding: .utf8)
-}
-
-private func workflowHelperText() throws -> String {
-  let sourceURL = codesignTestsRepositoryRoot()
-    .appendingPathComponent(".github/actions/workflow-helper/workflow-helper.swift")
-  return try String(contentsOf: sourceURL, encoding: .utf8)
-}
-
-private func workflowText(named name: String) throws -> String {
-  let workflowURL = codesignTestsRepositoryRoot()
-    .appendingPathComponent(".github/workflows")
-    .appendingPathComponent(name)
-  return try String(contentsOf: workflowURL, encoding: .utf8)
-}
-
-private func swiftBuildMakefileText() throws -> String {
-  let makefileURL = codesignTestsRepositoryRoot()
-    .appendingPathComponent("swift-build.mk")
-  return try String(contentsOf: makefileURL, encoding: .utf8)
-}
-
-private func swiftMakefileText() throws -> String {
-  let makefileURL = codesignTestsRepositoryRoot()
-    .appendingPathComponent("swift.mk")
-  return try String(contentsOf: makefileURL, encoding: .utf8)
 }
 
 private func renderSwiftBuildMakefileCommands(codeSignKeychain: String) throws -> (

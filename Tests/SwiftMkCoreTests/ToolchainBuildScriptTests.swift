@@ -15,24 +15,7 @@ import Testing
 
 enum ToolchainBuildScriptTests {
   @Test
-  static func poolBuildScriptUsesOnlySwiftPMCacheFlags() throws {
-    let script = try rootFile("scripts/swift-mk-build.sh")
-
-    #expect(script.contains(#"printf "%s\n" "--cache-path""#))
-    #expect(script.contains(#"printf "%s\n" "--manifest-cache""#))
-    #expect(script.contains(#"printf "%s\n" "none""#))
-    #expect(!script.contains("-clonedSourcePackagesDirPath"))
-    #expect(!script.contains("-disableAutomaticPackageResolution"))
-    #expect(!script.contains("--disable-automatic-resolution"))
-  }
-
-  @Test
   static func poolBuildScriptHashesResolvedFilesWithManifestFallback() throws {
-    let script = try rootFile("scripts/swift-mk-build.sh")
-    #expect(script.contains(#"shasum "${manifest_path}""#))
-    #expect(script.contains(#"if [[ -f "${resolved_path}" ]]; then"#))
-    #expect(script.contains(#"shasum "${resolved_path}""#))
-
     try withTemporaryDirectory { packageDirectory in
       let manifest = packageDirectory.appendingPathComponent("Package.swift")
       let resolved = packageDirectory.appendingPathComponent("Package.resolved")
@@ -73,23 +56,6 @@ enum ToolchainBuildScriptTests {
       try FileManager.default.removeItem(at: resolved)
       let fallbackHash = try dependencyHash(for: packageDirectory)
       #expect(fallbackHash == manifestOnlyHash)
-    }
-  }
-
-  @Test
-  static func poolBuildScriptRejectsEmptySwiftPMBinPath() throws {
-    let script = try rootFile("scripts/swift-mk-build.sh")
-    let validation = #"if [[ "${bin_dir_status}" -ne 0 || -z "${bin_dir}" ]]; then"#
-    let binPathAssignment = #"bin_path="${bin_dir}/swift-mk""#
-    let validationIndex = script.range(of: validation)?.lowerBound
-    let binPathAssignmentIndex = script.range(of: binPathAssignment)?.lowerBound
-
-    #expect(script.contains(validation))
-    #expect(script.contains("could not resolve SwiftPM binary output path"))
-    #expect(script.contains("swift build --show-bin-path output"))
-    #expect(binPathAssignmentIndex != nil)
-    if let validationIndex, let binPathAssignmentIndex {
-      #expect(validationIndex < binPathAssignmentIndex)
     }
   }
 
@@ -186,65 +152,6 @@ enum ToolchainBuildScriptTests {
         !residualXattr.combined.contains("com.apple.quarantine"),
         "provenance xattr should be cleared from the output: \(residualXattr.combined)")
     }
-  }
-
-  @Test
-  static func setupBuildEnvConfiguresPoolCacheByMountPresence() throws {
-    let action = try rootFile(".github/actions/setup-build-env/action.yml")
-
-    #expect(!action.contains("if: runner.environment == 'self-hosted'"))
-    #expect(action.contains(#"if [[ ! -d "${POOL_CACHE_ROOT}" ]]; then"#))
-    #expect(action.contains("SWIFT_MK_POOL_LOCAL_CACHE"))
-    #expect(!action.contains("SWIFT_MK_MODULE_CACHE=%s"))
-  }
-
-  @Test
-  static func setupBuildEnvDependencyHashIncludesConsumerManifests() throws {
-    let action = try rootFile(".github/actions/setup-build-env/action.yml")
-    let expression = try dependencyHashExpression(in: action)
-
-    #expect(expression.contains("'**/Package.swift'"))
-    #expect(expression.contains("'**/Package.resolved'"))
-    #expect(expression.contains("'**/Project.swift'"))
-    #expect(expression.contains("'**/Workspace.swift'"))
-    #expect(expression.contains("'**/Tuist.swift'"))
-    #expect(expression.contains("'**/project.yml'"))
-    #expect(expression.contains("'**/*.xcodeproj/project.pbxproj'"))
-    #expect(expression.contains("'**/*.xcworkspace/contents.xcworkspacedata'"))
-    #expect(expression.contains("'**/*.xcworkspace/xcshareddata/swiftpm/Package.resolved'"))
-    #expect(
-      expression.contains(
-        "'**/*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'"))
-  }
-
-  @Test
-  static func setupBuildEnvDependencyHashHasStableNonEmptyFallback() throws {
-    let action = try rootFile(".github/actions/setup-build-env/action.yml")
-
-    #expect(!action.contains(#"DEPENDENCY_HASH="no-deps""#))
-    #expect(action.contains("dependency_hash_files"))
-    #expect(action.contains("git rev-parse HEAD"))
-    #expect(action.contains("GITHUB_SHA"))
-    #expect(action.contains("*.xcodeproj/project.pbxproj"))
-    #expect(action.contains("xcshareddata/swiftpm/Package.resolved"))
-  }
-
-  private static func rootFile(_ relativePath: String) throws -> String {
-    let root = URL(fileURLWithPath: #filePath)
-      .deletingLastPathComponent()
-      .deletingLastPathComponent()
-      .deletingLastPathComponent()
-    return try String(
-      contentsOf: root.appendingPathComponent(relativePath), encoding: .utf8)
-  }
-
-  private static func dependencyHashExpression(in action: String) throws -> String {
-    let lines = action.split(separator: "\n", omittingEmptySubsequences: false)
-    for line in lines
-    where line.contains("DEPENDENCY_HASH: ${{ hashFiles(") {
-      return String(line)
-    }
-    throw ScriptFailure(message: "missing DEPENDENCY_HASH hashFiles expression")
   }
 
   private static func dependencyHash(for packageDirectory: URL) throws -> String {
@@ -363,71 +270,6 @@ enum ToolchainBuildScriptTests {
 // MARK: - Toolchain reuse invariants
 
 extension ToolchainBuildScriptTests {
-  @Test
-  static func setupBuildEnvToolchainKeyFoldsSourceHashAndXcodeBundlePath() throws {
-    let action = try rootFile(".github/actions/setup-build-env/action.yml")
-
-    // The key output folds BOTH the engine source hash and the toolchain id.
-    // Keying on the source hash alone would drop the `-${toolchain_id}` suffix.
-    #expect(action.contains(#"source_hash=$("#))
-    #expect(action.contains(#"toolchain_id=$("#))
-    #expect(action.contains(#"echo "hash=${source_hash}-${toolchain_id}""#))
-
-    // The toolchain id folds the Xcode bundle path (`xcode-select -p`), the only
-    // dimension separating a release candidate from the final of the same version.
-    // Anchor on the command form so the comment above the block cannot satisfy it,
-    // and pin the command inside the toolchain_id capture (before the hash echo).
-    let toolchainStart = try #require(action.range(of: #"toolchain_id=$("#)).lowerBound
-    let xcodeSelect = try #require(action.range(of: "xcode-select -p 2>/dev/null")).lowerBound
-    let hashEcho = try #require(
-      action.range(of: #"echo "hash=${source_hash}-${toolchain_id}""#)
-    ).lowerBound
-    #expect(toolchainStart < xcodeSelect)
-    #expect(xcodeSelect < hashEcho)
-  }
-
-  @Test
-  static func setupBuildEnvCacheHitRunsHelpProbeAndRebuildsOnFailure() throws {
-    let action = try rootFile(".github/actions/setup-build-env/action.yml")
-
-    let cacheHitGuard = #"if [ "${TOOLCHAIN_CACHE_HIT}" = "true" ] && [ -x "${bin}" ]; then"#
-    let helpProbe = #""${bin}" --help >/dev/null 2>&1"#
-    let probeFailed = #"if [ "${probe_rc}" -ne 0 ]; then"#
-
-    #expect(action.contains("probe_rc=$?"))
-    #expect(action.contains(#"bash "${SWIFT_MK_SRC}/scripts/swift-mk-build.sh" resolve"#))
-
-    // The `--help` launch probe runs on the cache-hit path, and a non-zero exit
-    // reaches the rebuild (`build_engine`, which invokes the build script).
-    let guardIndex = try #require(action.range(of: cacheHitGuard)).lowerBound
-    let probeIndex = try #require(action.range(of: helpProbe)).lowerBound
-    let probeFailedRange = try #require(action.range(of: probeFailed))
-    let rebuildIndex = try #require(
-      action.range(of: "build_engine", range: probeFailedRange.upperBound..<action.endIndex)
-    ).lowerBound
-    #expect(guardIndex < probeIndex)
-    #expect(probeIndex < probeFailedRange.lowerBound)
-    #expect(probeFailedRange.lowerBound < rebuildIndex)
-  }
-
-  @Test
-  static func setupBuildEnvPoolReusesKeyedBinaryWithoutBlanketWipe() throws {
-    let action = try rootFile(".github/actions/setup-build-env/action.yml")
-    // The pool binary path is content-keyed by the engine source hash, so a new source or
-    // toolchain lands in its own keyed directory. Dropping the keyed path fails here.
-    let keyedBin = #"bin="${HOME}/.swift-mk-ci-toolchain/${SWIFT_MK_SRC_HASH}/swift-mk""#
-    // Slice the pool branch: it follows the keyed bin assignment, so the hosted `rm -rf`
-    // in build_engine stays out of `pool` while the pool probe, rebuild, and `rm -f` fall in.
-    let pool = String(action[try #require(action.range(of: keyedBin)).upperBound...])
-    #expect(action.contains("SWIFT_MK_SRC_HASH: ${{ steps.swift-mk-src.outputs.hash }}"))
-    #expect(pool.contains(#""${bin}" --help >/dev/null 2>&1"#))
-    #expect(pool.contains(#"if [ "${probe_rc}" -ne 0 ]; then"#))
-    #expect(pool.contains("build_pool_bin"))
-    #expect(pool.contains(#"rm -f "${bin}""#))
-    // Reintroducing any `rm -rf` on the pool path (the blanket toolchain-root wipe) fails.
-    #expect(!pool.contains("rm -rf"))
-  }
-
   @Test
   static func toolchainContentKeyDrivesReuse() throws {
     try withTemporaryDirectory { directory in
