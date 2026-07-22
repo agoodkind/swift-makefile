@@ -9,15 +9,17 @@ name: Publish Linux swift-mk
 on:
   push:
     branches: [main]
-    # Only the engine inputs that change the compiled binary or its cache key. These mirror the
-    # file set setup-linux-swift-mk hashes for its key, so the published binary tracks the same
-    # source; Package.resolved is included because it is tracked and feeds that hash.
+    # Only the engine inputs that change the compiled binary or its key. These mirror the file set
+    # swift-mk-asset-key.sh hashes, so the published binary tracks the same source; Package.resolved
+    # is included because it is tracked and feeds the hash. swift-mk-asset-key.sh itself is included
+    # because a recipe change moves the key value, so a consumer would compute a new name and must
+    # find a matching asset.
     paths:
       - "Sources/**"
       - "Package.swift"
       - "Package.resolved"
       - "scripts/swift-mk-build.sh"
-      - ".github/actions/setup-linux-swift-mk/action.yml"
+      - "scripts/swift-mk-asset-key.sh"
       - ".github/workflows/publish-linux-swift-mk.yml"
   # Allow a manual rebuild-and-publish, e.g. after a base-image bump changes the runtime id.
   workflow_dispatch:
@@ -56,47 +58,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Compute the source hash BEFORE building, from the checked-in files only, with the
-          # identical recipe setup-linux-swift-mk uses in its Resolve step (which also runs
-          # before any build). `swift build` can rewrite Package.resolved, so hashing after the
-          # build would diverge from the consumer's pre-build hash and every consumer would miss.
-          # The hash pairs each file's content digest with its repo-relative path and sorts, so
-          # emission order does not matter.
-          source_hash=$(
-            {
-              find "${GITHUB_WORKSPACE}/Sources" -type f -print0 2>/dev/null \
-                | while IFS= read -r -d '' path; do
-                    content_hash=$(shasum < "${path}" | awk '{ print $1 }')
-                    printf '%s  %s\n' "${content_hash}" "${path#"${GITHUB_WORKSPACE}/"}"
-                  done
-              for manifest in Package.swift Package.resolved scripts/swift-mk-build.sh; do
-                if [ -f "${GITHUB_WORKSPACE}/${manifest}" ]; then
-                  content_hash=$(shasum < "${GITHUB_WORKSPACE}/${manifest}" | awk '{ print $1 }')
-                  printf '%s  %s\n' "${content_hash}" "${manifest}"
-                fi
-              done
-            } | LC_ALL=C sort | shasum | awk '{ print $1 }'
-          )
-          # Build swift-mk exactly as setup-linux-swift-mk does, so the published binary is
-          # what a from-source build would produce.
+          # Compute the key BEFORE building, from the checked-in files, with the same shared script
+          # setup-linux-swift-mk uses, so the published asset name matches what a consumer computes.
+          # `swift build` can rewrite Package.resolved, so a post-build hash would drift from the
+          # consumer's pre-build hash and every consumer would miss.
+          key=$(bash "${GITHUB_WORKSPACE}/scripts/swift-mk-asset-key.sh" "${GITHUB_WORKSPACE}")
+          asset_name="swift-mk-linux-${key}"
+          echo "publish-linux-swift-mk: building ${asset_name}"
+          # Build swift-mk exactly as setup-linux-swift-mk does.
           bin="${RUNNER_TEMP}/swift-mk"
           SWIFT_MK_BIN="${bin}" SWIFT_MK_BUILD_REPO="${GITHUB_WORKSPACE}" \
               bash "${GITHUB_WORKSPACE}/scripts/swift-mk-build.sh" resolve
-          if [ ! -x "${bin}" ]; then
-              echo "publish-linux-swift-mk: build did not produce ${bin}" >&2
+          if [[ ! -x "${bin}" ]]; then
+              echo "publish-linux-swift-mk: build exited 0 but produced no binary at ${bin}" >&2
               exit 1
           fi
-          # Fold the Swift toolchain and container runtime into the name with the identical
-          # recipe setup-linux-swift-mk uses, so a consumer downloads only a binary built from
-          # the same source under the same Swift, glibc, and base OS.
-          runtime_id=$(
-            {
-              swift --version 2>/dev/null
-              getconf GNU_LIBC_VERSION 2>/dev/null
-              cat /etc/os-release 2>/dev/null
-            } | shasum | awk '{ print $1 }'
-          )
-          asset_name="swift-mk-linux-${source_hash}-${runtime_id}"
           out="${RUNNER_TEMP}/upload"
           mkdir -p "${out}"
           cp "${bin}" "${out}/${asset_name}"
@@ -139,15 +115,30 @@ jobs:
           tag="linux-swift-mk"
           # Create the rolling release once; keep it a non-latest prerelease so it never
           # shadows the versioned product releases in the repo's Releases list.
-          if ! gh release view "${tag}" >/dev/null 2>&1; then
+          if gh release view "${tag}" >/dev/null 2>&1; then
+              echo "publish: rolling release ${tag} exists"
+          else
+              echo "publish: creating rolling release ${tag}"
               gh release create "${tag}" \
                   --title "Linux swift-mk (rolling)" \
                   --notes "Prebuilt Linux swift-mk change-detection binary, rebuilt on each engine change and consumed by setup-linux-swift-mk. Not a product release." \
                   --prerelease \
                   --latest=false
           fi
-          # Upload the binary and its checksum, replacing any prior asset of the same name.
-          gh release upload "${tag}" upload/* --clobber
+          # Skip the upload when the current pair is already present, so an action-only or
+          # workflow-only change (same source_hash, same asset name) does NOT re-upload. That
+          # avoids `--clobber`'s delete-then-reupload window, during which a consumer's download
+          # would 404 and fall back to a full source build. When the name is new (source changed)
+          # or only partially present, upload with --clobber; the only name that gets clobbered
+          # then is one consumers already cannot use.
+          existing=$(gh release view "${tag}" --json assets --jq '.assets[].name')
+          if grep -qxF "${ASSET_NAME}" <<<"${existing}" \
+              && grep -qxF "${ASSET_NAME}.sha256" <<<"${existing}"; then
+              echo "publish: ${ASSET_NAME} already published; skipping upload"
+          else
+              echo "publish: uploading ${ASSET_NAME} and its checksum"
+              gh release upload "${tag}" upload/* --clobber
+          fi
           # Prune every other asset so the rolling release cannot grow past GitHub's per-release
           # asset cap over many engine changes. Pruning runs AFTER the upload, so the current
           # pair is always present; a consumer whose engine predates the current one misses and
@@ -155,7 +146,11 @@ jobs:
           gh release view "${tag}" --json assets --jq '.assets[].name' \
             | while IFS= read -r name; do
                 case "${name}" in
-                  "${ASSET_NAME}" | "${ASSET_NAME}.sha256") ;;
-                  *) gh release delete-asset "${tag}" "${name}" --yes ;;
+                  "${ASSET_NAME}" | "${ASSET_NAME}.sha256")
+                    ;;
+                  *)
+                    echo "publish: pruning stale asset ${name}"
+                    gh release delete-asset "${tag}" "${name}" --yes
+                    ;;
                 esac
               done

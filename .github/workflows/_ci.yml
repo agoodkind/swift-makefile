@@ -226,16 +226,19 @@ jobs:
           path: .swift-makefile
           fetch-depth: 1
 
-      # continue-on-error keeps a Linux swift-mk build failure from failing the job: the
-      # detect step below falls back to a full run when the binary is missing.
+      # Setup provides the Linux swift-mk binary from the cache, the published release asset, or a
+      # source build, and fails loud on a real error (apt, a non-404 HTTP status, a checksum
+      # mismatch, a build failure), so a genuine infrastructure or engine problem shows as a red
+      # step. A 404 for the not-yet-published asset is not an error and builds from source. The
+      # Detect step below is the single recovery: it fails open to a full run if no usable binary
+      # was produced, so the downstream gates still run even when this step is red.
       - name: Setup Linux swift-mk
-        continue-on-error: true
         uses: ./.swift-makefile/.github/actions/setup-linux-swift-mk
 
       - name: Detect changes
         id: detect
-        # always() so detection still runs (or fails safe) even when the setup step
-        # above did not produce a usable binary.
+        # always() so detection still runs, and fails open to a full run, even when the setup step
+        # above failed to provide a usable binary.
         if: ${{ always() }}
         shell: bash
         env:
@@ -253,15 +256,17 @@ jobs:
         run: |
           set -uo pipefail
 
-          # The detector itself always exits 0 and writes the outputs (it fail-safes
-          # to all-true internally). The only way to reach the fallback below is a
-          # missing or unrunnable binary, meaning the Linux build did not succeed.
+          # Run the detector. It exits 0 and writes the outputs on success, fail-safing to all-true
+          # internally. Only a missing or non-runnable binary reaches the fallback, which is the
+          # single recovery for a Setup step that could not provide a usable binary. Run the binary
+          # directly rather than gating on a mode check: a missing binary makes this fail and take
+          # the same fallback.
           bin="${SWIFT_MK_BIN:-${HOME}/.swift-mk-ci-toolchain/swift-mk}"
-          if [ -x "${bin}" ] && "${bin}" ci-changed; then
+          if "${bin}" ci-changed; then
             exit 0
           fi
 
-          echo "change detection unavailable (Linux swift-mk build failed); running full CI"
+          echo "change detection unavailable; running full CI"
           {
             printf 'run_build=true\n'
             printf 'run_lint=true\n'
