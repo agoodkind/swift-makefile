@@ -111,10 +111,6 @@ on:
       LOCAL_POOL_CAPACITY_TOKEN:
         required: false
 
-concurrency:
-  group: ${{ inputs.ephemeral && format('release-dry-run-{0}', github.event.pull_request.number) || 'release' }}
-  cancel-in-progress: false
-
 env:
   # The swift-makefile bootstrap fetches swift.mk via `gh api`; unauthenticated
   # fetches fail silently, so every consumer needs this token.

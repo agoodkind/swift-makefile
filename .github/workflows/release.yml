@@ -7,6 +7,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Match ci.yml: one concurrency group per ref. A new pull request push cancels
+# the prior signed dry run so a superseded run does not hold a pool slot. A push
+# to main is a real release, so it never cancels an in-flight publish.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # The caller must grant every permission the called workflow's jobs request,
 # even for steps an input disables; the validation is static.
 permissions:
