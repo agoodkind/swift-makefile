@@ -1,181 +1,47 @@
 name: Setup Linux swift-mk
-description: Build and cache the Linux swift-mk change-detection binary from the swift-makefile engine checkout, with no Xcode or macOS tooling.
+description: Provide the Linux swift-mk change-detection binary from the swift-makefile engine checkout, with no Xcode or macOS tooling.
 
 runs:
   using: composite
   steps:
-    # Build swift-mk from the action's own checkout, so the action YAML and the
-    # engine binary it builds always come from the same commit, and a consumer
-    # needs no separate helper checkout for the toolchain build. This mirrors
-    # setup-build-env's swift-mk build path, minus everything Xcode: no
-    # setup-xcode, no cache plan, no signing, no mise/tuist/xcodegen, no pool.
+    # Resolve the engine checkout root and the cache/asset key. The key comes from the shared
+    # scripts/swift-mk-asset-key.sh so the consumer side here and the publisher side compute it
+    # the same way; that script fails loud on a missing input or an empty runtime signal.
     - name: Resolve swift-mk source
       id: swift-mk-src
       shell: bash
       run: |
         set -euo pipefail
-        # This action expects an existing Swift toolchain (it runs in the Swift
-        # container, e.g. `container: swift:6.3`); it does not install one. Fail
-        # fast with a clear message rather than letting a suppressed `swift
-        # --version` silently produce a partial cache key that only breaks later at
-        # build time.
-        if ! command -v swift >/dev/null 2>&1; then
-            echo "setup-linux-swift-mk: swift not found on PATH; run this action in a Swift toolchain (e.g. container: swift:6.3)" >&2
-            exit 1
-        fi
-        # GITHUB_ACTION_PATH is the action directory; three levels up is the
-        # swift-makefile repo root, for both the local ./.github/... use and a
-        # pinned @ref consumer use.
+        # GITHUB_ACTION_PATH is the action directory; three levels up is the swift-makefile repo
+        # root, for both the local ./.github/... use and a pinned @ref consumer use.
         src=$(cd "${GITHUB_ACTION_PATH}/../../.." && pwd)
         echo "dir=${src}" >> "${GITHUB_OUTPUT}"
-        # Key the toolchain cache on the engine source, so it invalidates on an
-        # engine change and hits otherwise. Build the file list defensively:
-        # Sources always exists, but Package.resolved is gitignored in
-        # swift-makefile's own repo, so listing missing paths under pipefail must
-        # not abort the step. Null-delimit the list so a path containing whitespace
-        # cannot corrupt the hash.
-        file_list=$(mktemp)
-        find "${src}/Sources" -type f -print0 >> "${file_list}" 2>/dev/null || true
-        for manifest in Package.swift Package.resolved scripts/swift-mk-build.sh; do
-            if [ -f "${src}/${manifest}" ]; then
-                printf '%s\0' "${src}/${manifest}" >> "${file_list}"
-            fi
-        done
-        # Hash each file's content paired with its repo-relative path, then sort and
-        # hash the pairs. Including the relative path makes the key move on a rename
-        # (a content-only digest would reuse a binary compiled from the previous
-        # layout), and stripping the absolute checkout prefix keeps the key stable
-        # across the local `./` and pinned `@ref` checkout locations.
-        source_hash=$(
-          while IFS= read -r -d '' path; do
-            content_hash=$(shasum < "${path}" | awk '{ print $1 }')
-            printf '%s  %s\n' "${content_hash}" "${path#"${src}/"}"
-          done < "${file_list}" | LC_ALL=C sort | shasum | awk '{ print $1 }'
-        )
-        rm -f "${file_list}"
-        # Fold the Swift toolchain AND the container runtime into the key, so a
-        # cached binary is only ever reused under the identical Swift, glibc, and
-        # base OS it was dynamically linked against. The Linux binary links the
-        # container's system libraries, so a `swift:6.3` image rebuilt on a newer
-        # base (same Swift version, newer glibc) must miss the cache and rebuild
-        # rather than restore a binary that no longer launches. `swift --version`
-        # alone does not move when only the base OS drifts, so the glibc version and
-        # os-release signals close that gap and stop a mismatched binary from ever
-        # being a cache hit.
-        runtime_id=$(
-          {
-            swift --version 2>/dev/null
-            getconf GNU_LIBC_VERSION 2>/dev/null
-            cat /etc/os-release 2>/dev/null
-          } | shasum | awk '{ print $1 }'
-        )
-        echo "hash=${source_hash}-${runtime_id}" >> "${GITHUB_OUTPUT}"
+        key=$(bash "${src}/scripts/swift-mk-asset-key.sh" "${src}")
+        echo "hash=${key}" >> "${GITHUB_OUTPUT}"
+        echo "setup-linux-swift-mk: asset key ${key}"
 
-    # Prefer a prebuilt binary from the engine's rolling release over rebuilding. The
-    # release asset is not ref-scoped, so unlike actions/cache it is reachable from any
-    # consumer PR, which is what eliminates the constant rebuild. swift-makefile is public,
-    # so the asset downloads over plain HTTPS with no token; keeping the token out of this
-    # step means the untrusted binary never runs its `--help` probe with a credential in its
-    # environment. The asset is keyed on the SAME source-plus-runtime hash as the cache, so a
-    # consumer only ever downloads a binary built from its exact checked-out source; a consumer
-    # on a newer main (publish not caught up) misses and builds from source rather than run a
-    # stale detector. A miss (curl missing, download fails, checksum mismatch, or the binary
-    # will not launch) falls through to the cache and from-source build below.
-    - name: Download prebuilt swift-mk
-      id: download
-      shell: bash
-      env:
-        ASSET: swift-mk-linux-${{ steps.swift-mk-src.outputs.hash }}
-      run: |
-        set -uo pipefail
-        toolchain="${HOME}/.swift-mk-ci-toolchain"
-        bin="${toolchain}/swift-mk"
-        rm -rf "${toolchain}"
-        mkdir -p "${toolchain}"
-        base="https://github.com/agoodkind/swift-makefile/releases/download/linux-swift-mk"
-        # The Swift container ships no gh, curl, or wget, so install curl to fetch the asset
-        # over HTTPS. A failed install leaves curl absent and the download falls through to the
-        # source build, so it is best-effort. Every step here has a time bound so a stalled apt
-        # mirror, a hung download, or a wedged binary probe falls back to the source build
-        # rather than sitting until the whole changes job times out.
-        if ! command -v curl >/dev/null 2>&1; then
-            timeout 180 apt-get update -qq >/dev/null 2>&1 \
-              && timeout 180 apt-get install -y -qq --no-install-recommends curl >/dev/null 2>&1 \
-              || true
-        fi
-        # Download the binary and its checksum, verify the checksum, then probe that the binary
-        # launches. No `set -e`, so any failing link in this chain yields hit=false and a clean
-        # fallback rather than aborting the composite action. curl caps its own connect and total
-        # time; the probe is wrapped in `timeout`.
-        download_ok=false
-        if command -v curl >/dev/null 2>&1 \
-            && curl -fsSL --connect-timeout 15 --max-time 180 \
-                 "${base}/${ASSET}" -o "${toolchain}/${ASSET}" \
-            && curl -fsSL --connect-timeout 15 --max-time 60 \
-                 "${base}/${ASSET}.sha256" -o "${toolchain}/${ASSET}.sha256"; then
-            if ( cd "${toolchain}" && shasum -a 256 -c "${ASSET}.sha256" ) >/dev/null 2>&1; then
-                mv "${toolchain}/${ASSET}" "${bin}"
-                if chmod +x "${bin}" && timeout 30 "${bin}" --help >/dev/null 2>&1; then
-                    download_ok=true
-                fi
-            fi
-        fi
-        if [ "${download_ok}" = true ]; then
-            echo "downloaded prebuilt swift-mk (${ASSET})"
-            rm -f "${toolchain}/${ASSET}.sha256"
-            echo "hit=true" >> "${GITHUB_OUTPUT}"
-            printf 'SWIFT_MK_BIN=%s\n' "${bin}" >> "${GITHUB_ENV}"
-        else
-            echo "no usable prebuilt swift-mk for ${ASSET}; will restore cache or build"
-            rm -rf "${toolchain}"
-            echo "hit=false" >> "${GITHUB_OUTPUT}"
-        fi
-
+    # Restore the toolchain cache first, so the swift-makefile repo's own PRs, which can restore
+    # their default-branch cache, get a fast cache hit and never touch the network. The
+    # release-asset download is the fallback for cross-repo consumers whose ref-scoped cache never
+    # hits. Whatever populates the toolchain directory on a miss is saved here at post-job, so a
+    # later same-ref run hits the cache and skips both the download and the build.
     - name: Restore swift-mk toolchain
       id: swift-mk-toolchain
-      if: ${{ steps.download.outputs.hit != 'true' }}
       uses: actions/cache@v5
       with:
         path: ~/.swift-mk-ci-toolchain
-        # The key includes runner.os, so the Linux binary caches independently from
-        # the macOS one, plus the engine source hash and the active Swift toolchain.
+        # The key includes runner.os, so the Linux binary caches independently from the macOS one,
+        # plus the engine source hash and the active Swift toolchain.
         key: swift-mk-ci-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-mk-src.outputs.hash }}
 
-    - name: Build swift-mk
-      id: build
-      if: ${{ steps.download.outputs.hit != 'true' }}
+    # Provide the binary from the cache, the published release asset, or a source build. The
+    # script fails loud on any real error; only a 404 (no asset published for this source yet)
+    # falls through to the build. See provide-swift-mk.sh.
+    - name: Provide swift-mk
+      id: provide
       shell: bash
       env:
         SWIFT_MK_SRC: ${{ steps.swift-mk-src.outputs.dir }}
-        TOOLCHAIN_CACHE_HIT: ${{ steps.swift-mk-toolchain.outputs.cache-hit }}
-      run: |
-        set -euo pipefail
-        bin="${HOME}/.swift-mk-ci-toolchain/swift-mk"
-
-        build_engine() {
-            # Remove any stale binary a non-clean runner or a poisoned cache left, so
-            # the rebuild cannot be skipped by swift-mk-build.sh's mtime check.
-            rm -rf "${HOME}/.swift-mk-ci-toolchain"
-            SWIFT_MK_BIN="${bin}" SWIFT_MK_BUILD_REPO="${SWIFT_MK_SRC}" \
-                bash "${SWIFT_MK_SRC}/scripts/swift-mk-build.sh" resolve
-        }
-
-        if [ "${TOOLCHAIN_CACHE_HIT}" = "true" ] && [ -x "${bin}" ]; then
-            # Safety net: a cached binary that cannot launch under the active
-            # toolchain is discarded and rebuilt rather than aborting the run.
-            # `swift-mk --help` is an ArgumentParser built-in that exits 0 whenever
-            # the process launches, so treat ANY non-zero as a failed probe.
-            set +e
-            "${bin}" --help >/dev/null 2>&1
-            probe_rc=$?
-            set -e
-            if [ "${probe_rc}" -ne 0 ]; then
-                echo "cached swift-mk failed to launch (exit ${probe_rc}); rebuilding against the active toolchain"
-                build_engine
-            fi
-        else
-            build_engine
-        fi
-        # The Detect changes step falls back to this path when SWIFT_MK_BIN is
-        # unset, but export it explicitly so the binary location is unambiguous.
-        printf 'SWIFT_MK_BIN=%s\n' "${bin}" >> "${GITHUB_ENV}"
+        SWIFT_MK_CACHE_HIT: ${{ steps.swift-mk-toolchain.outputs.cache-hit }}
+        SWIFT_MK_ASSET: swift-mk-linux-${{ steps.swift-mk-src.outputs.hash }}
+      run: bash "${GITHUB_ACTION_PATH}/provide-swift-mk.sh"
