@@ -16,6 +16,10 @@ permissions:
 
 jobs:
   release:
+    # name: swift makes the reusable-workflow check read `Release / swift / <job>`,
+    # matching CI's `CI / swift / <job>` and dropping the `Release / release`
+    # doubling. The job id stays `release`; only the displayed segment changes.
+    name: swift
     uses: ./.github/workflows/_release.yml
     with:
       # Notarize and staple the signed swift-mk dmg; a dmg is the CLI-friendly

@@ -120,6 +120,9 @@ jobs:
   # Decide pool-or-hosted for the macOS jobs, reusing the same capacity check the
   # CI gates use, so release is infra-agnostic.
   plan-runners:
+    # Displayed check segment; the job id stays `plan-runners` so build/notarize
+    # needs and outputs are unchanged.
+    name: Route
     uses: ./.github/workflows/_plan-runners.yml
     with:
       runner: ${{ inputs.runner }}
@@ -130,6 +133,7 @@ jobs:
       LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
 
   meta:
+    name: Meta
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
@@ -144,6 +148,7 @@ jobs:
         run: make release-meta
 
   build:
+    name: Build
     needs: [meta, plan-runners]
     runs-on: ${{ needs.plan-runners.outputs.build_label }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
@@ -391,6 +396,7 @@ jobs:
           if-no-files-found: error
 
   notarize:
+    name: Notarize
     needs: [meta, build, plan-runners]
     runs-on: ${{ needs.plan-runners.outputs.build_label }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
@@ -451,6 +457,7 @@ jobs:
           if-no-files-found: error
 
   publish:
+    name: Publish
     needs: [meta, build, notarize]
     runs-on: ${{ inputs.publish-runner }}
     permissions:
@@ -470,6 +477,7 @@ jobs:
         run: make release-publish
 
   smoke:
+    name: Smoke
     needs: [meta, publish]
     if: inputs.smoke-asset != ''
     runs-on: ${{ inputs.runner }}
