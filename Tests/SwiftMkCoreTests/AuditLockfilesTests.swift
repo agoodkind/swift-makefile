@@ -30,6 +30,20 @@ func scannerArgumentsStripRecursiveAndPassLockfiles() {
 }
 
 @Test
+func pathspecsCoverOsvSupportedManifests() {
+  // osv-scanner detects Go from go.mod (not go.sum) and also supports Python,
+  // Dart, Java, and other manifests that the earlier allowlist omitted.
+  let basenames = AuditLockfiles.basenames
+  #expect(basenames.contains("go.mod"))
+  #expect(!basenames.contains("go.sum"))
+  #expect(basenames.contains("requirements.txt"))
+  #expect(basenames.contains("uv.lock"))
+  #expect(basenames.contains("pubspec.lock"))
+  #expect(basenames.contains("pom.xml"))
+  #expect(basenames.contains("Package.resolved"))
+}
+
+@Test
 func discoverUsesGitEffectiveIgnoreForGlobalExcludes() throws {
   // A lockfile under a path ignored only via core.excludesFile must stay out of
   // the audit set, matching git ls-files --exclude-standard rather than osv's

@@ -20,24 +20,58 @@ import Foundation
 /// `core.excludesFile`), so the lockfile set here matches what git itself treats as
 /// visible.
 enum AuditLockfiles {
-  /// Pathspecs for lockfiles osv-scanner understands across common ecosystems.
+  /// Pathspecs for lockfiles and manifests osv-scanner understands for
+  /// `scan source`, plus Swift/Cocoa lockfiles this engine's consumers use.
+  /// Names match OSV-Scanner's supported set
+  /// (https://google.github.io/osv-scanner/supported-languages-and-lockfiles/).
   /// `:(glob)**/...` is required so a nested consumer package's lockfile is listed
-  /// when it is not ignored.
+  /// when it is not ignored. Go uses `go.mod` (not `go.sum`).
   static let pathspecs: [String] = [
+    // Swift / Cocoa (engine consumers)
     ":(glob)**/Package.resolved",
     ":(glob)**/Podfile.lock",
     ":(glob)**/Cartfile.resolved",
-    ":(glob)**/Cargo.lock",
-    ":(glob)**/go.sum",
-    ":(glob)**/Gemfile.lock",
-    ":(glob)**/composer.lock",
-    ":(glob)**/package-lock.json",
-    ":(glob)**/yarn.lock",
-    ":(glob)**/pnpm-lock.yaml",
-    ":(glob)**/poetry.lock",
-    ":(glob)**/Pipfile.lock",
+    // C/C++
     ":(glob)**/conan.lock",
+    // Dart
+    ":(glob)**/pubspec.lock",
+    // Elixir
     ":(glob)**/mix.lock",
+    // Go
+    ":(glob)**/go.mod",
+    // Haskell
+    ":(glob)**/cabal.project.freeze",
+    ":(glob)**/stack.yaml.lock",
+    // Java
+    ":(glob)**/buildscript-gradle.lockfile",
+    ":(glob)**/gradle.lockfile",
+    ":(glob)**/gradle/verification-metadata.xml",
+    ":(glob)**/pom.xml",
+    // JavaScript
+    ":(glob)**/bun.lock",
+    ":(glob)**/package-lock.json",
+    ":(glob)**/pnpm-lock.yaml",
+    ":(glob)**/yarn.lock",
+    // .NET
+    ":(glob)**/deps.json",
+    ":(glob)**/packages.config",
+    ":(glob)**/packages.lock.json",
+    // PHP
+    ":(glob)**/composer.lock",
+    // Python
+    ":(glob)**/Pipfile.lock",
+    ":(glob)**/poetry.lock",
+    ":(glob)**/requirements.txt",
+    ":(glob)**/pdm.lock",
+    ":(glob)**/pylock.toml",
+    ":(glob)**/uv.lock",
+    // R
+    ":(glob)**/renv.lock",
+    // Ruby
+    ":(glob)**/Gemfile.lock",
+    ":(glob)**/gems.locked",
+    // Rust
+    ":(glob)**/Cargo.lock",
   ]
 
   /// Lockfile basenames used by the non-git filesystem fallback.
