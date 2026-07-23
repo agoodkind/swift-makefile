@@ -223,6 +223,15 @@ jobs:
         # every path is marked safe. release-meta reads git history to compute the
         # version, so git must work here.
         run: git config --global --add safe.directory '*'
+      - name: Install make
+        shell: bash
+        # The swift:6.3 image ships the Swift toolchain but not make, and the
+        # consumer release-meta target is a make target. The bare ubuntu runner
+        # had make preinstalled; the container does not, so install it here.
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends make
       - name: Setup Linux swift-mk
         uses: ./.swift-makefile/.github/actions/setup-linux-swift-mk
       - name: Compute release metadata
