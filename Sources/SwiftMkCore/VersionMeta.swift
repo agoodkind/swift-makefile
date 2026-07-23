@@ -89,23 +89,31 @@ public enum VersionMeta {
   ///    environment win (the release build step already decided them).
   /// 2. Otherwise a CI run (a run number is present) computes the release scheme.
   /// 3. Otherwise a local build computes the dev scheme.
-  static func compute(_ inputs: Inputs) throws -> Version {
+  /// Compute the version without enforcing the build-number cap, so a caller that
+  /// needs only the marketing value is not coupled to a build number it will not
+  /// use. `compute` wraps this and enforces the cap for the authoritative path.
+  static func computed(_ inputs: Inputs) -> Version {
     let tag = resolveTag(inputs)
     if !inputs.marketingEnv.isEmpty, !inputs.buildEnv.isEmpty {
-      try assertBuildLength(inputs.buildEnv)
       return Version(marketing: inputs.marketingEnv, build: inputs.buildEnv, tag: tag)
     }
     if isPositiveInteger(inputs.githubRunNumber) {
-      let build = inputs.timestamp + inputs.githubRunNumber
-      try assertBuildLength(build)
-      return Version(marketing: inputs.calendar, build: build, tag: tag)
+      return Version(
+        marketing: inputs.calendar, build: inputs.timestamp + inputs.githubRunNumber, tag: tag)
     }
-    try assertBuildLength(inputs.timestamp)
     let marketing =
       inputs.shortSHA.isEmpty
       ? "\(inputs.calendar)-dev"
       : "\(inputs.calendar)+\(inputs.shortSHA)-dev"
     return Version(marketing: marketing, build: inputs.timestamp, tag: tag)
+  }
+
+  /// Compute the version and enforce the 18-character build-number cap, the
+  /// authoritative path `version-meta` prints and the release relies on.
+  static func compute(_ inputs: Inputs) throws -> Version {
+    let version = computed(inputs)
+    try assertBuildLength(version.build)
+    return version
   }
 
   /// The release tag: the pushed tag name on a tag ref, else `<timestamp>-<hex run
@@ -114,7 +122,7 @@ public enum VersionMeta {
     if inputs.githubRefType == "tag", !inputs.githubRefName.isEmpty {
       return inputs.githubRefName
     }
-    if isPositiveInteger(inputs.githubRunNumber), let runNumber = UInt64(inputs.githubRunNumber) {
+    if let runNumber = UInt64(inputs.githubRunNumber) {
       let runHex = String(runNumber, radix: tagHexRadix)
       return "\(inputs.timestamp)-\(runHex)-\(inputs.shortSHA)"
     }
@@ -130,21 +138,21 @@ public enum VersionMeta {
     }
   }
 
-  /// A run number is only usable when it is a non-empty run of digits. GitHub
-  /// always sets a numeric `GITHUB_RUN_NUMBER`, so a non-numeric value means the
-  /// variable is not a real run number; treat it as absent so the build number and
-  /// the tag agree on the dev scheme rather than one taking it and the other not.
+  /// A run number is only usable when it parses as a base-ten unsigned integer.
+  /// GitHub always sets a plain decimal `GITHUB_RUN_NUMBER`. Gating on `UInt64`
+  /// parsing (not `Character.isNumber`, which accepts non-ASCII Unicode digits the
+  /// tag's `UInt64` conversion then rejects) keeps the build number and the tag on
+  /// the same scheme; a value that does not parse is treated as absent.
   static func isPositiveInteger(_ value: String) -> Bool {
-    !value.isEmpty && value.allSatisfy(\.isNumber)
+    UInt64(value) != nil
   }
 
   // MARK: Environment resolution
 
-  /// Resolve the version from the live environment, the UTC clock, and git.
-  public static func resolve() throws -> Version {
-    let now = Date()
-    let components = utcComponents(from: now)
-    let inputs = Inputs(
+  /// Gather the resolver inputs from the live environment, the UTC clock, and git.
+  private static func currentInputs() -> Inputs {
+    let components = utcComponents(from: Date())
+    return Inputs(
       marketingEnv: Env.get("MARKETING_VERSION"),
       buildEnv: Env.get("CURRENT_PROJECT_VERSION"),
       githubRefType: Env.get("GITHUB_REF_TYPE"),
@@ -153,19 +161,40 @@ public enum VersionMeta {
       timestamp: timestamp(from: components),
       calendar: calendarVersion(from: components),
       shortSHA: shortSHA())
-    return try compute(inputs)
   }
 
-  /// The two build settings the chokepoint injects into a product build. Throws
-  /// when the version cannot be resolved (for example a build number past the
-  /// 18-character cap), so the chokepoint fails the build loudly rather than
-  /// shipping a bundle with an empty or fallback version.
-  public static func buildSettings() throws -> [String: String] {
-    let version = try resolve()
-    return [
-      "MARKETING_VERSION": version.marketing,
-      "CURRENT_PROJECT_VERSION": version.build,
-    ]
+  /// Resolve the version from the live environment, enforcing the build cap. This
+  /// is the authoritative path `version-meta` prints.
+  public static func resolve() throws -> Version {
+    try compute(currentInputs())
+  }
+
+  /// The build settings the chokepoint injects for the given missing keys. The
+  /// build-number cap is enforced only when `CURRENT_PROJECT_VERSION` is actually
+  /// injected, so a build that already supplies its own build number is never
+  /// failed by an overlong computed one it does not use. Pure over an explicit
+  /// version so tests cover every combination without the clock or environment.
+  static func injectionSettings(
+    forMissing missing: Set<String>, version: Version
+  ) throws -> [String: String] {
+    var settings: [String: String] = [:]
+    if missing.contains("MARKETING_VERSION") {
+      settings["MARKETING_VERSION"] = version.marketing
+    }
+    if missing.contains("CURRENT_PROJECT_VERSION") {
+      try assertBuildLength(version.build)
+      settings["CURRENT_PROJECT_VERSION"] = version.build
+    }
+    return settings
+  }
+
+  /// The build settings the chokepoint injects for the given missing keys, resolved
+  /// from the current environment. Throws only when it must inject an overlong
+  /// build number, so the build fails loudly rather than shipping an invalid one.
+  public static func injectionSettings(forMissing missing: Set<String>) throws
+    -> [String: String]
+  {
+    try injectionSettings(forMissing: missing, version: computed(currentInputs()))
   }
 
   // MARK: Clock and git

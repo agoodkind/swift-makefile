@@ -137,3 +137,58 @@ func versionStampLeavesAnExplicitCallerValueUntouched() throws {
   #expect(stamped.extraSettings["MARKETING_VERSION"] == "9.9.9")
   #expect(stamped.extraSettings["CURRENT_PROJECT_VERSION"] == "999999999999")
 }
+
+@Test
+func unicodeDigitRunNumberUsesTheDevScheme() throws {
+  // Character.isNumber accepts non-ASCII digits that UInt64 rejects; the run number
+  // must gate on UInt64 parsing so the build number and the tag stay on one scheme.
+  let version = try VersionMeta.compute(inputs(githubRunNumber: "\u{0661}\u{0662}"))
+  #expect(version.marketing == "26.7.22+a1b2c3d-dev")
+  #expect(version.build == "202607221530")
+  #expect(version.tag == "202607221530-a1b2c3d-dev")
+}
+
+@Test
+func versionStampTreatsAnEmptyValueAsMissing() throws {
+  // An empty forwarded value must be stamped, not treated as an explicit version.
+  let request = Toolchain.Request(
+    generator: .tuist,
+    scheme: "App",
+    workspace: "App.xcworkspace",
+    extraSettings: ["MARKETING_VERSION": "", "CURRENT_PROJECT_VERSION": ""])
+  let stamped = try Toolchain.versionStamped(request)
+  #expect(!(stamped.extraSettings["MARKETING_VERSION"] ?? "").isEmpty)
+  #expect(!(stamped.extraSettings["CURRENT_PROJECT_VERSION"] ?? "").isEmpty)
+}
+
+@Test
+func injectionForMarketingOnlyIgnoresAnOverlongBuild() throws {
+  // When only the marketing key is missing, the build-number cap is irrelevant, so
+  // an overlong computed build must not fail the injection.
+  let version = VersionMeta.Version(
+    marketing: "26.7.22", build: "1234567890123456789", tag: "t")
+  let settings = try VersionMeta.injectionSettings(
+    forMissing: ["MARKETING_VERSION"], version: version)
+  #expect(settings == ["MARKETING_VERSION": "26.7.22"])
+}
+
+@Test
+func injectionForBuildRejectsAnOverlongBuild() {
+  // When the build key is injected, an overlong build number fails loudly.
+  let version = VersionMeta.Version(
+    marketing: "26.7.22", build: "1234567890123456789", tag: "t")
+  #expect(throws: VersionMeta.VersionError.self) {
+    try VersionMeta.injectionSettings(
+      forMissing: ["CURRENT_PROJECT_VERSION"], version: version)
+  }
+}
+
+@Test
+func injectionForBothReturnsBothWithinTheCap() throws {
+  let version = VersionMeta.Version(
+    marketing: "26.7.22+a1b2c3d-dev", build: "202607221530", tag: "t")
+  let settings = try VersionMeta.injectionSettings(
+    forMissing: ["MARKETING_VERSION", "CURRENT_PROJECT_VERSION"], version: version)
+  #expect(settings["MARKETING_VERSION"] == "26.7.22+a1b2c3d-dev")
+  #expect(settings["CURRENT_PROJECT_VERSION"] == "202607221530")
+}

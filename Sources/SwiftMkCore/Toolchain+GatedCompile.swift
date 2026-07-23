@@ -63,27 +63,28 @@ extension Toolchain {
 
   /// Return a copy of the request with `MARKETING_VERSION` and
   /// `CURRENT_PROJECT_VERSION` injected from the resolved version, so the built
-  /// bundle carries a real version on every product build. A setting the caller
-  /// already supplied wins and is left untouched, so a release build that passes
-  /// the version explicitly, or a consumer that overrides it, is unaffected. Only
-  /// the product build injects the version; test and analyze builds are unchanged.
-  /// Throws when the version cannot be resolved so the caller fails the build.
+  /// bundle carries a real version on every product build. A key the caller already
+  /// supplied with a non-empty value wins and is left untouched, so a release build
+  /// that passes the version explicitly, or a consumer that overrides it, is
+  /// unaffected; an empty value counts as missing and is stamped. Only the product
+  /// build injects the version; test and analyze builds are unchanged. Throws only
+  /// when it must inject an overlong build number, so the build fails loudly.
   static func versionStamped(_ request: Request) throws -> Request {
-    let present = Set(request.extraSettings.keys.map { $0.uppercased() })
-    // Short-circuit before resolving when the caller already supplied both settings,
-    // so an explicitly versioned build never fails on a resolution error it does not
-    // need (for example an overlength GITHUB_RUN_NUMBER in the environment).
-    guard VersionMeta.injectableKeys.contains(where: { !present.contains($0) }) else {
+    let present = Set(
+      request.extraSettings
+        .filter { !$0.value.trimmingCharacters(in: .whitespaces).isEmpty }
+        .keys.map { $0.uppercased() })
+    let missing = Set(VersionMeta.injectableKeys.filter { !present.contains($0) })
+    guard !missing.isEmpty else {
+      return request
+    }
+    let injected = try VersionMeta.injectionSettings(forMissing: missing)
+    guard !injected.isEmpty else {
       return request
     }
     var settings = request.extraSettings
-    var injected = false
-    for (key, value) in try VersionMeta.buildSettings() where !present.contains(key.uppercased()) {
+    for (key, value) in injected {
       settings[key] = value
-      injected = true
-    }
-    guard injected else {
-      return request
     }
     return Request(
       generator: request.generator,
