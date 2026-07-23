@@ -158,6 +158,12 @@ jobs:
   meta:
     name: Meta
     runs-on: ubuntu-latest
+    # Run in the Swift toolchain image so the prebuilt Linux swift-mk can load
+    # libIndexStore.so.21.0, which ships only inside the toolchain. On a bare
+    # ubuntu runner the binary fails at load with "libIndexStore.so.21.0: cannot
+    # open shared object file" and release-meta exits 127. This matches the CI
+    # change-detection job, which runs the same binary in the same image.
+    container: swift:6.3
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
       build_version: ${{ steps.meta.outputs.build_version }}
@@ -210,6 +216,13 @@ jobs:
           ref: ${{ github.repository == 'agoodkind/swift-makefile' && github.sha || 'main' }}
           path: .swift-makefile
           fetch-depth: 1
+      - name: Trust the workspace for git
+        shell: bash
+        # The container runs as root while actions/checkout writes each tree as the
+        # runner UID, so git refuses to operate ("detected dubious ownership") until
+        # every path is marked safe. release-meta reads git history to compute the
+        # version, so git must work here.
+        run: git config --global --add safe.directory '*'
       - name: Setup Linux swift-mk
         uses: ./.swift-makefile/.github/actions/setup-linux-swift-mk
       - name: Compute release metadata
