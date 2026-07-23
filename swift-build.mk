@@ -1,4 +1,4 @@
-.PHONY: build deploy install run generate
+.PHONY: build verify deploy install run generate
 
 # swift-mk owns build-time code signing. Before any xcodebuild runs, ask the
 # swift-mk binary for the signing xcconfig (built from DEVELOPMENT_TEAM /
@@ -116,6 +116,40 @@ SWIFT_MK_FRESH_FORCE := $(strip $(filter-out 0 false no off,$(FORCE)) $(filter 0
 SWIFT_MK_FRESH_INPUTS = $(shell find $(CURDIR) -type d \( -name .git -o -name .build -o -name .make -o -name .derived-data -o -name DerivedData -o -name Derived -o -name Products -o -name SourcePackages -o -name node_modules -o -name .swiftpm -o -name build -o -name .tuist -o -name Pods \) -prune -o \( -type d -o -type f \( -name '*.swift' -o -name '*.h' -o -name '*.m' -o -name '*.c' -o -name '*.metal' -o -name '*.mk' \) \) -print 2>/dev/null) $(wildcard Package.swift Package.resolved Project.swift Workspace.swift *.xcconfig Tuist/*) $(SWIFT_MK_BIN) $(MAKEFILE_LIST)
 
 build: $(SWIFT_MK_FRESH_RECORD)
+
+# Verification generates the project, runs the configured verify build and test
+# commands with normal build and test fallbacks, then runs the source-quality gates
+# and dependency audit. The build still enters through `swift-mk build`, which marks
+# GateProof before executing the configured command. This target owns the decoupled
+# source-quality gates, so its build subprocess skips inline gates and does not run
+# the compile-based dead-code gate.
+verify: swift-mk-bin
+	@set -eu; \
+		verify_build_cmd="$${SWIFT_VERIFY_BUILD_CMD:-$${SWIFT_BUILD_CMD:-}}"; \
+		verify_test_cmd="$${SWIFT_VERIFY_TEST_CMD:-$${SWIFT_TEST_CMD:-}}"; \
+		if [ -z "$$verify_build_cmd" ]; then \
+			echo "swift-build.mk: neither SWIFT_VERIFY_BUILD_CMD nor SWIFT_BUILD_CMD is set"; \
+			exit 1; \
+		fi; \
+		if [ -z "$$verify_test_cmd" ]; then \
+			echo "swift-build.mk: neither SWIFT_VERIFY_TEST_CMD nor SWIFT_TEST_CMD is set"; \
+			exit 1; \
+		fi; \
+		$(if $(strip $(SWIFT_GENERATE_CMD)),if ! { $(SWIFT_GENERATE_CMD); }; then echo "swift-build.mk: verify generate step failed" >&2; exit 1; fi;,) \
+		if ! { \
+			$(if $(strip $(SWIFT_GENERATE_CMD)),SWIFT_MK_GENERATED=1 )SWIFT_MK_SKIP_INLINE_GATES=1 \
+				SWIFT_BUILD_CMD="$$verify_build_cmd" \
+				"$(SWIFT_MK_BIN)" build \
+				$(SWIFT_MK_POST_BUILD_SIGN_CMD) \
+				&& $(SWIFT_MK_VERIFY_ARTIFACTS_CMD); \
+		}; then exit 1; fi; \
+		$(if $(strip $(SWIFT_GENERATE_CMD)),SWIFT_MK_GENERATED=1 ) \
+			SWIFT_TEST_CMD="$$verify_test_cmd" \
+			"$(SWIFT_MK_BIN)" test; \
+		$(if $(strip $(SWIFT_GENERATE_CMD)),SWIFT_MK_GENERATED=1 ) \
+			LINT_GATES="lint-swiftlint lint-format lint-complexity swiftcheck-extra" \
+			"$(SWIFT_MK_BIN)" lint; \
+		"$(SWIFT_MK_BIN)" audit
 
 # Defer SWIFT_MK_FRESH_INPUTS to the second prerequisite-expansion pass, which make
 # runs only when it considers this target as part of a requested goal. The find then

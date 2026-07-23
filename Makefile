@@ -24,6 +24,8 @@ ROOT_ARGS := \
 	SWIFT_MK_RELEASE_BUILD_CMD='bash scripts/release-build.sh' \
 	SWIFT_BUILD_CMD='swift build --product swift-mk-render' \
 	SWIFT_TEST_CMD='swift test' \
+	SWIFT_VERIFY_BUILD_CMD='swift build --configuration release --build-tests -Xswiftc -enable-testing' \
+	SWIFT_VERIFY_TEST_CMD='swift test --configuration release --skip-build --no-parallel' \
 	SWIFT_FORMAT_TARGETS='Package.swift Sources Tests' \
 	SWIFTLINT_TARGETS='Package.swift Sources Tests' \
 	PERIPHERY_ARGS='scan --config .periphery.yml --exclude-tests' \
@@ -39,6 +41,8 @@ CHECK_ARGS := \
 	SWIFT_MK_MODULES=swift-build.mk \
 	SWIFT_BUILD_CMD='swift build --product swiftcheck-extra' \
 	SWIFT_TEST_CMD='swift test' \
+	SWIFT_VERIFY_BUILD_CMD='swift build --configuration release --build-tests -Xswiftc -enable-testing' \
+	SWIFT_VERIFY_TEST_CMD='swift test --configuration release --skip-build --no-parallel' \
 	SWIFT_FORMAT_TARGETS='Package.swift Sources Tests' \
 	SWIFTLINT_TARGETS='Package.swift Sources Tests' \
 	SWIFT_MK_SWIFTLINT_CONFIG='../.swiftlint.yml' \
@@ -54,7 +58,7 @@ CHECK_SWIFT_MK := $(MAKE) -C swiftcheck -f ../$(SWIFT_MK) $(CHECK_ARGS)
 
 .DEFAULT_GOAL := check
 
-.PHONY: build check lint fmt test analyze audit build-check lint-tools \
+.PHONY: build verify check lint fmt test analyze audit build-check lint-tools \
 	quality-guard \
 	lint-swiftlint lint-format lint-complexity lint-deadcode swiftcheck-extra \
 	lint-swiftlint-baseline lint-swiftlint-baseline-prune-fixed lint-swiftlint-baseline-remove-fixed lint-swiftlint-baseline-accept-new \
@@ -69,6 +73,10 @@ CHECK_SWIFT_MK := $(MAKE) -C swiftcheck -f ../$(SWIFT_MK) $(CHECK_ARGS)
 build:
 	$(ROOT_SWIFT_MK) xcode-file-header build
 	$(CHECK_SWIFT_MK) build
+
+verify:
+	$(ROOT_SWIFT_MK) verify
+	$(CHECK_SWIFT_MK) verify
 
 build-check:
 	$(ROOT_SWIFT_MK) build-check

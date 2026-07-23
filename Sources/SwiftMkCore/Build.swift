@@ -19,14 +19,20 @@ public enum Build {
   /// consumer fails loudly rather than silently building nothing.
   static let missingBuildCommandStatus: Int32 = 1
 
-  /// Whether `build` runs the lint gates inline. A local or agent run has no
-  /// GitHub Actions environment, so `build` is the unbypassable chokepoint and
-  /// runs the gates itself. A CI run (`GITHUB_ACTIONS=true` with a non-empty
+  /// Whether `build` runs the lint gates inline. `SWIFT_MK_SKIP_INLINE_GATES=1`
+  /// explicitly keeps a caller-owned build step to a pure compile. Otherwise, a
+  /// local or agent run has no GitHub Actions environment, so `build` runs the
+  /// gates itself. A CI run (`GITHUB_ACTIONS=true` with a non-empty
   /// `GITHUB_RUN_ID`) runs the gates as its own decoupled job in the reusable
   /// workflow, so `build` skips them and stays a pure compile, with no double
   /// gating. `GITHUB_ACTIONS` without a run id is not a CI run, so gates still fire.
-  public static func runsInlineGates(githubActions: String, githubRunId: String) -> Bool {
-    !(githubActions == "true" && !githubRunId.isEmpty)
+  public static func runsInlineGates(
+    githubActions: String, githubRunId: String, skipInlineGates: String
+  ) -> Bool {
+    if skipInlineGates == "1" {
+      return false
+    }
+    return !(githubActions == "true" && !githubRunId.isEmpty)
   }
 
   /// Run the lint gates once, then the configured build command with its output
@@ -46,13 +52,15 @@ public enum Build {
       return missingBuildCommandStatus
     }
     let inlineGates = runsInlineGates(
-      githubActions: Env.get("GITHUB_ACTIONS"), githubRunId: Env.get("GITHUB_RUN_ID"))
+      githubActions: Env.get("GITHUB_ACTIONS"),
+      githubRunId: Env.get("GITHUB_RUN_ID"),
+      skipInlineGates: Env.get("SWIFT_MK_SKIP_INLINE_GATES"))
     if inlineGates {
       if !Lint.runBuildCheck(context: PathContext.current()) {
         return Toolchain.gateFailureStatus
       }
     } else {
-      Output.log("build: gates run in the CI gate job; skipping inline gates")
+      Output.log("build: inline gates disabled; skipping inline gates")
     }
     let command = Env.get("SWIFT_BUILD_CMD")
     guard !command.isEmpty else {
