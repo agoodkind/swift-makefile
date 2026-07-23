@@ -34,52 +34,6 @@ public enum Swiftcheck {
     return false
   }
 
-  @discardableResult
-  static func buildFromRepo() -> Bool {
-    Output.info("swiftcheck-extra: building analyzer from repo")
-    let repo = Env.get("SWIFTCHECK_EXTRA_BUILD_REPO")
-    let product = Env.get("SWIFTCHECK_EXTRA_BUILD_PRODUCT", "swiftcheck-extra")
-    let output = outputPath()
-    do {
-      try FileManager.default.createDirectory(
-        atPath: URL(fileURLWithPath: output).deletingLastPathComponent().path,
-        withIntermediateDirectories: true
-      )
-    } catch {
-      Output.error("swiftcheck-extra: could not create output directory: \(error)")
-    }
-    // Build the analyzer through the engine SwiftPM chokepoint (lock, no gate: this
-    // builds swift-mk's own tool while the gate runs), so no raw `swift` lives here.
-    let result = SwiftPM.buildProductInternal(
-      SwiftPM.Request(packagePath: repo, configuration: .release, product: product))
-    if result.status != 0 {
-      Output.error(
-        "swiftcheck-extra: building \(product) from \(repo) failed (status \(result.status))")
-      return false
-    }
-    guard let built = result.executablePath else {
-      Output.error(
-        "swiftcheck-extra: built \(product) but could not resolve its binary "
-          + "(bin path \(result.binPath ?? "unresolved"))")
-      return false
-    }
-    removeIfPresent(output)
-    do {
-      try FileManager.default.copyItem(atPath: built, toPath: output)
-    } catch {
-      Output.emitStandardError("swiftcheck-extra: copy failed: \(error)\n")
-      return false
-    }
-    do {
-      try FileManager.default.setAttributes(
-        [.posixPermissions: executablePermissions], ofItemAtPath: output)
-    } catch {
-      Output.error("swiftcheck-extra: could not set permissions on \(output): \(error)")
-    }
-    writeBuildFingerprint(repo: repo, output: output)
-    return true
-  }
-
   /// Remove a path if it exists, reporting but tolerating a removal failure.
   private static func removeIfPresent(_ path: String) {
     guard FileManager.default.fileExists(atPath: path) else { return }
@@ -363,6 +317,56 @@ public enum Swiftcheck {
       Baseline.recordFailedGate("swiftcheck-extra")
       return false
     }
+    return true
+  }
+}
+
+// MARK: - Swiftcheck build
+
+extension Swiftcheck {
+  @discardableResult
+  static func buildFromRepo() -> Bool {
+    Output.info("swiftcheck-extra: building analyzer from repo")
+    let repo = Env.get("SWIFTCHECK_EXTRA_BUILD_REPO")
+    let product = Env.get("SWIFTCHECK_EXTRA_BUILD_PRODUCT", "swiftcheck-extra")
+    let output = outputPath()
+    do {
+      try FileManager.default.createDirectory(
+        atPath: URL(fileURLWithPath: output).deletingLastPathComponent().path,
+        withIntermediateDirectories: true
+      )
+    } catch {
+      Output.error("swiftcheck-extra: could not create output directory: \(error)")
+    }
+    // Build the analyzer through the engine SwiftPM chokepoint (lock, no gate: this
+    // builds swift-mk's own tool while the gate runs), so no raw `swift` lives here.
+    let result = SwiftPM.buildProductInternal(
+      SwiftPM.Request(packagePath: repo, configuration: .release, product: product))
+    if result.status != 0 {
+      Output.error(
+        "swiftcheck-extra: building \(product) from \(repo) failed (status \(result.status))")
+      return false
+    }
+    guard let built = result.executablePath else {
+      Output.error(
+        "swiftcheck-extra: built \(product) but could not resolve its binary "
+          + "(bin path \(result.binPath ?? "unresolved"))")
+      return false
+    }
+    removeIfPresent(output)
+    do {
+      try FileManager.default.copyItem(atPath: built, toPath: output)
+    } catch {
+      Output.emitStandardError("swiftcheck-extra: copy failed: \(error)\n")
+      return false
+    }
+    do {
+      try FileManager.default.setAttributes(
+        [.posixPermissions: executablePermissions], ofItemAtPath: output)
+    } catch {
+      Output.error("swiftcheck-extra: could not set permissions on \(output): \(error)")
+    }
+    writeBuildFingerprint(repo: repo, output: output)
     return true
   }
 }
