@@ -1,9 +1,9 @@
 name: CI gate
-description: Run one shared Build, Test, Quality, or Extra Targets gate.
+description: Run the shared Verify or Extra Targets gate.
 
 inputs:
   gate:
-    description: Gate to run. Must be build, test, quality, or extra-targets.
+    description: Gate to run. Must be verify or extra-targets.
     required: true
   run:
     description: Whether the gate should execute or report an indexed skip.
@@ -102,9 +102,9 @@ runs:
         GATE: ${{ inputs.gate }}
       run: |
         case "${GATE}" in
-          build | test | quality | extra-targets) ;;
+          verify | extra-targets) ;;
           *)
-            printf 'unknown gate %s; expected build, test, quality, or extra-targets\n' "${GATE}" >&2
+            printf 'unknown gate %s; expected verify or extra-targets\n' "${GATE}" >&2
             exit 1
             ;;
         esac
@@ -234,28 +234,12 @@ runs:
         APPLE_NOTARY_ISSUER_ID: ${{ inputs.apple-notary-issuer-id }}
       run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
 
-    - name: Run build
-      if: ${{ inputs.run != 'false' && inputs.gate == 'build' }}
+    - name: Run verify
+      if: ${{ inputs.run != 'false' && inputs.gate == 'verify' }}
       shell: bash
       env:
         SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
-        MAKE_TARGET: build
-        MAKE_ARGS: ${{ inputs.make-args }}
-        CERT_SHA1: ${{ steps.cert-local.outputs.identity-sha1 || steps.cert-remote.outputs.identity-sha1 }}
-        CODE_SIGN_KEYCHAIN: ${{ steps.cert-local.outputs.keychain || steps.cert-remote.outputs.keychain }}
-        TEAM_ID: ${{ inputs.apple-team-id }}
-        PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile-local.outputs.profile-specifier || steps.profile-remote.outputs.profile-specifier }}
-        APPLE_NOTARY_KEY_BASE64: ${{ inputs.apple-notary-key-base64 }}
-        APPLE_NOTARY_KEY_ID: ${{ inputs.apple-notary-key-id }}
-        APPLE_NOTARY_ISSUER_ID: ${{ inputs.apple-notary-issuer-id }}
-      run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
-
-    - name: Run test
-      if: ${{ inputs.run != 'false' && inputs.gate == 'test' }}
-      shell: bash
-      env:
-        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
-        MAKE_TARGET: test
+        MAKE_TARGET: verify
         MAKE_ARGS: ${{ inputs.make-args }}
         CERT_SHA1: ${{ steps.cert-local.outputs.identity-sha1 || steps.cert-remote.outputs.identity-sha1 }}
         CODE_SIGN_KEYCHAIN: ${{ steps.cert-local.outputs.keychain || steps.cert-remote.outputs.keychain }}
@@ -281,31 +265,6 @@ runs:
         APPLE_NOTARY_ISSUER_ID: ${{ inputs.apple-notary-issuer-id }}
         EXTRA_TARGETS_SHELL: ${{ steps.resolve.outputs.targets_shell }}
       run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-extra-targets
-
-    - name: Run shared quality guard
-      if: ${{ inputs.run != 'false' && inputs.gate == 'quality' }}
-      shell: bash
-      env:
-        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
-        MAKE_TARGET: quality-guard
-        MAKE_ARGS: ${{ inputs.make-args }}
-        TEAM_ID: ${{ inputs.apple-team-id }}
-      run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-team
-
-    - name: Run quality targets
-      if: ${{ inputs.run != 'false' && inputs.gate == 'quality' }}
-      shell: bash
-      env:
-        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
-        MAKE_ARGS: ${{ inputs.make-args }}
-        TEAM_ID: ${{ inputs.apple-team-id }}
-      run: |
-        set -euo pipefail
-        for make_target in lint-swiftlint lint-format lint-complexity swiftcheck-extra audit; do
-            MAKE_TARGET="${make_target}" swift \
-                "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" \
-                run-make-with-team
-        done
 
     - name: Stop CI instrumentation
       if: ${{ always() && inputs.run != 'false' && contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') }}
