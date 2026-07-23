@@ -18,8 +18,8 @@ release: release-check
 
 # Staged release contract for the shared _release.yml workflow. The workflow
 # orchestrates; these targets own the logic, mirroring go-makefile's
-# RELEASE_STAGE pattern. All recipes are plain shell with no swift-mk binary
-# dependency, so release-meta and release-publish run on a Linux runner.
+# RELEASE_STAGE pattern. release-meta uses swift-mk when available and retains
+# a plain-shell fallback, so release-meta and release-publish run on Linux.
 .PHONY: release-meta release-build release-publish
 
 SWIFT_MK_DIST_DIR ?= dist
@@ -36,6 +36,11 @@ SWIFT_MK_RELEASE_PUBLISH_EXTRA_CMD ?=
 # leading zeros, computed portably (BSD date has no %-m).
 release-meta:
 	@if [ -n "$(strip $(SWIFT_MK_RELEASE_META_CMD))" ]; then eval "$(SWIFT_MK_RELEASE_META_CMD)"; exit $$?; fi; \
+	out="$${GITHUB_OUTPUT:-/dev/stdout}"; \
+	if [ -n "$(strip $(SWIFT_MK_BIN))" ] && [ -x "$(SWIFT_MK_BIN)" ]; then \
+		"$(SWIFT_MK_BIN)" version-meta >> "$$out"; \
+		exit $$?; \
+	fi; \
 	ts="$$(date -u +%Y%m%d%H%M)"; \
 	sha="$$(git rev-parse --short HEAD)"; \
 	if [ "$${GITHUB_REF_TYPE:-}" = "tag" ] && [ -n "$${GITHUB_REF_NAME:-}" ]; then \
@@ -53,7 +58,6 @@ release-meta:
 	month="$$(date -u +%m | sed 's/^0//')"; \
 	day="$$(date -u +%d | sed 's/^0//')"; \
 	marketing_version="$$year.$$month.$$day"; \
-	out="$${GITHUB_OUTPUT:-/dev/stdout}"; \
 	{ \
 		echo "tag=$$tag"; \
 		echo "build_version=$$build_version"; \
