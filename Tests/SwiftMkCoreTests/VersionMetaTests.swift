@@ -75,7 +75,8 @@ func explicitEnvironmentVersionPassesThrough() throws {
   // The release build step sets both, already resolved by the meta job.
   let version = try VersionMeta.compute(
     inputs(
-      marketingEnv: "26.7.22", buildEnv: "20260722153080",
+      marketingEnv: "26.7.22",
+      buildEnv: "20260722153080",
       githubRunNumber: "80"))
   #expect(version.marketing == "26.7.22")
   #expect(version.build == "20260722153080")
@@ -103,16 +104,26 @@ func releaseSchemeMatchesTheDocumentedReleaseMetaShape() throws {
 }
 
 @Test
-func versionStampInjectsBothSettingsWhenAbsent() {
+func nonNumericRunNumberUsesTheDevSchemeConsistently() throws {
+  // GitHub always sets a numeric run number; a non-numeric value must not take the
+  // release build number while the tag falls back to a dev form. Both agree on dev.
+  let version = try VersionMeta.compute(inputs(githubRunNumber: "abc"))
+  #expect(version.marketing == "26.7.22+a1b2c3d-dev")
+  #expect(version.build == "202607221530")
+  #expect(version.tag == "202607221530-a1b2c3d-dev")
+}
+
+@Test
+func versionStampInjectsBothSettingsWhenAbsent() throws {
   let request = Toolchain.Request(
     generator: .tuist, scheme: "App", workspace: "App.xcworkspace")
-  let stamped = Toolchain.versionStamped(request)
+  let stamped = try Toolchain.versionStamped(request)
   #expect(stamped.extraSettings["MARKETING_VERSION"] != nil)
   #expect(stamped.extraSettings["CURRENT_PROJECT_VERSION"] != nil)
 }
 
 @Test
-func versionStampLeavesAnExplicitCallerValueUntouched() {
+func versionStampLeavesAnExplicitCallerValueUntouched() throws {
   // A caller that already supplied the version (the release build step) keeps it.
   let request = Toolchain.Request(
     generator: .tuist,
@@ -122,7 +133,7 @@ func versionStampLeavesAnExplicitCallerValueUntouched() {
       "MARKETING_VERSION": "9.9.9",
       "CURRENT_PROJECT_VERSION": "999999999999",
     ])
-  let stamped = Toolchain.versionStamped(request)
+  let stamped = try Toolchain.versionStamped(request)
   #expect(stamped.extraSettings["MARKETING_VERSION"] == "9.9.9")
   #expect(stamped.extraSettings["CURRENT_PROJECT_VERSION"] == "999999999999")
 }

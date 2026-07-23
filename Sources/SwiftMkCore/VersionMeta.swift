@@ -5,14 +5,14 @@
 //  Created by Alexander Goodkind <alex@goodkind.io> on 2026-07-22.
 //  Copyright © 2026, all rights reserved.
 //
-//  The one place the version scheme lives. A release build's version arrives as
-//  MARKETING_VERSION / CURRENT_PROJECT_VERSION in the environment and passes
-//  through unchanged. A CI run without those (the release meta job) computes the
-//  release scheme: calendar short version yy.m.d and a <timestamp><run-number>
-//  build number. A local build computes a dev version marked as such so it is
-//  never mistaken for a shipped build. The build chokepoint injects the resolved
-//  MARKETING_VERSION / CURRENT_PROJECT_VERSION, and `swift-mk version-meta` prints
-//  the same triple for the release workflow, so both paths share one scheme.
+//  The one place the version scheme lives. A release build's version arrives in
+//  the environment as the marketing and build variables and passes through
+//  unchanged. A CI run without them (the release meta job) computes the release
+//  scheme: calendar short version yy.m.d and a <timestamp><run-number> build
+//  number. A local build computes a dev version marked as such so it is never
+//  mistaken for a shipped build. The build chokepoint injects the resolved version
+//  settings, and `swift-mk version-meta` prints the same triple for the release
+//  workflow, so both paths share one scheme.
 //
 
 import Foundation
@@ -37,6 +37,10 @@ public enum VersionMeta {
   /// `CFBundleVersion` accepts at most 18 characters, so a build number past that
   /// would fail the build at packaging time; fail loud here instead.
   static let buildVersionMaxLength = 18
+
+  /// Base for the run-number hex in the tag, matching `printf '%x'` in the shell
+  /// release-meta.
+  static let tagHexRadix = 16
 
   // MARK: Errors
 
@@ -86,7 +90,7 @@ public enum VersionMeta {
       try assertBuildLength(inputs.buildEnv)
       return Version(marketing: inputs.marketingEnv, build: inputs.buildEnv, tag: tag)
     }
-    if !inputs.githubRunNumber.isEmpty {
+    if isPositiveInteger(inputs.githubRunNumber) {
       let build = inputs.timestamp + inputs.githubRunNumber
       try assertBuildLength(build)
       return Version(marketing: inputs.calendar, build: build, tag: tag)
@@ -105,9 +109,8 @@ public enum VersionMeta {
     if inputs.githubRefType == "tag", !inputs.githubRefName.isEmpty {
       return inputs.githubRefName
     }
-    if !inputs.githubRunNumber.isEmpty {
-      let runNumber = UInt64(inputs.githubRunNumber) ?? 0
-      let runHex = String(runNumber, radix: 16)
+    if isPositiveInteger(inputs.githubRunNumber), let runNumber = UInt64(inputs.githubRunNumber) {
+      let runHex = String(runNumber, radix: tagHexRadix)
       return "\(inputs.timestamp)-\(runHex)-\(inputs.shortSHA)"
     }
     if inputs.shortSHA.isEmpty {
@@ -120,6 +123,14 @@ public enum VersionMeta {
     if build.count > buildVersionMaxLength {
       throw VersionError.buildVersionTooLong(build)
     }
+  }
+
+  /// A run number is only usable when it is a non-empty run of digits. GitHub
+  /// always sets a numeric `GITHUB_RUN_NUMBER`, so a non-numeric value means the
+  /// variable is not a real run number; treat it as absent so the build number and
+  /// the tag agree on the dev scheme rather than one taking it and the other not.
+  static func isPositiveInteger(_ value: String) -> Bool {
+    !value.isEmpty && value.allSatisfy(\.isNumber)
   }
 
   // MARK: Environment resolution
@@ -140,13 +151,12 @@ public enum VersionMeta {
     return try compute(inputs)
   }
 
-  /// The two build settings the chokepoint injects into a product build. Returns an
-  /// empty dictionary when resolution fails, so a version problem never blocks a
-  /// build; the failure surfaces at `version-meta` (the release path) instead.
-  public static func buildSettings() -> [String: String] {
-    guard let version = try? resolve() else {
-      return [:]
-    }
+  /// The two build settings the chokepoint injects into a product build. Throws
+  /// when the version cannot be resolved (for example a build number past the
+  /// 18-character cap), so the chokepoint fails the build loudly rather than
+  /// shipping a bundle with an empty or fallback version.
+  public static func buildSettings() throws -> [String: String] {
+    let version = try resolve()
     return [
       "MARKETING_VERSION": version.marketing,
       "CURRENT_PROJECT_VERSION": version.build,
@@ -157,7 +167,8 @@ public enum VersionMeta {
 
   private static func utcComponents(from date: Date) -> DateComponents {
     var calendar = Calendar(identifier: .gregorian)
-    calendar.timeZone = TimeZone(identifier: "UTC") ?? TimeZone(secondsFromGMT: 0)!
+    // UTC always resolves; keep the default zone as a non-force-unwrapped fallback.
+    calendar.timeZone = TimeZone(identifier: "UTC") ?? calendar.timeZone
     return calendar.dateComponents(
       [.year, .month, .day, .hour, .minute], from: date)
   }
@@ -165,8 +176,11 @@ public enum VersionMeta {
   private static func timestamp(from components: DateComponents) -> String {
     String(
       format: "%04d%02d%02d%02d%02d",
-      components.year ?? 0, components.month ?? 0, components.day ?? 0,
-      components.hour ?? 0, components.minute ?? 0)
+      components.year ?? 0,
+      components.month ?? 0,
+      components.day ?? 0,
+      components.hour ?? 0,
+      components.minute ?? 0)
   }
 
   private static func calendarVersion(from components: DateComponents) -> String {
@@ -177,6 +191,7 @@ public enum VersionMeta {
   }
 
   private static func shortSHA() -> String {
+    Output.debug("version-meta: reading git short sha")
     let result = Shell.run("git", ["rev-parse", "--short", "HEAD"])
     guard result.status == 0 else {
       return ""

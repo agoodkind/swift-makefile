@@ -46,9 +46,20 @@ extension Toolchain {
     if !signingAlreadyRejected, let rejection = rejectionForSigningOverride(request) {
       return rejection
     }
+    let stamped: Request
+    do {
+      stamped = try versionStamped(request)
+    } catch {
+      Output.error("toolchain: could not resolve the build version: \(error)")
+      return versionResolutionFailureStatus
+    }
     return runXcodebuildForwarding(
-      versionStamped(request), actions: ["build"], environment: signingEnvironment())
+      stamped, actions: ["build"], environment: signingEnvironment())
   }
+
+  /// The exit status a product build returns when the version cannot be resolved,
+  /// so a version problem fails the build rather than shipping an unstamped bundle.
+  static let versionResolutionFailureStatus: Int32 = 1
 
   /// Return a copy of the request with `MARKETING_VERSION` and
   /// `CURRENT_PROJECT_VERSION` injected from the resolved version, so the built
@@ -56,11 +67,12 @@ extension Toolchain {
   /// already supplied wins and is left untouched, so a release build that passes
   /// the version explicitly, or a consumer that overrides it, is unaffected. Only
   /// the product build injects the version; test and analyze builds are unchanged.
-  static func versionStamped(_ request: Request) -> Request {
+  /// Throws when the version cannot be resolved so the caller fails the build.
+  static func versionStamped(_ request: Request) throws -> Request {
     var settings = request.extraSettings
     let present = Set(settings.keys.map { $0.uppercased() })
     var injected = false
-    for (key, value) in VersionMeta.buildSettings() where !present.contains(key.uppercased()) {
+    for (key, value) in try VersionMeta.buildSettings() where !present.contains(key.uppercased()) {
       settings[key] = value
       injected = true
     }
