@@ -115,11 +115,11 @@ public enum Swiftcheck {
 
   /// The `SWIFTCHECK_EXTRA_BIN` override, or nil when unset or empty.
   private static func configuredBin() -> String? {
-    let configured = ProcessInfo.processInfo.environment["SWIFTCHECK_EXTRA_BIN"] ?? ""
+    let configured = Env.get("SWIFTCHECK_EXTRA_BIN")
     return configured.isEmpty ? nil : configured
   }
 
-  private static func outputNeedsBuild(output: String, repo: String) -> Bool {
+  static func outputNeedsBuild(output: String, repo: String) -> Bool {
     guard FileManager.default.isExecutableFile(atPath: output) else { return true }
     guard let outputDate = modificationDate(of: output) else { return true }
     if let newest = newestSwiftModified(under: repo), newest > outputDate { return true }
@@ -156,6 +156,19 @@ public enum Swiftcheck {
     return FileManager.default.isExecutableFile(atPath: output) ? output : nil
   }
 
+  /// Resolve the analyzer (rebuilding when its sources are newer) and return its
+  /// path. Always goes through `resolveBin`, so a present but stale
+  /// `.make/swiftcheck-extra` cannot skip a required rebuild. Nil when resolve
+  /// fails or no executable path is available afterward.
+  static func preparedBin() -> String? {
+    guard resolveBin() else { return nil }
+    guard let binary = selectedBin(), FileManager.default.isExecutableFile(atPath: binary)
+    else {
+      return nil
+    }
+    return binary
+  }
+
   public static func captureFindings(
     rawPath: String,
     findingsPath: String,
@@ -164,14 +177,10 @@ public enum Swiftcheck {
     Output.debug("swiftcheck-extra: capturing analyzer findings")
     Capture.write("", to: rawPath)
     GateStatus.last = 0
-    // Build the analyzer on demand when no binary is selected yet, and fail the
-    // gate loudly when one still cannot be produced: an empty-findings OK here
-    // would silently skip every swiftcheck rule.
-    if selectedBin() == nil {
-      _ = resolveBin()
-    }
-    guard let binary = selectedBin(), FileManager.default.isExecutableFile(atPath: binary)
-    else {
+    // Always resolve before scanning: a present binary can still be stale when
+    // analyzer sources moved, and an empty-findings OK here would silently skip
+    // every swiftcheck rule when no binary can be produced.
+    guard let binary = preparedBin() else {
       Output.log(
         "swiftcheck-extra: analyzer binary unavailable "
           + "(set SWIFTCHECK_EXTRA_BIN or provide SWIFTCHECK_EXTRA_BUILD_REPO)"

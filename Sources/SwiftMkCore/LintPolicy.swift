@@ -263,12 +263,7 @@ enum LintPolicy {
   /// findings. Ignores `SWIFTCHECK_EXTRA_TARGETS`.
   static func swiftcheck(sources: [String], context: PathContext) -> Bool {
     Output.debug("swiftcheck-extra: analyzing \(sources.count) owned source(s)")
-    if Swiftcheck.selectedBin() == nil {
-      _ = Swiftcheck.resolveBin()
-    }
-    guard let binary = Swiftcheck.selectedBin(),
-      FileManager.default.isExecutableFile(atPath: binary)
-    else {
+    guard let binary = Swiftcheck.preparedBin() else {
       Output.log("swiftcheck-extra: FAILED")
       Output.log("  analyzer binary unavailable")
       return false
