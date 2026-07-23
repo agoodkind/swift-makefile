@@ -72,7 +72,7 @@ extension Toolchain {
   static func versionStamped(_ request: Request) throws -> Request {
     let present = Set(
       request.extraSettings
-        .filter { !$0.value.trimmingCharacters(in: .whitespaces).isEmpty }
+        .filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         .keys.map { $0.uppercased() })
     let missing = Set(VersionMeta.injectableKeys.filter { !present.contains($0) })
     guard !missing.isEmpty else {

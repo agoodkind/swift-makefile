@@ -150,11 +150,14 @@ public enum VersionMeta {
   // MARK: Environment resolution
 
   /// Gather the resolver inputs from the live environment, the UTC clock, and git.
+  /// The two version variables are trimmed so a whitespace-only value counts as
+  /// absent, matching how the chokepoint treats a blank forwarded setting; a value
+  /// that is only spaces or newlines must not pass through as an explicit version.
   private static func currentInputs() -> Inputs {
     let components = utcComponents(from: Date())
     return Inputs(
-      marketingEnv: Env.get("MARKETING_VERSION"),
-      buildEnv: Env.get("CURRENT_PROJECT_VERSION"),
+      marketingEnv: Env.get("MARKETING_VERSION").trimmingCharacters(in: .whitespacesAndNewlines),
+      buildEnv: Env.get("CURRENT_PROJECT_VERSION").trimmingCharacters(in: .whitespacesAndNewlines),
       githubRefType: Env.get("GITHUB_REF_TYPE"),
       githubRefName: Env.get("GITHUB_REF_NAME"),
       githubRunNumber: Env.get("GITHUB_RUN_NUMBER"),

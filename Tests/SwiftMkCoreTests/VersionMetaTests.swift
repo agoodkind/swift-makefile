@@ -162,6 +162,22 @@ func versionStampTreatsAnEmptyValueAsMissing() throws {
 }
 
 @Test
+func versionStampTreatsAWhitespaceOrNewlineValueAsMissing() throws {
+  // A value that is only spaces or newlines is blank, not an explicit version, so
+  // the newline case must not slip past the trim the way `.whitespaces` would.
+  let request = Toolchain.Request(
+    generator: .tuist,
+    scheme: "App",
+    workspace: "App.xcworkspace",
+    extraSettings: ["MARKETING_VERSION": "\n", "CURRENT_PROJECT_VERSION": "   "])
+  let stamped = try Toolchain.versionStamped(request)
+  let marketing = stamped.extraSettings["MARKETING_VERSION"] ?? ""
+  let build = stamped.extraSettings["CURRENT_PROJECT_VERSION"] ?? ""
+  #expect(!marketing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+  #expect(!build.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+}
+
+@Test
 func injectionForMarketingOnlyIgnoresAnOverlongBuild() throws {
   // When only the marketing key is missing, the build-number cap is irrelevant, so
   // an overlong computed build must not fail the injection.
@@ -191,4 +207,35 @@ func injectionForBothReturnsBothWithinTheCap() throws {
     forMissing: ["MARKETING_VERSION", "CURRENT_PROJECT_VERSION"], version: version)
   #expect(settings["MARKETING_VERSION"] == "26.7.22+a1b2c3d-dev")
   #expect(settings["CURRENT_PROJECT_VERSION"] == "202607221530")
+}
+
+// MARK: - VersionMetaEnvironmentTests
+
+/// `injectionSettings(forMissing:)` reads the process environment, so it is nested
+/// under `EnvironmentSerialized` and restores the keys it touches.
+extension EnvironmentSerialized {
+  @Suite enum VersionMetaEnvironmentTests {
+    private static let versionKeys = [
+      "MARKETING_VERSION", "CURRENT_PROJECT_VERSION",
+      "GITHUB_RUN_NUMBER", "GITHUB_REF_TYPE", "GITHUB_REF_NAME",
+    ]
+
+    @Test
+    static func whitespaceOnlyEnvironmentVersionIsNotPassedThrough() throws {
+      // A whitespace-only MARKETING_VERSION in the environment is blank, not an
+      // explicit version, so resolution must stamp a real value rather than
+      // forward the spaces.
+      let saved = Environment.snapshot(versionKeys)
+      defer { saved.restore() }
+      for key in versionKeys {
+        unsetenv(key)
+      }
+      setenv("MARKETING_VERSION", "   ", 1)
+
+      let settings = try VersionMeta.injectionSettings(forMissing: ["MARKETING_VERSION"])
+      let marketing = settings["MARKETING_VERSION"] ?? ""
+      #expect(!marketing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+      #expect(marketing != "   ")
+    }
+  }
 }
