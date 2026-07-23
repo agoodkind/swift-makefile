@@ -180,8 +180,14 @@ define _swift_mk_snapshot_commands
 	rm -rf "$$tmp"
 endef
 
+# The fetch runs inside a parse-time $(shell), whose stdout make captures for the
+# ok/fail marker, so the download and extract cannot stream their own output without a
+# pipe, and a pipe under /bin/sh (no pipefail) would let a tee success mask a real
+# fetch failure on the bootstrap path. Announce the step with $(info) instead, so the
+# otherwise-silent cold-fetch window shows a live heading in the log while the full
+# transcript still lands in .make/swift-mk-snapshot.log for a post-mortem.
 define swift_mk_snapshot
-$(if $(filter ok,$(shell mkdir -p .make && if $(call _swift_mk_snapshot_commands) > .make/swift-mk-snapshot.log 2>&1; then printf ok; else printf fail; fi)),,$(error swift-makefile failed to fetch the engine snapshot for $(SWIFT_MK_API_REF); see .make/swift-mk-snapshot.log))
+$(info swift-mk: fetching engine snapshot $(SWIFT_MK_API_REF) (cold fetch, a few seconds))$(if $(filter ok,$(shell mkdir -p .make && if $(call _swift_mk_snapshot_commands) > .make/swift-mk-snapshot.log 2>&1; then printf ok; else printf fail; fi)),,$(error swift-makefile failed to fetch the engine snapshot for $(SWIFT_MK_API_REF); see .make/swift-mk-snapshot.log))
 endef
 
 define swift-mk-fetch-path

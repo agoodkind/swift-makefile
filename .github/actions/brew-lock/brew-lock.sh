@@ -81,11 +81,36 @@ swift_mk_brew_with_retries() {
     # not return an unbound variable under set -u.
     brew_status=0
 
+    local brew_output_file
+    local had_errexit
+    local had_pipefail
     while ((attempt <= max_attempts)); do
         brew_status=0
-        brew_output="$(swift_mk_run_brew "$@" 2>&1)" || brew_status=$?
-        if [[ -n "${brew_output}" ]]; then
-            printf '%s\n' "${brew_output}" >&2
+        if brew_output_file="$(mktemp "${TMPDIR:-/tmp}/swift-mk-brew.XXXXXX")"; then
+            # Stream brew's output to stderr as it runs while capturing it for the
+            # lock-contention check, so a slow or contended brew shows progress in the
+            # CI log instead of going silent until it returns. This function runs under
+            # the caller's set -e and pipefail, where a nonzero brew would otherwise
+            # abort the retry loop before PIPESTATUS[0] records brew's real exit status
+            # past the tee, so disable both around the pipeline and restore them after.
+            had_errexit=""
+            had_pipefail=""
+            [[ $- == *e* ]] && had_errexit=1
+            [[ -o pipefail ]] && had_pipefail=1
+            set +e +o pipefail
+            swift_mk_run_brew "$@" 2>&1 | tee "${brew_output_file}" >&2
+            brew_status=${PIPESTATUS[0]}
+            [[ -n "${had_errexit}" ]] && set -e
+            [[ -n "${had_pipefail}" ]] && set -o pipefail
+            brew_output="$(cat "${brew_output_file}")"
+            rm -f "${brew_output_file}"
+        else
+            # mktemp failed: fall back to a buffered capture so the lock-contention
+            # check still sees brew's output, even though it cannot stream live.
+            brew_output="$(swift_mk_run_brew "$@" 2>&1)" || brew_status=$?
+            if [[ -n "${brew_output}" ]]; then
+                printf '%s\n' "${brew_output}" >&2
+            fi
         fi
         if ((brew_status == 0)); then
             return 0

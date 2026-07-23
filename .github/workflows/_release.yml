@@ -331,8 +331,11 @@ jobs:
               local start_seconds
               local attempt
               local brew_output
+              local brew_output_file
               local brew_status
               local sleep_seconds
+              local had_errexit
+              local had_pipefail
 
               max_attempts=${SWIFT_MK_BREW_RETRY_MAX_ATTEMPTS:-6}
               max_wait_seconds=${SWIFT_MK_BREW_RETRY_MAX_WAIT_SECONDS:-180}
@@ -341,9 +344,27 @@ jobs:
 
               while ((attempt <= max_attempts)); do
                   brew_status=0
-                  brew_output="$(swift_mk_run_brew "$@" 2>&1)" || brew_status=$?
-                  if [[ -n "${brew_output}" ]]; then
-                      printf '%s\n' "${brew_output}" >&2
+                  if brew_output_file="$(mktemp "${TMPDIR:-/tmp}/swift-mk-brew.XXXXXX")"; then
+                      # Stream brew live to stderr while capturing it for the
+                      # lock-contention check. This runs under set -e and pipefail, so
+                      # disable both around the pipeline and restore them after, and read
+                      # brew's real status from PIPESTATUS[0] past the tee.
+                      had_errexit=""
+                      had_pipefail=""
+                      [[ $- == *e* ]] && had_errexit=1
+                      [[ -o pipefail ]] && had_pipefail=1
+                      set +e +o pipefail
+                      swift_mk_run_brew "$@" 2>&1 | tee "${brew_output_file}" >&2
+                      brew_status=${PIPESTATUS[0]}
+                      [[ -n "${had_errexit}" ]] && set -e
+                      [[ -n "${had_pipefail}" ]] && set -o pipefail
+                      brew_output="$(cat "${brew_output_file}")"
+                      rm -f "${brew_output_file}"
+                  else
+                      brew_output="$(swift_mk_run_brew "$@" 2>&1)" || brew_status=$?
+                      if [[ -n "${brew_output}" ]]; then
+                          printf '%s\n' "${brew_output}" >&2
+                      fi
                   fi
                   if ((brew_status == 0)); then
                       return 0
