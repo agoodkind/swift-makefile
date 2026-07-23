@@ -653,6 +653,19 @@ swift-mk-bin:
 	@if [ -x "$(SWIFT_MK_BIN)" ]; then "$(SWIFT_MK_BIN)" trace begin 2>/dev/null || true; fi
 	@SWIFT_MK_ROOT="$(CURDIR)" bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-build.sh" resolve
 
+# File rule so a missing engine binary is built on demand. SWIFT_MK_BIN is a normal
+# prerequisite of the build freshness stamp (SWIFT_MK_FRESH_INPUTS in swift-build.mk),
+# and nothing else provides a rule for the file itself: the phony swift-mk-bin above is
+# order-only, so on a fresh worktree that never ran it, `make build` and `make app`
+# fail with "No rule to make target .make/swift-mk" before the order-only prerequisite
+# can run. This rule delegates to swift-mk-bin as an order-only prerequisite and adds
+# no recipe of its own, so make builds the binary through the single swift-mk-bin
+# invocation instead of a second resolver. make runs it only when the binary is absent
+# (an existing file with no normal prerequisites is already up to date), and under
+# `make -j` the one phony invocation serializes the resolve, so the file rule and the
+# stamp's own `| swift-mk-bin` never run the unlocked resolver concurrently.
+$(SWIFT_MK_BIN): | swift-mk-bin
+
 # Render the Xcode file-header macros from the current git identity so newly
 # created files are stamped with this author. swift-mk reads the git identity,
 # renders the template, and rewrites the plist only when it changes. Consumers
