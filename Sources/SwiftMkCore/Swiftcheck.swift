@@ -220,6 +220,43 @@ public enum Swiftcheck {
     return binary
   }
 
+  @discardableResult
+  public static func runGate(context: PathContext) -> Bool {
+    Capture.ensureMakeDir()
+    Output.debug("swiftcheck-extra: running gate")
+    let raw = ".make/swiftcheck-extra.raw.out"
+    let findings = ".make/swiftcheck-extra.out"
+    let exclude = Text.excludePattern(
+      Env.get("SWIFTCHECK_EXTRA_DEFAULT_EXCLUDE_PATHS"),
+      Env.get("SWIFTCHECK_EXTRA_EXCLUDE_PATHS")
+    )
+    captureFindings(rawPath: raw, findingsPath: findings, context: context)
+    let parsedAll = parseFindings(rawPath: raw, context: context)
+    let parsedFindings = structuredFindings(rawPath: raw, exclude: exclude, context: context)
+    let status = GateStatus.last
+    if !StructuredGate.run(
+      gateName: "swiftcheck-extra",
+      findings: parsedFindings,
+      baselinePath: Env.get("SWIFTCHECK_EXTRA_BASELINE", ".swiftcheck-extra-baseline.jsonl"),
+      remediation: Lint.remediation,
+    ) {
+      return false
+    }
+    if isToolFailure(status: status, parsedAll: parsedAll) {
+      Output.log("swiftcheck-extra: FAILED")
+      Output.log("  Exit status: \(status)\n")
+      Output.log("Output:")
+      Output.log(Text.readLines(raw).joined(separator: "\n"))
+      Baseline.recordFailedGate("swiftcheck-extra")
+      return false
+    }
+    return true
+  }
+}
+
+// MARK: - Swiftcheck analyzer invocation and output parsing
+
+extension Swiftcheck {
   public static func captureFindings(
     rawPath: String,
     findingsPath: String,
@@ -331,38 +368,5 @@ public enum Swiftcheck {
 
   static func isToolFailure(status: Int32, parsedAll: [Finding]) -> Bool {
     status != 0 && parsedAll.isEmpty
-  }
-
-  @discardableResult
-  public static func runGate(context: PathContext) -> Bool {
-    Capture.ensureMakeDir()
-    Output.debug("swiftcheck-extra: running gate")
-    let raw = ".make/swiftcheck-extra.raw.out"
-    let findings = ".make/swiftcheck-extra.out"
-    let exclude = Text.excludePattern(
-      Env.get("SWIFTCHECK_EXTRA_DEFAULT_EXCLUDE_PATHS"),
-      Env.get("SWIFTCHECK_EXTRA_EXCLUDE_PATHS")
-    )
-    captureFindings(rawPath: raw, findingsPath: findings, context: context)
-    let parsedAll = parseFindings(rawPath: raw, context: context)
-    let parsedFindings = structuredFindings(rawPath: raw, exclude: exclude, context: context)
-    let status = GateStatus.last
-    if !StructuredGate.run(
-      gateName: "swiftcheck-extra",
-      findings: parsedFindings,
-      baselinePath: Env.get("SWIFTCHECK_EXTRA_BASELINE", ".swiftcheck-extra-baseline.jsonl"),
-      remediation: Lint.remediation,
-    ) {
-      return false
-    }
-    if isToolFailure(status: status, parsedAll: parsedAll) {
-      Output.log("swiftcheck-extra: FAILED")
-      Output.log("  Exit status: \(status)\n")
-      Output.log("Output:")
-      Output.log(Text.readLines(raw).joined(separator: "\n"))
-      Baseline.recordFailedGate("swiftcheck-extra")
-      return false
-    }
-    return true
   }
 }
