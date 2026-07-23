@@ -24,15 +24,6 @@ public enum Swiftcheck {
     return root + "/.make/swiftcheck-extra"
   }
 
-  private static func modificationDate(of path: String) -> Date? {
-    do {
-      let attributes = try FileManager.default.attributesOfItem(atPath: path)
-      return attributes[.modificationDate] as? Date
-    } catch {
-      return nil
-    }
-  }
-
   static func missingFlags(_ binary: String) -> Bool {
     Output.debug("swiftcheck-extra: probing flags of \(binary)")
     let available = Shell.run(binary, ["-flags"]).combined
@@ -85,6 +76,7 @@ public enum Swiftcheck {
     } catch {
       Output.error("swiftcheck-extra: could not set permissions on \(output): \(error)")
     }
+    writeBuildFingerprint(repo: repo, output: output)
     return true
   }
 
@@ -98,31 +90,90 @@ public enum Swiftcheck {
     }
   }
 
-  private static func newestSwiftModified(under directory: String) -> Date? {
-    guard let enumerator = FileManager.default.enumerator(atPath: directory) else { return nil }
-    var newest: Date?
-    for case let path as String in enumerator where path.hasSuffix(".swift") {
-      let full = directory + "/" + path
-      guard let date = modificationDate(of: full) else { continue }
-      if let current = newest {
-        if date > current { newest = date }
-      } else {
-        newest = date
+  /// Sidecar that records the build-input fingerprint for `output`.
+  static func fingerprintPath(forOutput output: String) -> String {
+    output + ".fingerprint"
+  }
+
+  /// Stable digest of SwiftPM build inputs under `repo`: `Package.swift`,
+  /// `Package.resolved` when present, and every `.swift` file under `Sources/`.
+  /// Path set membership is part of the digest, so a deleted source flips it even
+  /// when remaining files are older than the binary.
+  static func buildInputFingerprint(repo: String) -> String {
+    var entries: [String] = []
+    for relative in buildInputPaths(under: repo) {
+      let full = (repo as NSString).appendingPathComponent(relative)
+      let url = URL(fileURLWithPath: full)
+      let values: URLResourceValues?
+      do {
+        values = try url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+      } catch {
+        Output.warning("swiftcheck-extra: skipping unreadable build input \(full): \(error)")
+        values = nil
+      }
+      let size = values?.fileSize ?? 0
+      let mtime = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
+      entries.append("\(relative)\u{0}\(size)\u{0}\(mtime)")
+    }
+    entries.sort()
+    return GateProof.fnv1aHex(entries.joined(separator: "\n"))
+  }
+
+  /// Repo-relative SwiftPM inputs that affect the `swiftcheck-extra` product.
+  static func buildInputPaths(under repo: String) -> [String] {
+    var paths: [String] = []
+    let manager = FileManager.default
+    let packageSwift = (repo as NSString).appendingPathComponent("Package.swift")
+    if manager.fileExists(atPath: packageSwift) {
+      paths.append("Package.swift")
+    }
+    let packageResolved = (repo as NSString).appendingPathComponent("Package.resolved")
+    if manager.fileExists(atPath: packageResolved) {
+      paths.append("Package.resolved")
+    }
+    let sourcesRoot = (repo as NSString).appendingPathComponent("Sources")
+    if let enumerator = manager.enumerator(atPath: sourcesRoot) {
+      for case let relative as String in enumerator where relative.hasSuffix(".swift") {
+        paths.append("Sources/" + relative)
       }
     }
-    return newest
+    return paths.sorted()
+  }
+
+  private static func writeBuildFingerprint(repo: String, output: String) {
+    let path = fingerprintPath(forOutput: output)
+    let digest = buildInputFingerprint(repo: repo)
+    do {
+      try digest.write(toFile: path, atomically: true, encoding: .utf8)
+    } catch {
+      Output.error("swiftcheck-extra: could not write fingerprint \(path): \(error)")
+    }
+  }
+
+  private static func storedBuildFingerprint(output: String) -> String? {
+    let path = fingerprintPath(forOutput: output)
+    guard FileManager.default.fileExists(atPath: path) else {
+      return nil
+    }
+    do {
+      return try String(contentsOfFile: path, encoding: .utf8)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    } catch {
+      Output.error("swiftcheck-extra: could not read fingerprint \(path): \(error)")
+      return nil
+    }
   }
 
   /// The `SWIFTCHECK_EXTRA_BIN` override, or nil when unset or empty.
   private static func configuredBin() -> String? {
-    let configured = ProcessInfo.processInfo.environment["SWIFTCHECK_EXTRA_BIN"] ?? ""
+    let configured = Env.get("SWIFTCHECK_EXTRA_BIN")
     return configured.isEmpty ? nil : configured
   }
 
-  private static func outputNeedsBuild(output: String, repo: String) -> Bool {
+  static func outputNeedsBuild(output: String, repo: String) -> Bool {
     guard FileManager.default.isExecutableFile(atPath: output) else { return true }
-    guard let outputDate = modificationDate(of: output) else { return true }
-    if let newest = newestSwiftModified(under: repo), newest > outputDate { return true }
+    guard let stored = storedBuildFingerprint(output: output) else { return true }
+    if stored != buildInputFingerprint(repo: repo) { return true }
     return missingFlags(output)
   }
 
@@ -156,6 +207,19 @@ public enum Swiftcheck {
     return FileManager.default.isExecutableFile(atPath: output) ? output : nil
   }
 
+  /// Resolve the analyzer (rebuilding when its sources are newer) and return its
+  /// path. Always goes through `resolveBin`, so a present but stale
+  /// `.make/swiftcheck-extra` cannot skip a required rebuild. Nil when resolve
+  /// fails or no executable path is available afterward.
+  static func preparedBin() -> String? {
+    guard resolveBin() else { return nil }
+    guard let binary = selectedBin(), FileManager.default.isExecutableFile(atPath: binary)
+    else {
+      return nil
+    }
+    return binary
+  }
+
   public static func captureFindings(
     rawPath: String,
     findingsPath: String,
@@ -164,14 +228,10 @@ public enum Swiftcheck {
     Output.debug("swiftcheck-extra: capturing analyzer findings")
     Capture.write("", to: rawPath)
     GateStatus.last = 0
-    // Build the analyzer on demand when no binary is selected yet, and fail the
-    // gate loudly when one still cannot be produced: an empty-findings OK here
-    // would silently skip every swiftcheck rule.
-    if selectedBin() == nil {
-      _ = resolveBin()
-    }
-    guard let binary = selectedBin(), FileManager.default.isExecutableFile(atPath: binary)
-    else {
+    // Always resolve before scanning: a present binary can still be stale when
+    // analyzer sources moved, and an empty-findings OK here would silently skip
+    // every swiftcheck rule when no binary can be produced.
+    guard let binary = preparedBin() else {
       Output.log(
         "swiftcheck-extra: analyzer binary unavailable "
           + "(set SWIFTCHECK_EXTRA_BIN or provide SWIFTCHECK_EXTRA_BUILD_REPO)"

@@ -23,7 +23,6 @@ public enum Logging {
   public static let logDirectory = ".make/logs"
   public static let traceparentPath = ".make/logs/.traceparent"
 
-  private static let sentinelPath = ".make/logs/.run"
   private static let fallbackConcern = "swift-mk"
   private static let headerlessCommands: Set<String> = [
     "notice", "signing-xcconfig", "signing-identity",
@@ -148,21 +147,25 @@ public enum Logging {
   }
 
   private static var activeLogDirectory: String {
-    logDirectoryOverride ?? logDirectory
+    if let logDirectoryOverride {
+      return logDirectoryOverride
+    }
+    // A nested make under swiftcheck/ (or any -C subdir) still joins the repo-root
+    // log tree when SWIFT_MK_ROOT points at the checkout root, so one TRACEPARENT
+    // keeps one sentinel and one header across packages.
+    let root = Env.get("SWIFT_MK_ROOT").trimmingCharacters(in: .whitespacesAndNewlines)
+    if !root.isEmpty {
+      return (root as NSString).appendingPathComponent(logDirectory)
+    }
+    return logDirectory
   }
 
   private static var activeTraceparentPath: String {
-    if let logDirectoryOverride {
-      return (logDirectoryOverride as NSString).appendingPathComponent(".traceparent")
-    }
-    return traceparentPath
+    (activeLogDirectory as NSString).appendingPathComponent(".traceparent")
   }
 
   private static var activeSentinelPath: String {
-    if let logDirectoryOverride {
-      return (logDirectoryOverride as NSString).appendingPathComponent(".run")
-    }
-    return sentinelPath
+    (activeLogDirectory as NSString).appendingPathComponent(".run")
   }
 
   private static func resolveCorrelation() -> Correlation {
@@ -281,8 +284,14 @@ public enum Logging {
       Output.error("swift-mk logging: write run sentinel: \(error)")
     }
     let ids = "trace_id=\(correlation.traceID) span_id=\(correlation.spanID)"
-    let header = "🔎 logs=\(activeLogDirectory) \(ids)\n"
+    let header = "🔎 logs=\(absoluteLogDirectory) \(ids)\n"
     handle.write(Data(header.utf8))
+  }
+
+  /// Absolute form of the active log directory for the printed header, so a
+  /// relative `.make/logs` still names a copyable path from any cwd.
+  private static var absoluteLogDirectory: String {
+    URL(fileURLWithPath: activeLogDirectory).standardizedFileURL.path
   }
 
   private static func alreadyPrinted(_ traceID: String) -> Bool {

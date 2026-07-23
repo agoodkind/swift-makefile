@@ -263,12 +263,7 @@ enum LintPolicy {
   /// findings. Ignores `SWIFTCHECK_EXTRA_TARGETS`.
   static func swiftcheck(sources: [String], context: PathContext) -> Bool {
     Output.debug("swiftcheck-extra: analyzing \(sources.count) owned source(s)")
-    if Swiftcheck.selectedBin() == nil {
-      _ = Swiftcheck.resolveBin()
-    }
-    guard let binary = Swiftcheck.selectedBin(),
-      FileManager.default.isExecutableFile(atPath: binary)
-    else {
+    guard let binary = Swiftcheck.preparedBin() else {
       Output.log("swiftcheck-extra: FAILED")
       Output.log("  analyzer binary unavailable")
       return false
@@ -349,18 +344,32 @@ enum LintPolicy {
 
   // MARK: audit
 
-  /// Run the dependency audit with the engine-owned OSV config when present. The
-  /// config path is not a narrower, so it is honored; the scanner and root come from
-  /// the same env names the make path uses.
+  /// Run the dependency audit over lockfiles that git's effective ignore treats as
+  /// visible. osv-scanner's own recursive walk only honors the repo `.gitignore`
+  /// tree and misses `core.excludesFile`, so discovery runs through
+  /// `AuditLockfiles` and passes explicit `-L` paths instead. Honors
+  /// `OSV_SCANNER_ARGS` (with `--recursive` stripped) for the config and other
+  /// scanner flags.
   static func audit() -> Bool {
     Output.info("audit: scanning dependencies")
     let scanner = Env.get("OSV_SCANNER", "osv-scanner")
-    var args = ["scan", "source", "--recursive", "--allow-no-lockfiles"]
-    let config = ".make/osv-scanner.toml"
-    if FileManager.default.fileExists(atPath: config) {
-      args += ["--config", config]
+    let root = Env.get("SWIFT_AUDIT_ROOT", ".")
+    let configured = Env.get("OSV_SCANNER_ARGS")
+    let configuredWords: [String]
+    if configured.isEmpty {
+      var defaults = ["--allow-no-lockfiles"]
+      let config = ".make/osv-scanner.toml"
+      if FileManager.default.fileExists(atPath: config) {
+        defaults += ["--config", config]
+      }
+      configuredWords = defaults
+    } else {
+      configuredWords = Env.words(configured)
     }
-    args.append(Env.get("SWIFT_AUDIT_ROOT", "."))
+    let lockfiles = AuditLockfiles.discover(root: root)
+    let args = AuditLockfiles.scannerArguments(
+      configured: configuredWords, lockfiles: lockfiles)
+    Output.debug("audit: scanning \(lockfiles.count) git-visible lockfile(s)")
     let result = Shell.run(scanner, args)
     Output.emitStandardOutput(result.combined)
     if result.status != 0 {
