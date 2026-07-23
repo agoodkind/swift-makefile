@@ -403,6 +403,10 @@ jobs:
         with:
           xcode-version: ${{ inputs.xcode-version }}
           github-token: ${{ github.token }}
+          # The release build populates dist/ through release-build; it never lints,
+          # so the lint toolchain (swift-format, swiftlint, periphery, osv-scanner) is
+          # not needed and installing it only slows the release.
+          install-lint-tools: "false"
           cache-profile: ${{ inputs.cache-profile }}
           cache-version: ${{ inputs.cache-version }}
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
@@ -413,6 +417,7 @@ jobs:
         with:
           xcode-version: ${{ inputs.xcode-version }}
           github-token: ${{ github.token }}
+          install-lint-tools: "false"
           cache-profile: ${{ inputs.cache-profile }}
           cache-version: ${{ inputs.cache-version }}
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
