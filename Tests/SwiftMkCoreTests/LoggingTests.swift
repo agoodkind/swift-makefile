@@ -102,6 +102,44 @@ extension EnvironmentSerialized {
       #expect(Logging.isNestedMakeLevel("2"))
     }
 
+    @Test
+    static func logDirectoryJoinsSwiftMkRootAcrossPackageSubdir() throws {
+      // A make -C swiftcheck process still writes the run sentinel under the checkout
+      // root when SWIFT_MK_ROOT is set, so a shared TRACEPARENT does not print a
+      // second header from a different .make/logs tree.
+      let fileManager = FileManager.default
+      let root = fileManager.temporaryDirectory.appendingPathComponent(
+        "swift-mk-logging-root-\(UUID().uuidString)",
+        isDirectory: true
+      )
+      let logs = root.appendingPathComponent(".make/logs", isDirectory: true)
+      try fileManager.createDirectory(at: logs, withIntermediateDirectories: true)
+      let previousRoot = getenv("SWIFT_MK_ROOT").map { String(cString: $0) }
+      let originalEnvironment = savedEnvironment()
+      defer {
+        restoreEnvironment(originalEnvironment)
+        if let previousRoot {
+          setenv("SWIFT_MK_ROOT", previousRoot, 1)
+        } else {
+          unsetenv("SWIFT_MK_ROOT")
+        }
+        do {
+          try fileManager.removeItem(at: root)
+        } catch {
+          Output.warning("logging tests cleanup failed: \(error.localizedDescription)")
+        }
+      }
+
+      clearLoggingEnvironment()
+      setenv("SWIFT_MK_ROOT", root.path, 1)
+      Logging.resetForTesting(logDirectory: nil)
+      Logging.beginRun(makeLevel: "")
+
+      let sentinel = try readTrimmed(logs.appendingPathComponent(".run").path)
+      #expect(sentinel == Logging.correlation.traceID)
+      #expect(Logging.traceparentPathForTesting == logs.appendingPathComponent(".traceparent").path)
+    }
+
     private static func withTemporaryLogDirectory(_ run: (String) throws -> Void) throws {
       let fileManager = FileManager.default
       let originalEnvironment = savedEnvironment()
