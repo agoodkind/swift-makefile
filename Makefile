@@ -3,6 +3,21 @@
 
 SWIFT_MK := swift.mk
 
+# One run trace for every delegated make (root package and swiftcheck/). Minted
+# here so ROOT_SWIFT_MK and CHECK_SWIFT_MK adopt the same TRACEPARENT instead of
+# each minting under a different cwd (repo root vs swiftcheck/).
+ifeq ($(strip $(TRACEPARENT)),)
+SWIFT_MK_TRACE_RESULT := $(shell bash scripts/swift-mk-trace.sh)
+ifeq ($(word 1,$(SWIFT_MK_TRACE_RESULT)),ok)
+TRACEPARENT := $(word 2,$(SWIFT_MK_TRACE_RESULT))
+TRACE_ID := $(word 3,$(SWIFT_MK_TRACE_RESULT))
+SPAN_ID := $(word 4,$(SWIFT_MK_TRACE_RESULT))
+SWIFT_MK_TRACE_ID := $(TRACE_ID)
+SWIFT_MK_SPAN_ID := $(SPAN_ID)
+endif
+endif
+export TRACEPARENT TRACE_ID SPAN_ID SWIFT_MK_TRACE_ID SWIFT_MK_SPAN_ID
+
 ROOT_ARGS := \
 	SWIFT_MK_DEV_DIR='$(CURDIR)' \
 	SWIFT_MK_MODULES='swift-build.mk swift-release.mk' \
@@ -15,7 +30,11 @@ ROOT_ARGS := \
 	SWIFTCHECK_EXTRA_EXCLUDE_PATHS='Sources/SwiftMkCore/Toolchain.swift,Sources/SwiftMkCore/Toolchain\+Generate\.swift,Sources/SwiftMkCore/Toolchain\+TuistCache\.swift,Sources/SwiftMkCore/BuildToolingAudit.swift,Sources/SwiftMkCore/SwiftPM.swift,Tests/SwiftMkCoreTests/ToolchainTests.swift,Tests/SwiftMkCoreTests/BuildToolingAuditTests.swift,Tests/SwiftMkCoreTests/SwiftPMTests.swift' \
 	SWIFTCHECK_EXTRA_BUILD_REPO='$(CURDIR)/swiftcheck'
 
+# SWIFT_MK_ROOT pins logging and the trace sentinel to the repo root even when
+# make -C swiftcheck changes the process cwd, so CHECK joins the same .make/logs
+# and does not print a second header for the same TRACEPARENT.
 CHECK_ARGS := \
+	SWIFT_MK_ROOT='$(CURDIR)' \
 	SWIFT_MK_DEV_DIR='$(CURDIR)' \
 	SWIFT_MK_MODULES=swift-build.mk \
 	SWIFT_BUILD_CMD='swift build --product swiftcheck-extra' \
@@ -47,8 +66,8 @@ CHECK_SWIFT_MK := $(MAKE) -C swiftcheck -f ../$(SWIFT_MK) $(CHECK_ARGS)
 	update-swift-mk swift-mk-sync smoke-fetch update-consumers update-consumers-dry-run help xcode-file-header \
 	release-meta release-build release-publish
 
-build: xcode-file-header
-	$(ROOT_SWIFT_MK) build
+build:
+	$(ROOT_SWIFT_MK) xcode-file-header build
 	$(CHECK_SWIFT_MK) build
 
 build-check:
@@ -198,10 +217,13 @@ update-consumers:
 update-consumers-dry-run:
 	$(ROOT_SWIFT_MK) update-consumers-dry-run
 
-check: lint xcode-file-header
+check: lint
+	$(ROOT_SWIFT_MK) xcode-file-header
 
 # swift-makefile stamps its own Xcode file-header macros on every build from the
-# current git identity. Consumers invoke this target on demand instead.
+# current git identity. Consumers invoke this target on demand instead. The build
+# recipe runs it in the same `make -f swift.mk` invocation as `build` so one
+# parse-time trace header covers both goals.
 xcode-file-header:
 	$(ROOT_SWIFT_MK) xcode-file-header
 
