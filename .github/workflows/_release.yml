@@ -1,8 +1,8 @@
 # Reusable Swift release pipeline: meta -> build (+SBOM) -> notarize/staple
 # (+attestations) -> publish. The make layer owns all build and publish logic
 # (release-meta / release-build / release-publish in swift-release.mk); this
-# workflow only orchestrates. Signing and notarization silently no-op when the
-# Apple secrets are absent, so a fork or a secretless repo still releases.
+# workflow only orchestrates. Production signing and notarization silently no-op
+# when Apple secrets are absent. Ephemeral runs require the complete signing set.
 name: Release
 
 on:
@@ -14,6 +14,10 @@ on:
       publish-runner:
         type: string
         default: ubuntu-latest
+      # Pull request dry runs execute every signed stage and stop before publish.
+      ephemeral:
+        type: boolean
+        default: false
       # Self-hosted macOS pool routing, shared with _ci.yml through the reusable
       # _plan-runners.yml. When the broker reports capacity the macOS jobs (build,
       # notarize) run on local-pool-label; otherwise they fall back to inputs.runner.
@@ -107,14 +111,12 @@ on:
       LOCAL_POOL_CAPACITY_TOKEN:
         required: false
 
-concurrency:
-  group: release
-  cancel-in-progress: false
-
 env:
   # The swift-makefile bootstrap fetches swift.mk via `gh api`; unauthenticated
   # fetches fail silently, so every consumer needs this token.
   GH_TOKEN: ${{ github.token }}
+  # Match CI diagnostics logging when the pull request carries the label.
+  SWIFT_MK_LOG_LEVEL: ${{ inputs.ephemeral && contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') && 'debug' || '' }}
 
 jobs:
   # Decide pool-or-hosted for the macOS jobs, reusing the same capacity check the
@@ -161,6 +163,43 @@ jobs:
       build_version: ${{ steps.meta.outputs.build_version }}
       marketing_version: ${{ steps.meta.outputs.marketing_version }}
     steps:
+      - name: Require signed dry run credentials
+        if: inputs.ephemeral
+        shell: bash
+        env:
+          HAS_SIGNING_CERT: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' }}
+          HAS_SIGNING_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD != '' }}
+          HAS_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY_BASE64 != '' }}
+          HAS_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID != '' }}
+          HAS_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID != '' }}
+          HAS_TEAM_ID: ${{ inputs.apple-team-id != '' }}
+        run: |
+          set -euo pipefail
+
+          missing_credentials=()
+          if [[ "${HAS_SIGNING_CERT}" != "true" ]]; then
+              missing_credentials+=(APPLE_DEVELOPER_ID_P12_BASE64)
+          fi
+          if [[ "${HAS_SIGNING_PASSWORD}" != "true" ]]; then
+              missing_credentials+=(APPLE_DEVELOPER_ID_P12_PASSWORD)
+          fi
+          if [[ "${HAS_NOTARY_KEY}" != "true" ]]; then
+              missing_credentials+=(APPLE_NOTARY_KEY_BASE64)
+          fi
+          if [[ "${HAS_NOTARY_KEY_ID}" != "true" ]]; then
+              missing_credentials+=(APPLE_NOTARY_KEY_ID)
+          fi
+          if [[ "${HAS_NOTARY_ISSUER_ID}" != "true" ]]; then
+              missing_credentials+=(APPLE_NOTARY_ISSUER_ID)
+          fi
+          if [[ "${HAS_TEAM_ID}" != "true" ]]; then
+              missing_credentials+=(apple-team-id)
+          fi
+          if ((${#missing_credentials[@]} > 0)); then
+              printf 'signed release dry run requires: %s\n' "${missing_credentials[*]}" >&2
+              exit 1
+          fi
+
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -356,6 +395,22 @@ jobs:
           cache-version: ${{ inputs.cache-version }}
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
 
+      - name: Checkout swift-makefile diagnostics
+        if: ${{ inputs.ephemeral && contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') && github.repository != 'agoodkind/swift-makefile' }}
+        uses: actions/checkout@v7
+        with:
+          repository: agoodkind/swift-makefile
+          ref: main
+          path: .swift-makefile
+          fetch-depth: 1
+
+      - name: Start CI instrumentation
+        if: ${{ inputs.ephemeral && contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') }}
+        shell: bash
+        env:
+          SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+        run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/ci-diagnostics/start.sh" "${RUNNER_TEMP}/ci-diagnostics" "${SWIFT_MK_HELPER_ROOT}"
+
       - name: Install signing certificate
         id: cert
         if: env.HAS_SIGNING == 'true'
@@ -371,6 +426,21 @@ jobs:
         uses: agoodkind/swift-makefile/.github/actions/install-provisioning-profile@main
         with:
           profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
+
+      # With the ci-diagnostics label, capture the signing keychain state and a
+      # direct codesign probe before the build, so a run that fails on the pool
+      # with "no identity found" carries the exact keychain lock state, key
+      # access control list, identity search results, and codesign errSec.
+      - name: Capture signing diagnostics
+        if: ${{ inputs.ephemeral && contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') && env.HAS_SIGNING == 'true' }}
+        shell: bash
+        env:
+          SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+          SIGNING_KEYCHAIN: ${{ steps.cert.outputs.keychain }}
+          SIGNING_IDENTITY_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
+        run: |
+          bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/ci-diagnostics/capture-signing.sh" \
+            "${RUNNER_TEMP}/ci-diagnostics" "${SIGNING_KEYCHAIN}" "${SIGNING_IDENTITY_SHA1}"
 
       # Signing values pass as make command-line variables only when present, so
       # a secretless run never clobbers a consumer's ?= defaults with empties.
@@ -409,6 +479,22 @@ jobs:
           fi
           # shellcheck disable=SC2086
           make $BUILD_TARGET $MAKE_ARGS "${sign_args[@]}"
+
+      - name: Stop CI instrumentation
+        if: ${{ always() && inputs.ephemeral && contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') }}
+        shell: bash
+        env:
+          SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+        run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/ci-diagnostics/stop.sh" "${RUNNER_TEMP}/ci-diagnostics"
+
+      - name: Upload CI instrumentation
+        if: ${{ always() && inputs.ephemeral && contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-diagnostics-release-${{ needs.plan-runners.outputs.build_label }}
+          path: ${{ runner.temp }}/ci-diagnostics
+          overwrite: true
+          if-no-files-found: ignore
 
       - name: Generate SBOM
         if: inputs.sbom-subject-path != ''
@@ -458,7 +544,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Notarize and staple
-        if: ${{ inputs.notarize && env.HAS_NOTARY == 'true' }}
+        if: ${{ (inputs.ephemeral || inputs.notarize) && env.HAS_NOTARY == 'true' }}
         uses: agoodkind/swift-makefile/.github/actions/notarize-staple@main
         with:
           artifact-path: ${{ steps.artifacts.outputs.list }}
@@ -467,13 +553,13 @@ jobs:
           notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
 
       - name: Attest provenance
-        if: ${{ inputs.attest && steps.artifacts.outputs.list != '' }}
+        if: ${{ (inputs.ephemeral || inputs.attest) && steps.artifacts.outputs.list != '' }}
         uses: actions/attest@v4.2.0
         with:
           subject-path: ${{ steps.artifacts.outputs.list }}
 
       - name: Attest SBOM
-        if: ${{ inputs.attest && inputs.sbom-subject-path != '' && steps.artifacts.outputs.list != '' }}
+        if: ${{ (inputs.ephemeral || inputs.attest) && inputs.sbom-subject-path != '' && steps.artifacts.outputs.list != '' }}
         uses: actions/attest@v4.2.0
         with:
           subject-path: ${{ steps.artifacts.outputs.list }}
@@ -489,6 +575,7 @@ jobs:
   publish:
     name: Publish
     needs: [meta, build, notarize]
+    if: ${{ !inputs.ephemeral }}
     runs-on: ${{ inputs.publish-runner }}
     permissions:
       contents: write
@@ -509,7 +596,7 @@ jobs:
   smoke:
     name: Smoke
     needs: [meta, publish]
-    if: inputs.smoke-asset != ''
+    if: ${{ !inputs.ephemeral && inputs.smoke-asset != '' }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
