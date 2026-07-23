@@ -328,7 +328,10 @@ PERIPHERY_DEFAULT_EXCLUDE_PATHS ?=
 PERIPHERY_EXCLUDE_PATHS ?=
 
 OSV_SCANNER ?= osv-scanner
-override OSV_SCANNER_ARGS := --recursive --allow-no-lockfiles --config $(SWIFT_MK_OSV_CONFIG)
+# No --recursive: the audit discovers lockfiles through git's effective ignore
+# (`git ls-files --exclude-standard`) and passes them as -L paths, so globally
+# excluded trees (core.excludesFile) are never walked.
+override OSV_SCANNER_ARGS := --allow-no-lockfiles --config $(SWIFT_MK_OSV_CONFIG)
 
 LINT_CONCURRENCY ?= auto
 

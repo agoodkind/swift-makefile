@@ -165,9 +165,13 @@ extension Lint {
   public static func runAudit(context _: PathContext) -> Bool {
     Output.info("audit: scanning dependencies")
     let scanner = Env.get("OSV_SCANNER", "osv-scanner")
-    let args = Env.words(Env.get("OSV_SCANNER_ARGS", "--recursive --allow-no-lockfiles"))
     let root = Env.get("SWIFT_AUDIT_ROOT", ".")
-    let result = Shell.run(scanner, ["scan", "source"] + args + [root])
+    let configured = Env.words(
+      Env.get("OSV_SCANNER_ARGS", "--allow-no-lockfiles"))
+    let lockfiles = AuditLockfiles.discover(root: root)
+    let args = AuditLockfiles.scannerArguments(configured: configured, lockfiles: lockfiles)
+    Output.debug("audit: scanning \(lockfiles.count) git-visible lockfile(s)")
+    let result = Shell.run(scanner, args)
     Output.emitStandardOutput(result.combined)
     var ok = result.status == 0
     let extra = Env.get("SWIFT_AUDIT_EXTRA_CMD")
