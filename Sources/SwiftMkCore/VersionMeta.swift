@@ -42,6 +42,11 @@ public enum VersionMeta {
   /// release-meta.
   static let tagHexRadix = 16
 
+  /// The xcodebuild build-setting keys the chokepoint injects, uppercased. The
+  /// stamp resolves the version only when at least one of these is missing from a
+  /// request, so a build that already carries both never triggers resolution.
+  public static let injectableKeys = ["MARKETING_VERSION", "CURRENT_PROJECT_VERSION"]
+
   // MARK: Errors
 
   public enum VersionError: Error, CustomStringConvertible {

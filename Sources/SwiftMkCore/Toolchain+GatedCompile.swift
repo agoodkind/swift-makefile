@@ -69,8 +69,14 @@ extension Toolchain {
   /// the product build injects the version; test and analyze builds are unchanged.
   /// Throws when the version cannot be resolved so the caller fails the build.
   static func versionStamped(_ request: Request) throws -> Request {
+    let present = Set(request.extraSettings.keys.map { $0.uppercased() })
+    // Short-circuit before resolving when the caller already supplied both settings,
+    // so an explicitly versioned build never fails on a resolution error it does not
+    // need (for example an overlength GITHUB_RUN_NUMBER in the environment).
+    guard VersionMeta.injectableKeys.contains(where: { !present.contains($0) }) else {
+      return request
+    }
     var settings = request.extraSettings
-    let present = Set(settings.keys.map { $0.uppercased() })
     var injected = false
     for (key, value) in try VersionMeta.buildSettings() where !present.contains(key.uppercased()) {
       settings[key] = value
