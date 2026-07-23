@@ -164,9 +164,18 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - name: Check out the swift-makefile engine
+        uses: actions/checkout@v7
+        with:
+          repository: agoodkind/swift-makefile
+          ref: ${{ github.repository == 'agoodkind/swift-makefile' && github.sha || 'main' }}
+          path: .swift-makefile
+          fetch-depth: 1
+      - name: Setup Linux swift-mk
+        uses: ./.swift-makefile/.github/actions/setup-linux-swift-mk
       - name: Compute release metadata
         id: meta
-        run: make release-meta
+        run: make release-meta SWIFT_MK_BIN="${SWIFT_MK_BIN}"
 
   build:
     name: Build
