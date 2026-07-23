@@ -17,3 +17,9 @@ The engine infers the signing style from the identity and team rather than letti
 ## The dead-code coverage build is the one carve-out
 
 The dead-code coverage build disables signing on purpose, because a signed build can fail provisioning and leave a partial index. That carve-out lives in the [dead-code gate](../deadcode/overview.md); every other build signs through the engine.
+
+## Signing on the self-hosted pool
+
+The engine needs no pool-specific configuration to sign on the self-hosted macOS runner pool. The signing action creates a keychain, imports the identity, and adds the keychain to the search list inside the runner's session, and the engine imports the identity and runs `codesign` in that same session.
+
+Signing on the pool works only because the pool places the runner in the machine's graphical login session with the login user's real home folder, which is where `codesign` resolves the signing identity. The `gha-mac-broker` runner pool owns that arrangement; its `docs/runnerpool/signing.md` explains why the session and home folder decide whether signing succeeds.
