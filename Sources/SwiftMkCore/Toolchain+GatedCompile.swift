@@ -47,7 +47,36 @@ extension Toolchain {
       return rejection
     }
     return runXcodebuildForwarding(
-      request, actions: ["build"], environment: signingEnvironment())
+      versionStamped(request), actions: ["build"], environment: signingEnvironment())
+  }
+
+  /// Return a copy of the request with `MARKETING_VERSION` and
+  /// `CURRENT_PROJECT_VERSION` injected from the resolved version, so the built
+  /// bundle carries a real version on every product build. A setting the caller
+  /// already supplied wins and is left untouched, so a release build that passes
+  /// the version explicitly, or a consumer that overrides it, is unaffected. Only
+  /// the product build injects the version; test and analyze builds are unchanged.
+  static func versionStamped(_ request: Request) -> Request {
+    var settings = request.extraSettings
+    let present = Set(settings.keys.map { $0.uppercased() })
+    var injected = false
+    for (key, value) in VersionMeta.buildSettings() where !present.contains(key.uppercased()) {
+      settings[key] = value
+      injected = true
+    }
+    guard injected else {
+      return request
+    }
+    return Request(
+      generator: request.generator,
+      scheme: request.scheme,
+      configuration: request.configuration,
+      workspace: request.workspace,
+      project: request.project,
+      destination: request.destination,
+      derivedDataPath: request.derivedDataPath,
+      extraSettings: settings,
+      extraArguments: request.extraArguments)
   }
 
   // MARK: Static analysis
