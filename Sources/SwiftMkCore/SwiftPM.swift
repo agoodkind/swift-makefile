@@ -173,7 +173,7 @@ public enum SwiftPM {
       ["build"] + cacheArguments() + packageArguments(request)
       + configurationArguments(request) + ["--show-bin-path"]
     let result = BuildLock.withLock {
-      Shell.run("swift", arguments, environment: request.environment)
+      Shell.runStreamingStderr("swift", arguments, environment: request.environment)
     }
     guard result.status == 0 else {
       return nil

@@ -307,11 +307,12 @@ enum LintPolicy {
     let args = Env.words(
       Env.get("PERIPHERY_ARGS", "scan --config \(config) --strict"))
     Output.log(DeadcodeScan.packageScanLabel)
-    let result = Shell.run(
-      Env.get("PERIPHERY", "periphery"), args, environment: Lint.lintEnvironment())
+    let result = BuildLock.withLock {
+      Shell.runForwardingAndCapturing(
+        Env.get("PERIPHERY", "periphery"), args, environment: Lint.lintEnvironment())
+    }
     GateStatus.last = result.status
     Capture.write(DeadcodeScan.packageScanLabel + "\n" + result.combined, to: raw)
-    Output.log(result.combined.trimmingCharacters(in: .newlines))
     let indexStore = DeadcodeScan.appendXcodeFindings(rawPath: raw)
     Capture.extractFindings(
       rawPath: raw,

@@ -136,10 +136,10 @@ enum DeadcodeScan {
   static func runGenerator(forManifest manifest: String) {
     Output.info("deadcode: generating Xcode project from \(manifest)")
     let command = generatorCommand(forManifest: manifest)
-    let result = Shell.run(command.tool, command.arguments)
-    if result.status != 0 {
+    let status = Shell.runForwardingOutput(command.tool, command.arguments)
+    if status != 0 {
       Output.error(
-        "deadcode: generator for \(manifest) failed status=\(result.status)")
+        "deadcode: generator for \(manifest) failed status=\(status)")
     }
   }
 

@@ -49,7 +49,57 @@ enum OutputCaptureTests {
     }
   }
 
+  @Test
+  static func forwardingShellOutputStreamsAndRemainsCaptured() throws {
+    try TestGlobalLock.withLock {
+      let statusOnlyMarker = "status-only-\(UUID().uuidString)"
+      let capturedMarker = "captured-result-\(UUID().uuidString)"
+      var captured = ""
+      let direct = try captureStandardOutput {
+        Output.beginCapture()
+        let status = Shell.runForwardingOutput(
+          "/bin/sh", ["-c", "printf '%s' '\(statusOnlyMarker)'"])
+        let result = Shell.runForwardingAndCapturing(
+          "/bin/sh", ["-c", "printf '%s' '\(capturedMarker)'"])
+        captured = Output.endCapture()
+
+        #expect(status == 0)
+        #expect(result.status == 0)
+        #expect(result.stdout == capturedMarker)
+      }
+
+      #expect(direct.contains(statusOnlyMarker))
+      #expect(direct.contains(capturedMarker))
+      #expect(captured.contains(statusOnlyMarker))
+      #expect(captured.contains(capturedMarker))
+    }
+  }
+
+  @Test
+  static func capturePreservesTextAroundInvalidUTF8() throws {
+    try TestGlobalLock.withLock {
+      var bytes = Data("before".utf8)
+      bytes.append(0xFF)
+      bytes.append(Data("after".utf8))
+      var captured = ""
+      let forwarded = try captureStandardOutputData {
+        Output.beginCapture()
+        Output.forwardStandardOutput(bytes)
+        captured = Output.endCapture()
+      }
+
+      #expect(forwarded == bytes)
+      #expect(captured == "before\u{FFFD}after")
+      #expect(captured.hasSuffix("after"))
+    }
+  }
+
   private static func captureStandardOutput(_ body: () throws -> Void) throws -> String {
+    let data = try captureStandardOutputData(body)
+    return try #require(String(bytes: data, encoding: .utf8))
+  }
+
+  private static func captureStandardOutputData(_ body: () throws -> Void) throws -> Data {
     let original = dup(STDOUT_FILENO)
     try #require(original >= 0)
     let pipe = Pipe()
@@ -63,8 +113,7 @@ enum OutputCaptureTests {
       pipe.fileHandleForWriting.closeFile()
       dup2(original, STDOUT_FILENO)
       close(original)
-      let data = pipe.fileHandleForReading.readDataToEndOfFile()
-      return try #require(String(bytes: data, encoding: .utf8))
+      return pipe.fileHandleForReading.readDataToEndOfFile()
     } catch {
       pipe.fileHandleForWriting.closeFile()
       dup2(original, STDOUT_FILENO)

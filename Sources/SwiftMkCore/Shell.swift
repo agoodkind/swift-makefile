@@ -133,8 +133,8 @@ public enum Shell {
     process.waitUntilExit()
     return Result(
       status: process.terminationStatus,
-      stdout: String(bytes: outBuffer.snapshot(), encoding: .utf8) ?? "",
-      stderr: String(bytes: errBuffer.snapshot(), encoding: .utf8) ?? ""
+      stdout: Output.decodeCapturedUTF8(outBuffer.snapshot()),
+      stderr: Output.decodeCapturedUTF8(errBuffer.snapshot())
     )
   }
 
@@ -218,7 +218,7 @@ public enum Shell {
     }
     return StreamingResult(
       status: status,
-      stdout: String(bytes: outBuffer.snapshot(), encoding: .utf8) ?? "",
+      stdout: Output.decodeCapturedUTF8(outBuffer.snapshot()),
       timedOut: timedOut
     )
   }
@@ -250,15 +250,25 @@ public enum Shell {
         if let childEnv = childEnvironment(environment) {
           process.environment = childEnv
         }
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
         return process
       }, launchError: &launchError)
-    guard let process = started else {
-      let message = launchError.map { "\($0)" } ?? "launch failed"
-      FileHandle.standardError.write(Data("Shell.runForwardingOutput: \(message)\n".utf8))
+    guard let process = started,
+      let outPipe = process.standardOutput as? Pipe,
+      let errPipe = process.standardError as? Pipe
+    else {
+      let message = launchError.map { "\($0)" } ?? "Shell.runForwardingOutput: launch failed"
+      Output.forwardStandardError(Data("\(message)\n".utf8))
       return launchFailureStatus
     }
-    process.waitUntilExit()
-    return process.terminationStatus
+    let outDrain = ForwardingDrain(handle: outPipe.fileHandleForReading) { chunk in
+      Output.forwardStandardOutput(chunk)
+    }
+    let errDrain = ForwardingDrain(handle: errPipe.fileHandleForReading) { chunk in
+      Output.forwardStandardError(chunk)
+    }
+    return waitForDirectProcess(process, drains: [outDrain, errDrain])
   }
 
   /// Run a program forwarding its stdout and stderr live to this process's streams
@@ -295,25 +305,31 @@ public enum Shell {
       let errPipe = process.standardError as? Pipe
     else {
       let message = launchError.map { "\($0)" } ?? "Shell.runForwardingAndCapturing: launch failed"
-      return Result(status: launchFailureStatus, stdout: "", stderr: "\(message)\n")
+      let errorOutput = "\(message)\n"
+      Output.forwardStandardError(Data(errorOutput.utf8))
+      return Result(status: launchFailureStatus, stdout: "", stderr: errorOutput)
     }
     // Forward each chunk live to the matching stream while retaining it, so the
     // user sees resolve output as it happens and the caller can still grep the
     // combined text. Both streams are drained concurrently for the same
     // pipe-buffer-deadlock reason documented on `run`.
-    let group = DispatchGroup()
-    let outBuffer = drainAsync(outPipe.fileHandleForReading, into: group) { chunk in
-      FileHandle.standardOutput.write(chunk)
+    let outDrain = ForwardingDrain(
+      handle: outPipe.fileHandleForReading,
+      capturing: true
+    ) { chunk in
+      Output.forwardStandardOutput(chunk)
     }
-    let errBuffer = drainAsync(errPipe.fileHandleForReading, into: group) { chunk in
-      FileHandle.standardError.write(chunk)
+    let errDrain = ForwardingDrain(
+      handle: errPipe.fileHandleForReading,
+      capturing: true
+    ) { chunk in
+      Output.forwardStandardError(chunk)
     }
-    group.wait()
-    process.waitUntilExit()
+    let status = waitForDirectProcess(process, drains: [outDrain, errDrain])
     return Result(
-      status: process.terminationStatus,
-      stdout: String(bytes: outBuffer.snapshot(), encoding: .utf8) ?? "",
-      stderr: String(bytes: errBuffer.snapshot(), encoding: .utf8) ?? ""
+      status: status,
+      stdout: Output.decodeCapturedUTF8(outDrain.snapshot()),
+      stderr: Output.decodeCapturedUTF8(errDrain.snapshot())
     )
   }
 
@@ -392,5 +408,91 @@ private final class LockedData: @unchecked Sendable {
     lock.lock()
     defer { lock.unlock() }
     return data
+  }
+}
+
+// MARK: - Shell Forwarding Streaming
+
+extension Shell {
+  public struct ForwardingStreamingResult: Sendable {
+    public let status: Int32
+    public let stdout: String
+    public let stderr: String
+    public let timedOut: Bool
+    /// stdout followed by stderr, matching `swift_mk_run_capture`.
+    public var combined: String { stdout + stderr }
+  }
+
+  /// Run a program forwarding stdout and stderr live while capturing both streams,
+  /// with an optional timeout that terminates and reaps the child's process group.
+  @discardableResult
+  public static func runForwardingAndCapturingStreaming(
+    _ executable: String,
+    _ arguments: [String] = [],
+    environment: [String: String] = [:],
+    timeoutSeconds: Double = 0
+  ) -> ForwardingStreamingResult {
+    runForwardingAndCapturingStreaming(
+      executable,
+      arguments,
+      forwardingStandardOutput: .standardOutput,
+      forwardingStandardError: .standardError,
+      environment: environment,
+      timeoutSeconds: timeoutSeconds)
+  }
+
+  static func runForwardingAndCapturingStreaming(
+    _ executable: String,
+    _ arguments: [String],
+    forwardingStandardOutput: FileHandle,
+    forwardingStandardError: FileHandle,
+    environment: [String: String] = [:],
+    timeoutSeconds: Double = 0
+  ) -> ForwardingStreamingResult {
+    Output.debug(
+      "Shell.runForwardingAndCapturingStreaming \(executable) "
+        + arguments.joined(separator: " "))
+    var spawned: SpawnedStreamingProcess?
+    for attempt in 1...maxLaunchAttempts {
+      if let candidate = spawnStreamingProcessGroup(executable, arguments, environment: environment)
+      {
+        spawned = candidate
+        break
+      }
+      Output.debug(
+        "Shell.runForwardingAndCapturingStreaming: spawn attempt "
+          + "\(attempt)/\(maxLaunchAttempts) failed, retrying")
+    }
+    guard let spawned else {
+      return ForwardingStreamingResult(
+        status: launchFailureStatus,
+        stdout: "",
+        stderr: "",
+        timedOut: false)
+    }
+
+    // Drain both pipes concurrently, forwarding each chunk to its matching stream
+    // while retaining the bytes for diagnosis after the process exits.
+    let group = DispatchGroup()
+    let outBuffer = drainAsync(spawned.standardOutput.fileHandleForReading, into: group) { chunk in
+      forwardingStandardOutput.write(chunk)
+    }
+    let errBuffer = drainAsync(spawned.standardError.fileHandleForReading, into: group) { chunk in
+      forwardingStandardError.write(chunk)
+    }
+    let outcome: (status: Int32, timedOut: Bool)
+    if timeoutSeconds > 0 {
+      outcome = reapOrTerminate(
+        spawned, drainGroup: group, deadline: .now() + timeoutSeconds)
+    } else {
+      group.wait()
+      outcome = (reapProcessBlocking(spawned.processIdentifier), false)
+    }
+    return ForwardingStreamingResult(
+      status: outcome.status,
+      stdout: Output.decodeCapturedUTF8(outBuffer.snapshot()),
+      stderr: Output.decodeCapturedUTF8(errBuffer.snapshot()),
+      timedOut: outcome.timedOut
+    )
   }
 }

@@ -69,7 +69,7 @@ extension Shell {
   static let signalExitBase: Int32 = 128
 
   /// A subprocess spawned into its own process group for the timeout-capable
-  /// `runStreamingStderr` path, with the pipes the parent drains.
+  /// streaming paths, with the pipes the parent drains.
   struct SpawnedStreamingProcess {
     let processIdentifier: pid_t
     let standardOutput: StreamingPipe

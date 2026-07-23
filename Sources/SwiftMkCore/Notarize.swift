@@ -124,7 +124,7 @@ public enum Notarize {
     credentials: Credentials  // gitleaks:allow
   ) -> Bool {
     Output.log("notarize: submitting \(artifact)")
-    let result = Shell.run(
+    let result = Shell.runForwardingAndCapturing(
       "xcrun",
       submitArguments(artifact: artifact, credentials: credentials))  // gitleaks:allow
     let decoded: SubmitResult?
@@ -141,7 +141,6 @@ public enum Notarize {
     }
     Output.error(
       "notarize: \(artifact) was not accepted (status: \(status.isEmpty ? "unknown" : status))")
-    Output.emitStandardError(result.combined)
     if let submissionId = decoded?.id, !submissionId.isEmpty {
       var logArguments = ["notarytool", "log", submissionId]
       switch credentials {
@@ -150,7 +149,7 @@ public enum Notarize {
       case .keychainProfile(let name):
         logArguments += ["--keychain-profile", name]
       }
-      Output.emitStandardError(Shell.run("xcrun", logArguments).combined)
+      Shell.runForwardingAndCapturing("xcrun", logArguments)
     }
     return false
   }
@@ -165,10 +164,10 @@ public enum Notarize {
   /// stapled, and the zip is rebuilt; a zip with no .app ships as-is.
   static func staple(artifact: String) -> Bool {
     if staplesDirectly(artifact) {
-      let result = Shell.run("xcrun", ["stapler", "staple", artifact])
+      let result = Shell.runForwardingAndCapturing(
+        "xcrun", ["stapler", "staple", artifact])
       guard result.status == 0 else {
         Output.error("notarize: stapler failed for \(artifact)")
-        Output.emitStandardError(result.combined)
         return false
       }
       return true
@@ -181,7 +180,9 @@ public enum Notarize {
         Output.error("notarize: could not remove temp dir \(expandDir): \(error)")
       }
     }
-    guard Shell.run("ditto", ["-x", "-k", artifact, expandDir]).status == 0 else {
+    guard
+      Shell.runForwardingOutput("ditto", ["-x", "-k", artifact, expandDir]) == 0
+    else {
       Output.error("notarize: could not expand \(artifact) for stapling")
       return false
     }
@@ -191,10 +192,10 @@ public enum Notarize {
       return true
     }
     for app in apps {
-      let result = Shell.run("xcrun", ["stapler", "staple", app])
+      let result = Shell.runForwardingAndCapturing(
+        "xcrun", ["stapler", "staple", app])
       guard result.status == 0 else {
         Output.error("notarize: stapler failed for \(app)")
-        Output.emitStandardError(result.combined)
         return false
       }
     }
@@ -204,7 +205,9 @@ public enum Notarize {
       Output.error("notarize: could not replace \(artifact): \(error)")
       return false
     }
-    guard Shell.run("ditto", ["-c", "-k", expandDir, artifact]).status == 0 else {
+    guard
+      Shell.runForwardingOutput("ditto", ["-c", "-k", expandDir, artifact]) == 0
+    else {
       Output.error("notarize: could not rebuild \(artifact) after stapling")
       return false
     }
