@@ -23,7 +23,6 @@ public enum Logging {
   public static let logDirectory = ".make/logs"
   public static let traceparentPath = ".make/logs/.traceparent"
 
-  private static let sentinelPath = ".make/logs/.run"
   private static let fallbackConcern = "swift-mk"
   private static let headerlessCommands: Set<String> = [
     "notice", "signing-xcconfig", "signing-identity",
