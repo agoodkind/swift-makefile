@@ -46,8 +46,55 @@ extension Toolchain {
     if !signingAlreadyRejected, let rejection = rejectionForSigningOverride(request) {
       return rejection
     }
+    let stamped: Request
+    do {
+      stamped = try versionStamped(request)
+    } catch {
+      Output.error("toolchain: could not resolve the build version: \(error)")
+      return versionResolutionFailureStatus
+    }
     return runXcodebuildForwarding(
-      request, actions: ["build"], environment: signingEnvironment())
+      stamped, actions: ["build"], environment: signingEnvironment())
+  }
+
+  /// The exit status a product build returns when the version cannot be resolved,
+  /// so a version problem fails the build rather than shipping an unstamped bundle.
+  static let versionResolutionFailureStatus: Int32 = 1
+
+  /// Return a copy of the request with `MARKETING_VERSION` and
+  /// `CURRENT_PROJECT_VERSION` injected from the resolved version, so the built
+  /// bundle carries a real version on every product build. A setting the caller
+  /// already supplied wins and is left untouched, so a release build that passes
+  /// the version explicitly, or a consumer that overrides it, is unaffected. Only
+  /// the product build injects the version; test and analyze builds are unchanged.
+  /// Throws when the version cannot be resolved so the caller fails the build.
+  static func versionStamped(_ request: Request) throws -> Request {
+    let present = Set(request.extraSettings.keys.map { $0.uppercased() })
+    // Short-circuit before resolving when the caller already supplied both settings,
+    // so an explicitly versioned build never fails on a resolution error it does not
+    // need (for example an overlength GITHUB_RUN_NUMBER in the environment).
+    guard VersionMeta.injectableKeys.contains(where: { !present.contains($0) }) else {
+      return request
+    }
+    var settings = request.extraSettings
+    var injected = false
+    for (key, value) in try VersionMeta.buildSettings() where !present.contains(key.uppercased()) {
+      settings[key] = value
+      injected = true
+    }
+    guard injected else {
+      return request
+    }
+    return Request(
+      generator: request.generator,
+      scheme: request.scheme,
+      configuration: request.configuration,
+      workspace: request.workspace,
+      project: request.project,
+      destination: request.destination,
+      derivedDataPath: request.derivedDataPath,
+      extraSettings: settings,
+      extraArguments: request.extraArguments)
   }
 
   // MARK: Static analysis
