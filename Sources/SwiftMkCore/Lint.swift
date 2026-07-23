@@ -217,12 +217,11 @@ public enum Lint {
     // The scan builds the package (clean_build), so serialize it with other engine builds
     // in this worktree through the same re-entrant lock the product build uses.
     let result = BuildLock.withLock {
-      Shell.run(
+      Shell.runForwardingAndCapturing(
         Env.get("PERIPHERY", "periphery"), args, environment: lintEnvironment())
     }
     GateStatus.last = result.status
     Capture.write(DeadcodeScan.packageScanLabel + "\n" + result.combined, to: rawPath)
-    Output.log(result.combined.trimmingCharacters(in: .newlines))
     let indexStore = DeadcodeScan.appendXcodeFindings(rawPath: rawPath)
     Capture.extractFindings(
       rawPath: rawPath,

@@ -84,25 +84,36 @@ public enum Output {
 
   private static let levelEnvironmentName = "SWIFT_MK_LOG_LEVEL"
   private static let captureLock = NSLock()
-  // A plain String plus a capturing flag rather than an optional buffer, so the
-  // append path mutates the stored value in place with no optional handling.
-  nonisolated(unsafe) private static var captureBuffer = ""
+  nonisolated(unsafe) private static var captureBuffer = Data()
   nonisolated(unsafe) private static var capturing = false
 
   public static func beginCapture() {
     captureLock.lock()
     capturing = true
-    captureBuffer = ""
+    captureBuffer.removeAll(keepingCapacity: true)
     captureLock.unlock()
   }
 
   public static func endCapture() -> String {
     captureLock.lock()
     defer { captureLock.unlock() }
-    let captured = captureBuffer
+    let captured = decodeCapturedUTF8(captureBuffer)
     capturing = false
-    captureBuffer = ""
+    captureBuffer.removeAll(keepingCapacity: true)
     return captured
+  }
+
+  static func decodeCapturedUTF8(_ data: Data) -> String {
+    let decode: (Data, UTF8.Type) -> String = String.init(decoding:as:)
+    return decode(data, UTF8.self)
+  }
+
+  static func forwardStandardOutput(_ data: Data) {
+    forward(data, to: .standardOutput)
+  }
+
+  static func forwardStandardError(_ data: Data) {
+    forward(data, to: .standardError)
   }
 
   private static func thresholdLevel() -> Level? {
@@ -160,27 +171,36 @@ public enum Output {
     // Resolve the run's trace and print the header before the first output, so
     // the header is the first line a run produces.
     Logging.ensureStarted()
-    if appendCaptured(text) {
+    let data = Data(text.utf8)
+    if appendCaptured(data) {
       return
     }
-    let handle: FileHandle
-    switch stream {
-    case .standardError:
-      handle = FileHandle.standardError
-    case .standardOutput:
-      handle = FileHandle.standardOutput
-    }
-    handle.write(Data(text.utf8))
+    handle(for: stream).write(data)
   }
 
-  private static func appendCaptured(_ text: String) -> Bool {
+  private static func forward(_ data: Data, to stream: Stream) {
+    Logging.ensureStarted()
+    _ = appendCaptured(data)
+    handle(for: stream).write(data)
+  }
+
+  private static func handle(for stream: Stream) -> FileHandle {
+    switch stream {
+    case .standardError:
+      return FileHandle.standardError
+    case .standardOutput:
+      return FileHandle.standardOutput
+    }
+  }
+
+  private static func appendCaptured(_ data: Data) -> Bool {
     captureLock.lock()
     defer { captureLock.unlock() }
     guard capturing else {
       return false
     }
     // Append in place so a large capture does not copy the whole buffer per write.
-    captureBuffer.append(text)
+    captureBuffer.append(data)
     return true
   }
 }

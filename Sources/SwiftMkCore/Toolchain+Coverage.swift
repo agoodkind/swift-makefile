@@ -11,9 +11,9 @@ import Foundation
 // MARK: - DeadcodeCoverageResult
 
 /// The outcome of an engine-owned coverage build: the exit status of the build, and
-/// its captured stdout. The build streams stderr live and captures stdout, so this
-/// carries the stdout transcript that feeds the gate's fail-hard diagnosis, alongside
-/// the structured xcresult diagnosis and the saved build log.
+/// its captured stdout. The build streams both output streams live while retaining
+/// stdout, so this carries the transcript that feeds the gate's fail-hard diagnosis,
+/// alongside the structured xcresult diagnosis and the saved build log.
 public struct DeadcodeCoverageResult: Sendable {
   public let status: Int32
   public let output: String

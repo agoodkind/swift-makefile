@@ -635,14 +635,15 @@ extension Toolchain {
       "xcodebuild", xcodebuildArguments(request, actions: actions), environment: environment)
   }
 
-  /// The captured-output variant of the raw invocation, capturing stdout in full
-  /// while forwarding stderr live, for the dead-code coverage build whose fail-hard
-  /// diagnosis needs the transcript.
+  /// The captured-output variant of the raw invocation, forwarding both streams live
+  /// while capturing them for the dead-code coverage build whose fail-hard diagnosis
+  /// needs the stdout transcript.
   static func runXcodebuildCapturing(
     _ request: Request,
     actions: [String],
     environment: [String: String],
-    resultBundleDirectory: String? = nil
+    resultBundleDirectory: String? = nil,
+    timeoutSeconds: Double = 0
   ) -> Shell.StreamingResult {
     Output.debug("toolchain: xcodebuild (captured) \(actions.joined(separator: " "))")
     guard ToolchainPrebuild.run() else {
@@ -650,6 +651,14 @@ extension Toolchain {
     }
     let arguments = xcodebuildArguments(
       request, actions: actions, resultBundleDirectory: resultBundleDirectory)
-    return Shell.runStreamingStderr("xcodebuild", arguments, environment: environment)
+    let result = Shell.runForwardingAndCapturingStreaming(
+      "xcodebuild",
+      arguments,
+      environment: environment,
+      timeoutSeconds: timeoutSeconds)
+    return Shell.StreamingResult(
+      status: result.status,
+      stdout: result.stdout,
+      timedOut: result.timedOut)
   }
 }

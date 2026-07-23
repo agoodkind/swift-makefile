@@ -116,10 +116,11 @@ extension Lint {
     Output.info("generate: running SWIFT_GENERATE_CMD before compile-based gate")
     // A dev-tool generate bootstraps the tool's SwiftPM `.build`, so serialize it with
     // every other build in this worktree. Re-entrant, so a nested build is safe.
-    let result = BuildLock.withLock { Shell.sh(command) }
-    Output.emitStandardOutput(result.combined)
-    if result.status != 0 {
-      Output.error("generate: SWIFT_GENERATE_CMD failed status=\(result.status)")
+    let status = BuildLock.withLock {
+      Shell.runForwardingOutput("/bin/sh", ["-c", command])
+    }
+    if status != 0 {
+      Output.error("generate: SWIFT_GENERATE_CMD failed status=\(status)")
       return false
     }
     setenv("SWIFT_MK_GENERATED", "1", 1)
@@ -143,9 +144,10 @@ extension Lint {
       Output.emitStandardError("test: SWIFT_TEST_CMD is not set\n")
       return false
     }
-    let result = BuildLock.withLock { Shell.sh(command) }
-    Output.emitStandardOutput(result.combined)
-    return result.status == 0
+    let status = BuildLock.withLock {
+      Shell.runForwardingOutput("/bin/sh", ["-c", command])
+    }
+    return status == 0
   }
 
   @discardableResult
@@ -156,9 +158,10 @@ extension Lint {
       Output.emitStandardError("log-audit: SWIFT_GENERATE_CMD failed; not compiling\n")
       return false
     }
-    let result = BuildLock.withLock { Shell.sh(command) }
-    Output.emitStandardOutput(result.combined)
-    return result.status == 0
+    let status = BuildLock.withLock {
+      Shell.runForwardingOutput("/bin/sh", ["-c", command])
+    }
+    return status == 0
   }
 
   @discardableResult
