@@ -137,7 +137,7 @@ build: $(SWIFT_MK_FRESH_RECORD)
 $(SWIFT_MK_FRESH_RECORD): $$(SWIFT_MK_FRESH_INPUTS) | swift-mk-bin
 	@if [ -z "$(SWIFT_MK_FRESH_FORCE)" ] && "$(SWIFT_MK_BIN)" build-fresh check $(SWIFT_MK_FRESH_ARGS); then \
 		echo "swift-build.mk: build up to date, skipping (FORCE=1 to rebuild)"; \
-		touch "$@"; \
+		mkdir -p "$(@D)" && touch "$@"; \
 	else \
 		$(SWIFT_MK_SIGNING_PRELUDE) \
 			$(if $(SWIFT_MK_SIGNING_REQUIRED),$(SWIFT_MK_SIGNING_PREFLIGHT) && ,) \
@@ -147,7 +147,7 @@ $(SWIFT_MK_FRESH_RECORD): $$(SWIFT_MK_FRESH_INPUTS) | swift-mk-bin
 			$(SWIFT_MK_POST_BUILD_SIGN_CMD) \
 			&& $(SWIFT_MK_VERIFY_ARTIFACTS_CMD) \
 			&& "$(SWIFT_MK_BIN)" build-fresh record $(SWIFT_MK_FRESH_ARGS) \
-			&& touch "$@"; \
+			&& mkdir -p "$(@D)" && touch "$@"; \
 	fi
 # The fresh branch touches the stamp so a content-identical mtime churn (a checkout
 # or a no-op formatter pass that flips file mtimes but not bytes) resets the stamp
