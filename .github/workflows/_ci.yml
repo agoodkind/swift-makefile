@@ -1,5 +1,5 @@
 # Reusable Swift CI. Consumers declare setup plus optional bespoke extra
-# targets; the required Build, Test, Quality, and Extra Targets gates live here.
+# targets; the required Verify and Extra Targets gates live here.
 # Dead-code analysis is not a CI gate: it needs an uncached compile that chokes
 # the pool, so it runs only locally (enforced by LINT_GATES in swift.mk).
 # Triggers live in the caller (GitHub does not allow them here).
@@ -14,8 +14,8 @@ on:
       xcode-version:
         type: string
         default: latest-stable
-      # Legacy JSON array alias for bespoke extra targets. Required Build, Test,
-      # and shared gate jobs now run unconditionally here.
+      # Legacy JSON array alias for bespoke extra targets. The required Verify
+      # gate runs here.
       targets:
         type: string
         default: '["lint","build","test","audit"]'
@@ -137,9 +137,10 @@ jobs:
   # needs only git, while the swift-makefile engine repo also runs
   # `swift package describe`, which the Linux Swift toolchain in the container
   # provides. So change-detection needs no macOS toolchain, and moving it off the
-  # pool frees one slot per run. It emits the same run/run_build/run_lint outputs
-  # every downstream gate reads, and no longer depends on plan-runners or a build
-  # label; plan-runners still runs for the real gates.
+  # pool frees one slot per run. It publishes the aggregate run, which Verify and
+  # Extra Targets both read: Verify owns the compile and the lints, so it runs when
+  # either family changed. Change detection does not depend on
+  # runner routing, which stays at each real gate's DAG boundary.
   #
   # The job is fail-safe: the Linux swift-mk build is best-effort, and the detect
   # step always runs and falls back to a full run (every output true) when the
@@ -173,8 +174,6 @@ jobs:
       contents: read
     outputs:
       run: ${{ steps.detect.outputs.run }}
-      run_build: ${{ steps.detect.outputs.run_build }}
-      run_lint: ${{ steps.detect.outputs.run_lint }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -268,19 +267,19 @@ jobs:
 
           echo "change detection unavailable; running full CI"
           {
-            printf 'run_build=true\n'
-            printf 'run_lint=true\n'
             printf 'run=true\n'
             printf 'changed=true\n'
           } >> "${GITHUB_OUTPUT}"
 
-  # Each gate invokes the shared planner separately at its DAG boundary. These
-  # two routes become eligible together after change detection, but each makes
-  # its own /capacity request and can choose a different runner.
-  route-build:
-    name: Route Build Job
+  # Verify runs the configured verify build and test, then the source-only lint
+  # gates against that build. When the verify commands are the build-with-tests
+  # plus test-without-building pair, the product compiles once; when they are
+  # unset, Verify runs the normal build and then the normal test, which compiles
+  # the product twice.
+  route-verify:
+    name: Route Verify Job
     needs: [changes]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && (github.event_name != 'push' || github.ref_name != github.event.repository.default_branch) }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
@@ -297,7 +296,7 @@ jobs:
         uses: ./.github/actions/plan-runner
         with:
           runner: ${{ inputs.runner }}
-          local-pool-capacity-url: ${{ needs.changes.outputs.run_build == 'false' && '' || inputs.local-pool-capacity-url }}
+          local-pool-capacity-url: ${{ needs.changes.outputs.run == 'false' && '' || inputs.local-pool-capacity-url }}
           local-pool-label: ${{ inputs.local-pool-label }}
           capacity-token: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
       - name: Plan runner
@@ -306,58 +305,25 @@ jobs:
         uses: agoodkind/swift-makefile/.github/actions/plan-runner@main
         with:
           runner: ${{ inputs.runner }}
-          local-pool-capacity-url: ${{ needs.changes.outputs.run_build == 'false' && '' || inputs.local-pool-capacity-url }}
+          local-pool-capacity-url: ${{ needs.changes.outputs.run == 'false' && '' || inputs.local-pool-capacity-url }}
           local-pool-label: ${{ inputs.local-pool-label }}
           capacity-token: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
 
-  route-test:
-    name: Route Test Job
-    needs: [changes]
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    permissions:
-      contents: read
-    outputs:
-      label: ${{ steps.route-local.outputs.label || steps.route-remote.outputs.label }}
-      on_pool: ${{ steps.route-local.outputs.on_pool || steps.route-remote.outputs.on_pool }}
-    steps:
-      - uses: actions/checkout@v7
-        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
-      - name: Plan runner (swift-makefile)
-        id: route-local
-        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
-        uses: ./.github/actions/plan-runner
-        with:
-          runner: ${{ inputs.runner }}
-          local-pool-capacity-url: ${{ needs.changes.outputs.run_build == 'false' && '' || inputs.local-pool-capacity-url }}
-          local-pool-label: ${{ inputs.local-pool-label }}
-          capacity-token: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
-      - name: Plan runner
-        id: route-remote
-        if: ${{ github.repository != 'agoodkind/swift-makefile' }}
-        uses: agoodkind/swift-makefile/.github/actions/plan-runner@main
-        with:
-          runner: ${{ inputs.runner }}
-          local-pool-capacity-url: ${{ needs.changes.outputs.run_build == 'false' && '' || inputs.local-pool-capacity-url }}
-          local-pool-label: ${{ inputs.local-pool-label }}
-          capacity-token: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
-
-  # ── Build ──────────────────────────────────────────────────────────────────
-  # build-pool: first attempt on the planned runner (pool or hosted).
-  # build-hosted: hosted-only fallback that runs when build-pool fails or is
+  # ── Verify ─────────────────────────────────────────────────────────────────
+  # verify-pool: first attempt on the planned runner (pool or hosted).
+  # verify-hosted: hosted-only fallback that runs when verify-pool fails or is
   # cancelled (a pool runner that disconnects mid-job ends as cancelled).
-  # build: tiny aggregator that is the single required status check for Build.
-  build-pool:
-    name: Build (${{ needs.changes.outputs.run_build == 'false' && 'skipped' || (needs.route-build.outputs.on_pool == 'true' && 'self-hosted' || 'github-hosted') }})
-    needs: [route-build, changes]
+  # verify: tiny aggregator that is the single required status check for Verify.
+  verify-pool:
+    name: Verify (${{ needs.changes.outputs.run == 'false' && 'skipped' || (needs.route-verify.outputs.on_pool == 'true' && 'self-hosted' || 'github-hosted') }})
+    needs: [route-verify, changes]
     # !cancelled() forces this to run when changes fails (empty run means full CI);
-    # requiring route-build success keeps runs-on well-defined, so a routing
-    # failure surfaces as a Build failure rather than an empty runner label.
-    if: ${{ !cancelled() && needs.route-build.result == 'success' }}
+    # requiring route-verify success keeps runs-on well-defined, so a routing
+    # failure surfaces as a Verify failure rather than an empty runner label.
+    if: ${{ !cancelled() && (github.event_name != 'push' || github.ref_name != github.event.repository.default_branch) && needs.route-verify.result == 'success' }}
     # Route to ubuntu on an index-confirmed skip so a docs-only push does not
     # occupy a macOS pool slot.
-    runs-on: ${{ needs.changes.outputs.run_build == 'false' && 'ubuntu-latest' || needs.route-build.outputs.label }}
+    runs-on: ${{ needs.changes.outputs.run == 'false' && 'ubuntu-latest' || needs.route-verify.outputs.label }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
@@ -369,10 +335,10 @@ jobs:
       - name: Run CI gate (swift-makefile)
         if: ${{ github.repository == 'agoodkind/swift-makefile' }}
         uses: ./.github/actions/ci-gate
-        with: &build-pool-inputs
-          gate: build
-          runner: ${{ needs.changes.outputs.run_build == 'false' && 'ubuntu-latest' || needs.route-build.outputs.label }}
-          run: ${{ needs.changes.outputs.run_build }}
+        with: &verify-pool-inputs
+          gate: verify
+          runner: ${{ needs.changes.outputs.run == 'false' && 'ubuntu-latest' || needs.route-verify.outputs.label }}
+          run: ${{ needs.changes.outputs.run }}
           xcode-version: ${{ inputs.xcode-version }}
           cache-profile: ${{ inputs.cache-profile }}
           cache-version: ${{ inputs.cache-version }}
@@ -394,17 +360,17 @@ jobs:
       - name: Run CI gate
         if: ${{ github.repository != 'agoodkind/swift-makefile' }}
         uses: agoodkind/swift-makefile/.github/actions/ci-gate@main
-        with: *build-pool-inputs
+        with: *verify-pool-inputs
 
-  build-hosted:
-    name: Build (github-hosted retry)
-    needs: [route-build, build-pool]
+  verify-hosted:
+    name: Verify (github-hosted retry)
+    needs: [route-verify, verify-pool]
     # !cancelled() defeats GitHub's implicit skip so the fallback runs whenever the
     # pool attempt did not succeed and the run is still alive; on_pool gates it to
     # pool-routed runs. `!= 'success'` covers failed and skipped pool attempts. When
     # the whole run is cancelled by a newer push or the pool watchdog, this job and
     # the aggregators skip so the run cancels cleanly and ci-infra-retry.yml reruns.
-    if: ${{ !cancelled() && needs.route-build.outputs.on_pool == 'true' && needs.build-pool.result != 'success' }}
+    if: ${{ !cancelled() && (github.event_name != 'push' || github.ref_name != github.event.repository.default_branch) && needs.route-verify.outputs.on_pool == 'true' && needs.verify-pool.result != 'success' }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
@@ -417,8 +383,8 @@ jobs:
       - name: Run CI gate (swift-makefile)
         if: ${{ github.repository == 'agoodkind/swift-makefile' }}
         uses: ./.github/actions/ci-gate
-        with: &build-hosted-inputs
-          gate: build
+        with: &verify-hosted-inputs
+          gate: verify
           runner: ${{ inputs.runner }}
           xcode-version: ${{ inputs.xcode-version }}
           cache-profile: ${{ inputs.cache-profile }}
@@ -441,292 +407,32 @@ jobs:
       - name: Run CI gate
         if: ${{ github.repository != 'agoodkind/swift-makefile' }}
         uses: agoodkind/swift-makefile/.github/actions/ci-gate@main
-        with: *build-hosted-inputs
+        with: *verify-hosted-inputs
 
-  build:
-    name: Build
+  verify:
+    name: Verify
     # !cancelled(), not always(): report the required check on every live run but
     # skip when the run is cancelled, so a superseded or watchdog-cancelled run
     # cancels cleanly and ci-infra-retry.yml can rerun it on hosted.
-    if: ${{ !cancelled() }}
-    needs: [build-pool, build-hosted]
+    if: ${{ !cancelled() && (github.event_name != 'push' || github.ref_name != github.event.repository.default_branch) }}
+    needs: [verify-pool, verify-hosted]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
     steps:
-      - name: Check build result
+      - name: Check verify result
         env:
-          POOL_RESULT: ${{ needs.build-pool.result }}
-          HOSTED_RESULT: ${{ needs.build-hosted.result }}
+          POOL_RESULT: ${{ needs.verify-pool.result }}
+          HOSTED_RESULT: ${{ needs.verify-hosted.result }}
         run: |
           if [[ "${POOL_RESULT}" == "success" ]] || [[ "${HOSTED_RESULT}" == "success" ]]; then
-            printf 'Build passed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}"
+            printf 'Verify passed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}"
           elif [[ "${POOL_RESULT}" == "skipped" ]] && [[ "${HOSTED_RESULT}" == "skipped" ]]; then
-            printf 'Build skipped (pool=skipped, hosted=skipped); routing or an upstream step failed\n' >&2
+            printf 'Verify skipped (pool=skipped, hosted=skipped); routing or an upstream step failed\n' >&2
             exit 1
           else
-            printf 'Build failed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}" >&2
-            exit 1
-          fi
-
-  # ── Test ───────────────────────────────────────────────────────────────────
-  # test-pool: first attempt on the planned runner (pool or hosted).
-  # test-hosted: hosted-only fallback that runs when test-pool fails or is
-  # cancelled (a pool runner that disconnects mid-job ends as cancelled).
-  # test: tiny aggregator that is the single required status check for Test.
-  test-pool:
-    name: Test (${{ needs.changes.outputs.run_build == 'false' && 'skipped' || (needs.route-test.outputs.on_pool == 'true' && 'self-hosted' || 'github-hosted') }})
-    needs: [route-test, changes]
-    # See build-pool: fail-safe on a changes failure, but require route-test
-    # success so the runner label is always well-defined.
-    if: ${{ !cancelled() && needs.route-test.result == 'success' }}
-    # Route to ubuntu on an index-confirmed skip so a docs-only push does not
-    # occupy a macOS pool slot.
-    runs-on: ${{ needs.changes.outputs.run_build == 'false' && 'ubuntu-latest' || needs.route-test.outputs.label }}
-    timeout-minutes: ${{ inputs.timeout-minutes }}
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
-        with:
-          fetch-depth: ${{ inputs.fetch-depth }}
-      - name: Run CI gate (swift-makefile)
-        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
-        uses: ./.github/actions/ci-gate
-        with: &test-pool-inputs
-          gate: test
-          runner: ${{ needs.changes.outputs.run_build == 'false' && 'ubuntu-latest' || needs.route-test.outputs.label }}
-          run: ${{ needs.changes.outputs.run_build }}
-          xcode-version: ${{ inputs.xcode-version }}
-          cache-profile: ${{ inputs.cache-profile }}
-          cache-version: ${{ inputs.cache-version }}
-          extra-cache-paths: ${{ inputs.extra-cache-paths }}
-          brew-packages: ${{ inputs.brew-packages }}
-          import-signing-cert: ${{ inputs.import-signing-cert }}
-          install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
-          signing-identity-name: ${{ inputs.signing-identity-name }}
-          apple-team-id: ${{ inputs.apple-team-id }}
-          setup-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          fetch-depth: ${{ inputs.fetch-depth }}
-          apple-developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          apple-developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          apple-developer-id-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
-          apple-notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
-          apple-notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          apple-notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-      - name: Run CI gate
-        if: ${{ github.repository != 'agoodkind/swift-makefile' }}
-        uses: agoodkind/swift-makefile/.github/actions/ci-gate@main
-        with: *test-pool-inputs
-
-  test-hosted:
-    name: Test (github-hosted retry)
-    needs: [route-test, test-pool]
-    # See the build-hosted note: !cancelled() + on_pool + a failed pool attempt.
-    if: ${{ !cancelled() && needs.route-test.outputs.on_pool == 'true' && needs.test-pool.result != 'success' }}
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: ${{ inputs.timeout-minutes }}
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
-        with:
-          fetch-depth: ${{ inputs.fetch-depth }}
-      - name: Run CI gate (swift-makefile)
-        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
-        uses: ./.github/actions/ci-gate
-        with: &test-hosted-inputs
-          gate: test
-          runner: ${{ inputs.runner }}
-          xcode-version: ${{ inputs.xcode-version }}
-          cache-profile: ${{ inputs.cache-profile }}
-          cache-version: ${{ inputs.cache-version }}
-          extra-cache-paths: ${{ inputs.extra-cache-paths }}
-          brew-packages: ${{ inputs.brew-packages }}
-          import-signing-cert: ${{ inputs.import-signing-cert }}
-          install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
-          signing-identity-name: ${{ inputs.signing-identity-name }}
-          apple-team-id: ${{ inputs.apple-team-id }}
-          setup-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          fetch-depth: ${{ inputs.fetch-depth }}
-          apple-developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          apple-developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          apple-developer-id-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
-          apple-notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
-          apple-notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          apple-notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-      - name: Run CI gate
-        if: ${{ github.repository != 'agoodkind/swift-makefile' }}
-        uses: agoodkind/swift-makefile/.github/actions/ci-gate@main
-        with: *test-hosted-inputs
-
-  test:
-    name: Test
-    # !cancelled(): see the Build aggregator note.
-    if: ${{ !cancelled() }}
-    needs: [test-pool, test-hosted]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - name: Check test result
-        env:
-          POOL_RESULT: ${{ needs.test-pool.result }}
-          HOSTED_RESULT: ${{ needs.test-hosted.result }}
-        run: |
-          if [[ "${POOL_RESULT}" == "success" ]] || [[ "${HOSTED_RESULT}" == "success" ]]; then
-            printf 'Test passed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}"
-          elif [[ "${POOL_RESULT}" == "skipped" ]] && [[ "${HOSTED_RESULT}" == "skipped" ]]; then
-            printf 'Test skipped (pool=skipped, hosted=skipped); routing or an upstream step failed\n' >&2
-            exit 1
-          else
-            printf 'Test failed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}" >&2
-            exit 1
-          fi
-
-  # ── Quality ────────────────────────────────────────────────────────────────
-  # Quality combines the five non-compiling checks in one reusable gate job.
-  route-quality:
-    name: Route Quality Job
-    needs: [changes, build]
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    permissions:
-      contents: read
-    outputs:
-      label: ${{ steps.route-local.outputs.label || steps.route-remote.outputs.label }}
-      on_pool: ${{ steps.route-local.outputs.on_pool || steps.route-remote.outputs.on_pool }}
-    steps:
-      - uses: actions/checkout@v7
-        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
-      - name: Plan runner (swift-makefile)
-        id: route-local
-        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
-        uses: ./.github/actions/plan-runner
-        with:
-          runner: ${{ inputs.runner }}
-          local-pool-capacity-url: ${{ needs.changes.outputs.run_lint == 'false' && '' || inputs.local-pool-capacity-url }}
-          local-pool-label: ${{ inputs.local-pool-label }}
-          capacity-token: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
-      - name: Plan runner
-        id: route-remote
-        if: ${{ github.repository != 'agoodkind/swift-makefile' }}
-        uses: agoodkind/swift-makefile/.github/actions/plan-runner@main
-        with:
-          runner: ${{ inputs.runner }}
-          local-pool-capacity-url: ${{ needs.changes.outputs.run_lint == 'false' && '' || inputs.local-pool-capacity-url }}
-          local-pool-label: ${{ inputs.local-pool-label }}
-          capacity-token: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
-
-  quality-pool:
-    name: Quality (${{ needs.changes.outputs.run_lint == 'false' && 'skipped' || (needs.route-quality.outputs.on_pool == 'true' && 'self-hosted' || 'github-hosted') }})
-    needs: [route-quality, changes, build]
-    if: ${{ !cancelled() && needs.route-quality.result == 'success' }}
-    runs-on: ${{ needs.changes.outputs.run_lint == 'false' && 'ubuntu-latest' || needs.route-quality.outputs.label }}
-    timeout-minutes: ${{ inputs.timeout-minutes }}
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
-        with:
-          fetch-depth: ${{ inputs.fetch-depth }}
-      - name: Run CI gate (swift-makefile)
-        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
-        uses: ./.github/actions/ci-gate
-        with: &quality-pool-inputs
-          gate: quality
-          runner: ${{ needs.changes.outputs.run_lint == 'false' && 'ubuntu-latest' || needs.route-quality.outputs.label }}
-          run: ${{ needs.changes.outputs.run_lint }}
-          xcode-version: ${{ inputs.xcode-version }}
-          cache-profile: ${{ inputs.cache-profile }}
-          cache-version: ${{ inputs.cache-version }}
-          extra-cache-paths: ${{ inputs.extra-cache-paths }}
-          brew-packages: ${{ inputs.brew-packages }}
-          setup-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          apple-team-id: ${{ inputs.apple-team-id }}
-          fetch-depth: ${{ inputs.fetch-depth }}
-          apple-developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          apple-developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          apple-developer-id-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
-          apple-notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
-          apple-notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          apple-notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-      - name: Run CI gate
-        if: ${{ github.repository != 'agoodkind/swift-makefile' }}
-        uses: agoodkind/swift-makefile/.github/actions/ci-gate@main
-        with: *quality-pool-inputs
-
-  quality-hosted:
-    name: Quality (github-hosted retry)
-    needs: [route-quality, quality-pool]
-    # See the build-hosted note: !cancelled() + on_pool + a failed pool attempt.
-    if: ${{ !cancelled() && needs.route-quality.outputs.on_pool == 'true' && needs.quality-pool.result != 'success' }}
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: ${{ inputs.timeout-minutes }}
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
-        with:
-          fetch-depth: ${{ inputs.fetch-depth }}
-      - name: Run CI gate (swift-makefile)
-        if: ${{ github.repository == 'agoodkind/swift-makefile' }}
-        uses: ./.github/actions/ci-gate
-        with: &quality-hosted-inputs
-          gate: quality
-          runner: ${{ inputs.runner }}
-          xcode-version: ${{ inputs.xcode-version }}
-          cache-profile: ${{ inputs.cache-profile }}
-          cache-version: ${{ inputs.cache-version }}
-          extra-cache-paths: ${{ inputs.extra-cache-paths }}
-          brew-packages: ${{ inputs.brew-packages }}
-          setup-target: ${{ inputs.setup-target }}
-          make-args: ${{ inputs.make-args }}
-          apple-team-id: ${{ inputs.apple-team-id }}
-          fetch-depth: ${{ inputs.fetch-depth }}
-          apple-developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          apple-developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          apple-developer-id-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
-          apple-notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
-          apple-notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          apple-notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-      - name: Run CI gate
-        if: ${{ github.repository != 'agoodkind/swift-makefile' }}
-        uses: agoodkind/swift-makefile/.github/actions/ci-gate@main
-        with: *quality-hosted-inputs
-
-  quality:
-    name: Quality
-    # !cancelled(): see the Build aggregator note.
-    if: ${{ !cancelled() }}
-    needs: [quality-pool, quality-hosted]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - name: Check quality result
-        env:
-          POOL_RESULT: ${{ needs.quality-pool.result }}
-          HOSTED_RESULT: ${{ needs.quality-hosted.result }}
-        run: |
-          if [[ "${POOL_RESULT}" == "success" ]] || [[ "${HOSTED_RESULT}" == "success" ]]; then
-            printf 'Quality passed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}"
-          elif [[ "${POOL_RESULT}" == "skipped" ]] && [[ "${HOSTED_RESULT}" == "skipped" ]]; then
-            printf 'Quality skipped (pool=skipped, hosted=skipped); routing or an upstream step failed\n' >&2
-            exit 1
-          else
-            printf 'Quality failed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}" >&2
+            printf 'Verify failed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}" >&2
             exit 1
           fi
 
@@ -738,11 +444,11 @@ jobs:
   # Both attempts skip when there are no bespoke targets to run.
   route-extra-targets:
     name: Route Extra Targets Job
-    needs: [changes, build, test, quality]
-    # !cancelled() defeats the implicit skip once the required gates finish, while
-    # skipping on a cancelled run; the explicit result checks keep it gated on
-    # every upstream gate succeeding.
-    if: ${{ !cancelled() && needs.build.result == 'success' && needs.test.result == 'success' && needs.quality.result == 'success' && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') }}
+    needs: [changes, verify]
+    # !cancelled() defeats the implicit skip once Verify finishes, while
+    # skipping on a cancelled run; the explicit result check keeps this gated
+    # on Verify succeeding.
+    if: ${{ !cancelled() && (github.event_name != 'push' || github.ref_name != github.event.repository.default_branch) && needs.verify.result == 'success' && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
@@ -779,10 +485,10 @@ jobs:
     # there are no bespoke targets or a gate did not pass; in that case this job runs on ubuntu as
     # a no-op and its name shows "skipped". When routing succeeded it does the real work on the
     # routed runner. A routing failure is left out, so this job skips and the aggregator reports a
-    # failure, exactly like build-pool/test-pool/quality-pool do on a routing failure.
+    # failure, exactly like verify-pool does on a routing failure.
     name: Extra Targets (${{ (needs.route-extra-targets.result != 'success' || needs.changes.outputs.run == 'false') && 'skipped' || (needs.route-extra-targets.outputs.on_pool == 'true' && 'self-hosted' || 'github-hosted') }})
-    needs: [route-extra-targets, changes, build, test, quality]
-    if: ${{ !cancelled() && (needs.route-extra-targets.result == 'success' || needs.route-extra-targets.result == 'skipped') }}
+    needs: [route-extra-targets, changes, verify]
+    if: ${{ !cancelled() && (github.event_name != 'push' || github.ref_name != github.event.repository.default_branch) && (needs.route-extra-targets.result == 'success' || needs.route-extra-targets.result == 'skipped') }}
     # The real runner only when doing real work; otherwise ubuntu for the no-op, so a run with
     # no bespoke targets does not occupy a macOS pool slot.
     runs-on: ${{ (needs.route-extra-targets.result == 'success' && needs.changes.outputs.run != 'false') && needs.route-extra-targets.outputs.label || 'ubuntu-latest' }}
@@ -832,10 +538,10 @@ jobs:
   extra-targets-hosted:
     name: Extra Targets (github-hosted retry)
     needs: [route-extra-targets, extra-targets-pool]
-    # See the build-hosted note: !cancelled(). Runs only when the caller configured
+    # See the verify-hosted note: !cancelled(). Runs only when the caller configured
     # extra targets, expressed inline since the reusable planner carries no such
     # output.
-    if: ${{ !cancelled() && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') && needs.route-extra-targets.outputs.on_pool == 'true' && needs.extra-targets-pool.result != 'success' }}
+    if: ${{ !cancelled() && (github.event_name != 'push' || github.ref_name != github.event.repository.default_branch) && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') && needs.route-extra-targets.outputs.on_pool == 'true' && needs.extra-targets-pool.result != 'success' }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
@@ -878,8 +584,8 @@ jobs:
 
   extra-targets:
     name: Extra Targets
-    # !cancelled(): see the Build aggregator note.
-    if: ${{ !cancelled() }}
+    # !cancelled(): see the Verify aggregator note.
+    if: ${{ !cancelled() && (github.event_name != 'push' || github.ref_name != github.event.repository.default_branch) }}
     needs: [extra-targets-pool, extra-targets-hosted]
     runs-on: ubuntu-latest
     timeout-minutes: 5

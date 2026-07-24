@@ -201,17 +201,13 @@ on:
   pull_request:
 permissions:
   contents: read
-  # actions: read lets the shared Quality aggregator read this run's jobs to
-  # resolve each lint's pool-or-hosted result. A reusable job cannot exceed the
-  # caller's grant, so this must be granted here or the Quality gate fails startup.
-  actions: read
 jobs:
   ci:
     uses: agoodkind/swift-makefile/.github/workflows/_ci.yml@main
     secrets: inherit
 ```
 
-`Build`, `Test`, and the shared `Quality / ...` gates run automatically. Consumers only pass repo-specific setup plus optional `extra-targets` when they need bespoke checks such as `smoke-fetch`.
+The `Verify` gate runs automatically on a pull request: it runs the configured verify build and test, then the source-only lints against that build. When the verify commands are set to a combined build-with-tests plus a test-without-building pair, the product compiles once and the tests reuse that build. When they are unset, Verify runs the normal build and then the normal test, so the product compiles twice. A push to the default branch skips Verify, so the release workflow owns the only compile there. Consumers only pass repo-specific setup plus optional `extra-targets` when they need bespoke checks such as `smoke-fetch`.
 
 Key `_ci.yml` inputs: `extra-targets` (JSON array of optional bespoke make targets run after the shared required jobs), `targets` (legacy alias for `extra-targets`; built-in `build`, `test`, `lint`, `audit`, `build-check`, `quality-guard`, and quality subtargets are filtered out), `setup-target` (make target run before each required job and once before the extra-target batch), `make-args`, `brew-packages`, `runner`, `cache-profile`, `cache-version`, `import-signing-cert` + `signing-identity-name` + `apple-team-id` (real Developer ID builds), `extra-cache-paths`.
 
