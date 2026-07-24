@@ -18,6 +18,12 @@ runs:
         echo "dir=${src}" >> "${GITHUB_OUTPUT}"
         key=$(bash "${src}/scripts/swift-mk-asset-key.sh" "${src}")
         echo "hash=${key}" >> "${GITHUB_OUTPUT}"
+        # The asset key is "<source_hash>-<runtime_id>". Split it so the toolchain cache
+        # key can order runtime before source (runtime_id is the suffix in the asset key,
+        # which a restore-keys prefix cannot isolate). The asset name still uses the full
+        # key, so the publisher/consumer contract is unchanged.
+        echo "runtime=${key##*-}" >> "${GITHUB_OUTPUT}"
+        echo "source=${key%-*}" >> "${GITHUB_OUTPUT}"
         echo "setup-linux-swift-mk: asset key ${key}"
 
     # Restore the toolchain cache first, so the swift-makefile repo's own PRs, which can restore
@@ -30,9 +36,22 @@ runs:
       uses: actions/cache@v5
       with:
         path: ~/.swift-mk-ci-toolchain
-        # The key includes runner.os, so the Linux binary caches independently from the macOS one,
-        # plus the engine source hash and the active Swift toolchain.
-        key: swift-mk-ci-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-mk-src.outputs.hash }}
+        # Order the key os/arch, then runtime_id (Swift toolchain, glibc, base OS), then the engine
+        # source hash, so the restore-keys prefix below scopes reuse to the identical runtime. The
+        # runtime segment caches the Linux binary independently from the macOS one and from a
+        # different toolchain.
+        key: swift-mk-ci-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-mk-src.outputs.runtime }}-${{ steps.swift-mk-src.outputs.source }}
+        # Restore the newest prior toolchain directory for this os/arch and runtime when the exact
+        # source key misses, which it does on every engine-source change. The directory holds both
+        # the binary and the `swift-mk-build` scratch, so a prefix restore lets the source-build
+        # fallback recompile incrementally instead of cold. Bounding the prefix by runtime_id keeps
+        # a scratch built against a different toolchain, glibc, or OS from being reused. A
+        # restore-keys (prefix) match sets `cache-hit` to `false`, not `true`, so provide-swift-mk.sh
+        # treats it as a miss and rebuilds and overwrites the binary rather than trusting a stale
+        # one; it preserves only the swift-mk-build scratch, so correctness holds while the build
+        # intermediates are reused.
+        restore-keys: |
+          swift-mk-ci-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-mk-src.outputs.runtime }}-
 
     # Provide the binary from the cache, the published release asset, or a source build. The
     # script fails loud on any real error; only a 404 (no asset published for this source yet)
