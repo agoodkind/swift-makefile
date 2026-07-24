@@ -66,3 +66,5 @@ public enum AdHocSigningAllowlist {
     return nil
   }
 }
+
+// Validation: exercise the collapsed Verify gate end to end.
