@@ -80,6 +80,7 @@ func forwardingCapturePreservesFinalOutputAtDeadlineBoundary() throws {
         marker: marker)
       try terminateDescendant(at: pidURL)
 
+      #expect(result.callbackStarted)
       #expect(result.status == 1)
       #expect(result.captured == marker)
       #expect(result.forwarded == marker)
@@ -91,6 +92,12 @@ func forwardingCapturePreservesFinalOutputAtDeadlineBoundary() throws {
 @Test(.timeLimit(.minutes(1)))
 func forwardingStreamingCapturesFloodedStreamsWithoutDeadlock() throws {
   try withForwardingFiles { stdoutURL, stderrURL, stdout, stderr in
+    // The shell backgrounds two dd writers and waits for both, so it always exits
+    // and closes the pipes, and the drains always reach EOF. Use the plain call
+    // without a timeout: a timeout would route through leaderExitedByDeadline,
+    // which schedules on the global queue and could falsely report a timeout under
+    // the saturated parallel run. The `.timeLimit(.minutes(1))` on the test is the
+    // outer backstop.
     let result = Shell.runForwardingAndCapturingStreaming(
       "/bin/sh",
       [
@@ -101,14 +108,28 @@ func forwardingStreamingCapturesFloodedStreamsWithoutDeadlock() throws {
       forwardingStandardOutput: stdout,
       forwardingStandardError: stderr)
 
+    // The produced payload is all zero bytes, so count zero bytes exactly rather
+    // than count the total. An exact zero count catches both data loss and any
+    // duplication of the payload regardless of load, while a small bound on the
+    // non-zero bytes absorbs the few diagnostic bytes the shell and OS write to
+    // stderr under load. A total-count band would instead let a duplicated chunk
+    // pass as long as it stayed under the slack.
     #expect(result.status == 0)
-    #expect(result.stdout.utf8.count == largeForwardingByteCount)
-    #expect(result.stderr.utf8.count == largeForwardingByteCount)
-    #expect(result.combined.utf8.count == largeForwardingByteCount * 2)
-    let forwardedStdout = try Data(contentsOf: stdoutURL)
-    let forwardedStderr = try Data(contentsOf: stderrURL)
-    #expect(forwardedStdout.count == largeForwardingByteCount)
-    #expect(forwardedStderr.count == largeForwardingByteCount)
+    let stdoutCounts = zeroAndNoiseCounts(Array(result.stdout.utf8))
+    let stderrCounts = zeroAndNoiseCounts(Array(result.stderr.utf8))
+    let combinedCounts = zeroAndNoiseCounts(Array(result.combined.utf8))
+    #expect(stdoutCounts.zeros == largeForwardingByteCount)
+    #expect(stdoutCounts.noise <= floodedStreamsNoiseToleranceBytes)
+    #expect(stderrCounts.zeros == largeForwardingByteCount)
+    #expect(stderrCounts.noise <= floodedStreamsNoiseToleranceBytes)
+    #expect(combinedCounts.zeros == largeForwardingByteCount * 2)
+    #expect(combinedCounts.noise <= floodedStreamsNoiseToleranceBytes * 2)
+    let forwardedStdoutCounts = zeroAndNoiseCounts(try Data(contentsOf: stdoutURL))
+    let forwardedStderrCounts = zeroAndNoiseCounts(try Data(contentsOf: stderrURL))
+    #expect(forwardedStdoutCounts.zeros == largeForwardingByteCount)
+    #expect(forwardedStdoutCounts.noise <= floodedStreamsNoiseToleranceBytes)
+    #expect(forwardedStderrCounts.zeros == largeForwardingByteCount)
+    #expect(forwardedStderrCounts.noise <= floodedStreamsNoiseToleranceBytes)
     #expect(!result.timedOut)
   }
 }
@@ -122,7 +143,10 @@ func forwardingStreamingForwardsBothStreamsBeforeExit() throws {
       "swift-mk-forwarding-release-\(UUID().uuidString)")
     defer { removeTemporary(releaseURL.path) }
     let finished = DispatchSemaphore(value: 0)
-    DispatchQueue.global().async {
+    // Run the streaming call on a dedicated thread, not the global queue, so a
+    // saturated global queue under the parallel test run cannot starve it and make
+    // the markers never appear.
+    Thread.detachNewThread {
       _ = Shell.runForwardingAndCapturingStreaming(
         "/bin/sh",
         [
@@ -139,7 +163,18 @@ func forwardingStreamingForwardsBothStreamsBeforeExit() throws {
     #expect(waitForOutput([stderrMarker], at: stderrURL, timeoutSeconds: 5))
     #expect(finished.wait(timeout: .now()) == .timedOut)
     #expect(FileManager.default.createFile(atPath: releaseURL.path, contents: nil))
-    #expect(finished.wait(timeout: .now() + 5) == .success)
+    // Block until the streaming call returns so the detached thread cannot outlive
+    // this scope and write to the forwarding handles that withForwardingFiles closes
+    // on return. The child exits as soon as the release file exists, so this always
+    // completes; the bound only guards against a genuine stall. On the unexpected
+    // timeout, still block unbounded before returning so the handles never close
+    // under a live thread; the outer .timeLimit fails the test if that ever hangs.
+    let streamingReturned =
+      finished.wait(timeout: .now() + streamingReleaseWaitSeconds) == .success
+    #expect(streamingReturned)
+    if !streamingReturned {
+      finished.wait()
+    }
   }
 }
 
@@ -162,12 +197,23 @@ func forwardingStreamingPreservesCapturedOutputOnTimeout() throws {
 }
 
 private let largeForwardingByteCount = 204_800
+// Ceiling on non-zero bytes in the flooded-streams capture. The produced payload is
+// all zero bytes, so any non-zero byte is a diagnostic the shell or OS wrote to
+// stderr under load. Keep this small so it absorbs the handful of observed
+// diagnostic bytes without hiding a larger anomaly; the exact zero-byte count, not
+// this value, is what proves no data was lost or duplicated.
+private let floodedStreamsNoiseToleranceBytes = 4_096
 private let outputPollIntervalSeconds: TimeInterval = 0.01
 private let descendantHoldSeconds = 5
 private let descendantReturnLimitSeconds: TimeInterval = 2
 private let finalCallbackReleaseDelaySeconds: TimeInterval = 0.35
 private let finalOutputRaceIterationCount = 24
 private let forwardedChunkWaitSeconds: TimeInterval = 1
+// Bound for waiting on the streaming call to return after its child is released.
+// The child exits as soon as the release file appears, so the wait always
+// completes well within this; it exists only to keep a detached streaming thread
+// from outliving the scope and writing to handles the test is about to close.
+private let streamingReleaseWaitSeconds: TimeInterval = 30
 
 private func descendantPIDURL() -> URL {
   FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -191,6 +237,31 @@ private func deadlineBoundaryCommand(pidURL: URL, exitURL: URL, marker: String) 
     + "while [ ! -e '\(exitURL.path)' ]; do sleep 0.01; done; exit 1"
 }
 
+// Release the blocked callback from a dedicated thread, not the global queue. The
+// callback in onChunk waits on callbackRelease, and this thread leaves it. Under the
+// parallel test run the global queue saturates with other tests' blocking waits, so
+// an async block here could be starved and never run, which would deadlock the
+// callback and hang the drain wait while the caller holds TestGlobalLock. A detached
+// thread always gets its own OS thread, so the release cannot be starved. It records
+// whether the callback started so the caller can assert the boundary was exercised.
+private func startCallbackReleaseThread(
+  callbackStarted: DispatchSemaphore,
+  callbackStartObserved: AtomicFlag,
+  exitURL: URL,
+  callbackRelease: DispatchGroup
+) {
+  Thread.detachNewThread {
+    let callbackDidStart =
+      callbackStarted.wait(timeout: .now() + forwardedChunkWaitSeconds) == .success
+    callbackStartObserved.set(callbackDidStart)
+    _ = FileManager.default.createFile(atPath: exitURL.path, contents: nil)
+    if callbackDidStart {
+      Thread.sleep(forTimeInterval: finalCallbackReleaseDelaySeconds)
+    }
+    callbackRelease.leave()
+  }
+}
+
 private func runDeadlineBoundaryForwardingCapture(pidURL: URL, marker: String) throws
   -> BoundedForwardingCaptureResult
 {
@@ -211,6 +282,7 @@ private func runDeadlineBoundaryForwardingCapture(pidURL: URL, marker: String) t
   let callbackStarted = DispatchSemaphore(value: 0)
   let callbackRelease = DispatchGroup()
   let callbackFinished = DispatchSemaphore(value: 0)
+  let callbackStartObserved = AtomicFlag()
   callbackRelease.enter()
   let stdoutDrain = ForwardingDrain(
     handle: stdoutPipe.fileHandleForReading,
@@ -233,15 +305,11 @@ private func runDeadlineBoundaryForwardingCapture(pidURL: URL, marker: String) t
     }
   }
   try process.run()
-  DispatchQueue.global().async {
-    let callbackDidStart =
-      callbackStarted.wait(timeout: .now() + forwardedChunkWaitSeconds) == .success
-    _ = FileManager.default.createFile(atPath: exitURL.path, contents: nil)
-    if callbackDidStart {
-      Thread.sleep(forTimeInterval: finalCallbackReleaseDelaySeconds)
-    }
-    callbackRelease.leave()
-  }
+  startCallbackReleaseThread(
+    callbackStarted: callbackStarted,
+    callbackStartObserved: callbackStartObserved,
+    exitURL: exitURL,
+    callbackRelease: callbackRelease)
   let status = Shell.waitForDirectProcess(process, drains: [stdoutDrain, stderrDrain])
   let captured = Output.decodeCapturedUTF8(stdoutDrain.snapshot())
   let forwardedOutput = Output.decodeCapturedUTF8(forwarded.snapshot())
@@ -252,7 +320,8 @@ private func runDeadlineBoundaryForwardingCapture(pidURL: URL, marker: String) t
     status: status,
     captured: captured,
     forwarded: forwardedOutput,
-    outputCapture: outputCapture
+    outputCapture: outputCapture,
+    callbackStarted: callbackStartObserved.get()
   )
 }
 
@@ -275,6 +344,23 @@ private func withForwardingFiles(
     removeTemporary(stderrURL.path)
   }
   try body(stdoutURL, stderrURL, stdout, stderr)
+}
+
+// Split a byte collection into its zero-byte payload count and its non-zero
+// diagnostic-noise count. The flooded-streams test produces an all-zero payload, so
+// the zero count is the exact transferred payload and the remainder is injected
+// noise.
+private func zeroAndNoiseCounts(_ bytes: some Sequence<UInt8>) -> (zeros: Int, noise: Int) {
+  var zeros = 0
+  var noise = 0
+  for byte in bytes {
+    if byte == 0 {
+      zeros += 1
+    } else {
+      noise += 1
+    }
+  }
+  return (zeros, noise)
 }
 
 private func waitForOutput(
@@ -304,6 +390,31 @@ private struct BoundedForwardingCaptureResult {
   let captured: String
   let forwarded: String
   let outputCapture: String
+  // Whether the drain callback started before the release fired. When false the run
+  // never exercised the callback-in-flight boundary, so the test must fail rather
+  // than pass on a run that proved nothing.
+  let callbackStarted: Bool
+}
+
+// MARK: - AtomicFlag
+
+/// A thread-safe boolean the deadline-boundary harness sets from its release thread
+/// and reads from the test thread.
+private final class AtomicFlag: @unchecked Sendable {
+  private var value = false
+  private let lock = NSLock()
+
+  func set(_ newValue: Bool) {
+    lock.lock()
+    defer { lock.unlock() }
+    value = newValue
+  }
+
+  func get() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return value
+  }
 }
 
 // MARK: - TestDataBuffer
