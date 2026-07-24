@@ -171,13 +171,18 @@ final class ForwardingDrain: @unchecked Sendable {
     // Join the reader so nothing closes the descriptor while it is still polling or
     // reading. The reader observes `cancelled` within one poll interval and signals its
     // exit; the wait is bounded in case the reader is somehow stuck.
-    _ = readerExited.wait(
-      timeout: .now() + .milliseconds(Self.readerJoinTimeoutMilliseconds))
-    // Close the read end now that the reader has stopped, so a wedged forwarder holding
-    // this drain cannot keep the descriptor open. The forwarder writes to the sink, not
-    // this handle, so closing it here is safe. FileHandle tracks its own closed state, so
-    // a later close by the owning pipe is a no-op.
-    try? handle.close()
+    let joined =
+      readerExited.wait(
+        timeout: .now() + .milliseconds(Self.readerJoinTimeoutMilliseconds)) == .success
+    // Close the read end only once the reader has confirmed it stopped, so a wedged
+    // forwarder holding this drain cannot keep the descriptor open. The forwarder writes
+    // to the sink, not this handle, so closing it after the reader stops is safe, and
+    // FileHandle tracks its own closed state so a later close by the owning pipe is a
+    // no-op. If the join times out, the reader may still be using the descriptor, so leave
+    // the close to the owning pipe rather than race the reader.
+    if joined {
+      try? handle.close()
+    }
     stateLock.lock()
     readerDone = true
     let signal = claimCompletionLocked()
