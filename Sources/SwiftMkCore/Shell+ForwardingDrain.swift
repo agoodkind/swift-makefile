@@ -173,6 +173,11 @@ final class ForwardingDrain: @unchecked Sendable {
     // exit; the wait is bounded in case the reader is somehow stuck.
     _ = readerExited.wait(
       timeout: .now() + .milliseconds(Self.readerJoinTimeoutMilliseconds))
+    // Close the read end now that the reader has stopped, so a wedged forwarder holding
+    // this drain cannot keep the descriptor open. The forwarder writes to the sink, not
+    // this handle, so closing it here is safe. FileHandle tracks its own closed state, so
+    // a later close by the owning pipe is a no-op.
+    try? handle.close()
     stateLock.lock()
     readerDone = true
     let signal = claimCompletionLocked()
@@ -246,7 +251,9 @@ final class ForwardingDrain: @unchecked Sendable {
       return storeChunk(Data(readBuffer[0..<count]))
     }
     if count < 0, errno == EINTR {
-      return true
+      // Retry an interrupted read, but stop if detached so repeated signals cannot keep
+      // the reader past detach().
+      return !isCancelled()
     }
     return false
   }
