@@ -55,23 +55,23 @@ extension Shell {
 /// prevents the forwarder from dequeuing any further chunk. At most one chunk survives
 /// the fence: a chunk the forwarder already removed from the queue under the lock, whose
 /// sink write is in flight or about to start. That write completes, because a
-/// synchronous write cannot be interrupted. The production sinks are standard output
-/// and standard error, which stay open for the process lifetime and do not block on a
-/// wedge, so that one surviving write is always safe. A caller that supplies its own
-/// closable handle as the sink must keep it open until the drain completes.
+/// synchronous write cannot be interrupted. A caller that supplies its own closable
+/// handle as the sink must keep it open until the drain completes.
 ///
-/// Overflow: if the sink wedges, the forwarder blocks only itself while the reader keeps
-/// draining into the capture buffer, bounded by the child's total output, the same bound
-/// a full capture already accepts. On `detach()` the untransmitted tail is dropped and
-/// the queued chunks are freed. Standard output and standard error are not made
-/// non-blocking, because those descriptors are shared process wide.
+/// The primary guarantee is that the caller never hangs: the reader and the completion
+/// signal do not depend on the sink, and every wait on completion is bounded. A sink can
+/// block. `Output.forwardStandardOutput` writes synchronously to standard output, which
+/// blocks under downstream backpressure. A blocked sink blocks only its forwarder, not
+/// the reader or the caller. `detach()` frees the queued chunks, so a blocked sink
+/// retains only the drain object and the one chunk still in its write, which is inherent
+/// to a synchronous write that cannot be interrupted and is bounded in practice because
+/// the continuous-integration log collector drains standard output and error.
 ///
-/// The reader runs on a dispatch source served by the global thread pool. A forwarder
-/// whose sink blocks holds one pool thread; the production sinks never block, so the
-/// reader is never starved and capture is complete. Only a pathological number of
-/// concurrently wedged sinks could delay the reader past the grace in
-/// `waitForDirectProcess`, which would bound capture to what was read by then; that does
-/// not occur in production.
+/// The reader runs on a dispatch source served by the global thread pool, so heavy pool
+/// contention can delay it past the grace in `waitForDirectProcess` and bound capture to
+/// what was read by then. Capture-only drains have no forwarder, so a truncated
+/// `Shell.run` capture requires the pool to be saturated by unrelated work for longer
+/// than the grace, which is rare but possible.
 final class ForwardingDrain: @unchecked Sendable {
   private let handle: FileHandle
   private let capturing: Bool
