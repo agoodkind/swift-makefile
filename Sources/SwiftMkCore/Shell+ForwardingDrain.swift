@@ -49,20 +49,20 @@ extension Shell {
 /// blocks.
 ///
 /// Completion, observed through `waitUntilFinished(deadline:)`, is reached when the
-/// reader sees end of file and the forwarder has flushed everything read before then.
+/// reader is done and the forwarder has no chunk queued or in flight.
 ///
 /// `detach()` is the fence: it stops the reader, clears the un-forwarded queue, and
-/// prevents the forwarder from dequeuing any further chunk. At most one chunk survives
-/// the fence: a chunk the forwarder already removed from the queue under the lock, whose
-/// sink write is in flight or about to start. That write completes, because a
-/// synchronous write cannot be interrupted. A caller that supplies its own closable
-/// handle as the sink must keep it open until the drain completes.
+/// prevents the forwarder from dequeuing any further chunk. It does not signal completion
+/// while a sink write is still running; the forwarder signals it after that write returns.
+/// So a caller that waits with `waitUntilFinished(deadline:)` and sees success can safely
+/// close a handle it supplied as the sink, because no write is then in flight. On a wedged
+/// sink the wait times out instead, and the one in-flight write outlives the caller.
 ///
 /// The primary guarantee is that the caller never hangs: the reader and the completion
-/// signal do not depend on the sink, and every wait on completion is bounded. A sink can
-/// block. `Output.forwardStandardOutput` writes synchronously to standard output, which
-/// blocks under downstream backpressure. A blocked sink blocks only its forwarder, not
-/// the reader or the caller. `detach()` frees the queued chunks, so a blocked sink
+/// signal do not depend on the sink starting, and every wait on completion is bounded. A
+/// sink can block. `Output.forwardStandardOutput` writes synchronously to standard output,
+/// which blocks under downstream backpressure. A blocked sink blocks only its forwarder,
+/// not the reader or the caller. `detach()` frees the queued chunks, so a wedged sink
 /// retains only the drain object and the one chunk still in its write, which is inherent
 /// to a synchronous write that cannot be interrupted and is bounded in practice because
 /// the continuous-integration log collector drains standard output and error.
@@ -128,7 +128,8 @@ final class ForwardingDrain: @unchecked Sendable {
   /// Stop the reader and fence the forwarder: no reader callback fires, the queued
   /// chunks are freed, and the forwarder dequeues nothing further after this returns.
   /// At most the one chunk the forwarder already dequeued may still complete its write.
-  /// Idempotent.
+  /// Completion is signaled after that write returns, not here, so it does not fire while
+  /// a sink write is in flight. Idempotent.
   func detach() {
     stateLock.lock()
     active = false
@@ -151,12 +152,14 @@ final class ForwardingDrain: @unchecked Sendable {
   }
 
   private func read(from source: FileHandle) {
+    // Read outside the lock: the blocking pipe read and the Data allocation must not stall
+    // snapshot(), the forwarder's dequeue, or detach().
+    let chunk = source.availableData
     stateLock.lock()
     guard active else {
       stateLock.unlock()
       return
     }
-    let chunk = source.availableData
     if chunk.isEmpty {
       active = false
       readerDone = true
@@ -209,14 +212,16 @@ final class ForwardingDrain: @unchecked Sendable {
     }
   }
 
-  /// Return true exactly once, when the drain has completed: the reader is done and,
-  /// unless the drain was cancelled, the forwarder has flushed every pending chunk.
-  /// Caller holds `stateLock`.
+  /// Return true exactly once, when the drain has completed: the reader is done and the
+  /// forwarder has no chunk queued or in flight. The forwarder check holds even when the
+  /// drain is cancelled, so `detach()` does not signal completion while a sink write is
+  /// still running; the forwarder signals it after that write returns. Caller holds
+  /// `stateLock`.
   private func claimCompletionLocked() -> Bool {
     guard !completionSignaled, readerDone else {
       return false
     }
-    if !cancelled, forwarding || !pending.isEmpty {
+    if forwarding || !pending.isEmpty {
       return false
     }
     completionSignaled = true
