@@ -8,6 +8,12 @@
 
 import Foundation
 
+#if canImport(Darwin)
+  import Darwin
+#elseif canImport(Glibc)
+  import Glibc
+#endif
+
 extension Shell {
   /// Time to wait for the drains to finish after the direct child exits before
   /// giving up and detaching. A descendant may keep an inherited write end open, so
@@ -41,12 +47,19 @@ extension Shell {
 
 /// Reads one pipe and, independently, forwards its bytes to an optional sink.
 ///
-/// The reader runs on the file handle's readability handler: it reads each chunk,
-/// appends it to the capture buffer, and hands it to the forwarder. The reader never
-/// calls the sink, so a slow or blocked sink cannot stall the reader or keep the pipe
-/// from draining. The forwarder, when a sink is configured, runs on its own serial
-/// queue and writes each chunk to the sink; if the sink blocks, only that queue
-/// blocks.
+/// The reader runs on its own thread. It waits for the pipe to become readable with a
+/// bounded `poll`, reads each chunk, appends it to the capture buffer, and hands it to
+/// the forwarder. A dedicated thread is scheduled by the operating system, not the
+/// global dispatch pool, so heavy pool contention cannot starve it and truncate a
+/// capture. The reader never calls the sink, so a slow or blocked sink cannot stall the
+/// reader or keep the pipe from draining. The forwarder, when a sink is configured, runs
+/// on its own serial queue and writes each chunk to the sink; if the sink blocks, only
+/// that queue blocks.
+///
+/// The `poll` timeout lets `detach()` stop the reader by setting a flag the reader checks
+/// each timeout, so the reader exits within one poll interval without closing the
+/// descriptor. When the descriptor's owner closes it, `poll` reports the invalid
+/// descriptor and the reader treats it as end of file.
 ///
 /// Completion, observed through `waitUntilFinished(deadline:)`, is reached when the
 /// reader is done and the forwarder has no chunk queued or in flight.
@@ -67,11 +80,6 @@ extension Shell {
 /// to a synchronous write that cannot be interrupted and is bounded in practice because
 /// the continuous-integration log collector drains standard output and error.
 ///
-/// The reader runs on a dispatch source served by the global thread pool, so heavy pool
-/// contention can delay it past the grace in `waitForDirectProcess` and bound capture to
-/// what was read by then. Capture-only drains have no forwarder, so a truncated
-/// `Shell.run` capture requires the pool to be saturated by unrelated work for longer
-/// than the grace, which is rare but possible.
 final class ForwardingDrain: @unchecked Sendable {
   private let handle: FileHandle
   private let capturing: Bool
@@ -80,10 +88,27 @@ final class ForwardingDrain: @unchecked Sendable {
   private let sharedGroup: DispatchGroup?
   private let forwarderQueue: DispatchQueue?
 
+  // Read granularity, one pipe buffer on macOS. The reader reads at most this many bytes
+  // per wakeup.
+  private static let readerBufferSize = 65_536
+  // How long each `poll` waits before the reader rechecks for cancellation. It bounds how
+  // long `detach()` takes to stop a reader that is waiting on a pipe no one is writing to.
+  private static let readerPollTimeoutMilliseconds: Int32 = 100
+  // Reader thread stack, 512 KiB. The reader only holds a fixed read buffer, so the default
+  // 512 KiB is ample and keeps the per-drain footprint small.
+  private static let readerThreadStackSize = 524_288
+  // Upper bound on how long detach() waits to join the reader. The reader observes
+  // cancellation within one poll interval, so this is never reached in practice; it only
+  // keeps detach() bounded if the reader is somehow stuck.
+  private static let readerJoinTimeoutMilliseconds = 2_000
+
+  // Signaled once when the reader thread exits, so detach() can join it before anything
+  // closes the descriptor.
+  private let readerExited = DispatchSemaphore(value: 0)
+
   private let stateLock = NSLock()
   private var buffer = Data()
   private var pending: [Data] = []
-  private var active = true
   private var readerDone = false
   private var cancelled = false
   private var forwarding = false
@@ -111,9 +136,12 @@ final class ForwardingDrain: @unchecked Sendable {
     }
     finished.enter()
     sharedGroup?.enter()
-    handle.readabilityHandler = { [weak self] source in
-      self?.read(from: source)
+    let reader = Thread { [weak self] in
+      self?.readLoop()
     }
+    reader.name = "swift-mk.forwarding-drain.reader"
+    reader.stackSize = Self.readerThreadStackSize
+    reader.start()
   }
 
   func waitUntilFinished(deadline: DispatchTime) -> Bool {
@@ -125,19 +153,28 @@ final class ForwardingDrain: @unchecked Sendable {
     detach()
   }
 
-  /// Stop the reader and fence the forwarder: no reader callback fires, the queued
-  /// chunks are freed, and the forwarder dequeues nothing further after this returns.
-  /// At most the one chunk the forwarder already dequeued may still complete its write.
-  /// Completion is signaled after that write returns, not here, so it does not fire while
-  /// a sink write is in flight. Idempotent.
+  /// Stop the reader and fence the forwarder: the reader appends nothing further and exits
+  /// within one poll interval, the queued chunks are freed, and the forwarder dequeues
+  /// nothing further after this returns. At most the one chunk the forwarder already
+  /// dequeued may still complete its write. Completion is signaled after that write
+  /// returns, not here, so it does not fire while a sink write is in flight. Idempotent.
   func detach() {
     stateLock.lock()
-    active = false
-    readerDone = true
+    if cancelled {
+      stateLock.unlock()
+      return
+    }
     cancelled = true
     // Free the un-forwarded queue so a wedged sink cannot retain it indefinitely.
     pending.removeAll()
-    handle.readabilityHandler = nil
+    stateLock.unlock()
+    // Join the reader so nothing closes the descriptor while it is still polling or
+    // reading. The reader observes `cancelled` within one poll interval and signals its
+    // exit; the wait is bounded in case the reader is somehow stuck.
+    _ = readerExited.wait(
+      timeout: .now() + .milliseconds(Self.readerJoinTimeoutMilliseconds))
+    stateLock.lock()
+    readerDone = true
     let signal = claimCompletionLocked()
     stateLock.unlock()
     if signal {
@@ -151,25 +188,76 @@ final class ForwardingDrain: @unchecked Sendable {
     return buffer
   }
 
-  private func read(from source: FileHandle) {
-    // Read outside the lock: the blocking pipe read and the Data allocation must not stall
-    // snapshot(), the forwarder's dequeue, or detach().
-    let chunk = source.availableData
-    stateLock.lock()
-    guard active else {
-      stateLock.unlock()
-      return
-    }
-    if chunk.isEmpty {
-      active = false
-      readerDone = true
-      source.readabilityHandler = nil
-      let signal = claimCompletionLocked()
-      stateLock.unlock()
-      if signal {
-        leaveGroups()
+  private enum PollOutcome {
+    case readable
+    case keepWaiting
+    case stop
+  }
+
+  private func readLoop() {
+    let fileDescriptor = handle.fileDescriptor
+    var readBuffer = [UInt8](repeating: 0, count: Self.readerBufferSize)
+    reading: while true {
+      switch pollForReadable(fileDescriptor) {
+      case .keepWaiting:
+        continue reading
+      case .stop:
+        break reading
+      case .readable:
+        if !readAndStore(fileDescriptor, into: &readBuffer) {
+          break reading
+        }
       }
-      return
+    }
+    finishReader()
+  }
+
+  /// Wait one poll interval for the descriptor to become readable. Return `.stop` when the
+  /// drain was cancelled during an idle interval or the poll failed, `.keepWaiting` on a
+  /// bare timeout or an interrupted poll, and `.readable` when data is available.
+  private func pollForReadable(_ fileDescriptor: Int32) -> PollOutcome {
+    var descriptor = pollfd(
+      fd: fileDescriptor, events: Int16(truncatingIfNeeded: POLLIN), revents: 0)
+    let ready = poll(&descriptor, 1, Self.readerPollTimeoutMilliseconds)
+    if ready < 0 {
+      // A non-EINTR poll error stops the reader. An interrupted poll rechecks
+      // cancellation so repeated signals cannot keep the reader past detach().
+      if errno != EINTR {
+        return .stop
+      }
+      return isCancelled() ? .stop : .keepWaiting
+    }
+    if ready == 0 {
+      return isCancelled() ? .stop : .keepWaiting
+    }
+    return .readable
+  }
+
+  /// Read one chunk and store it. Return false to stop the reader: end of file, a read
+  /// error such as the owner closing the descriptor, or a cancellation observed while
+  /// storing. Return true to keep reading.
+  private func readAndStore(_ fileDescriptor: Int32, into readBuffer: inout [UInt8]) -> Bool {
+    // Read outside the lock so the read and the Data allocation do not stall snapshot(),
+    // the forwarder's dequeue, or detach().
+    let count = readBuffer.withUnsafeMutableBytes { raw in
+      read(fileDescriptor, raw.baseAddress, raw.count)
+    }
+    if count > 0 {
+      return storeChunk(Data(readBuffer[0..<count]))
+    }
+    if count < 0, errno == EINTR {
+      return true
+    }
+    return false
+  }
+
+  /// Append a chunk under the lock and hand it to the forwarder. Return false when the
+  /// drain was cancelled, so the reader stops without storing after `detach()`.
+  private func storeChunk(_ chunk: Data) -> Bool {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    if cancelled {
+      return false
     }
     if capturing {
       buffer.append(chunk)
@@ -178,7 +266,25 @@ final class ForwardingDrain: @unchecked Sendable {
       pending.append(chunk)
       scheduleForwarderLocked()
     }
+    return true
+  }
+
+  private func isCancelled() -> Bool {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    return cancelled
+  }
+
+  private func finishReader() {
+    stateLock.lock()
+    readerDone = true
+    let signal = claimCompletionLocked()
     stateLock.unlock()
+    if signal {
+      leaveGroups()
+    }
+    // Signal last, so a detach() joining here sees the reader fully done.
+    readerExited.signal()
   }
 
   /// Start the forwarder if a sink exists, chunks are waiting, and none is running.

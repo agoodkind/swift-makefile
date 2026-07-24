@@ -330,32 +330,19 @@ extension Shell {
     _ = drainGroup.wait(timeout: .now() + timeoutTerminationGraceSeconds)
     _ = kill(-processIdentifier, SIGKILL)
     let status = reapProcessBlocking(processIdentifier)
-    drainAndRelease(process, drainGroup: drainGroup)
+    drainAndRelease(drainGroup: drainGroup)
     return status
   }
 
-  /// Wait for the drain handlers to finish, bounded so a descendant that escaped
-  /// the process group and kept a pipe write end open cannot hang the wrapper. On
-  /// timeout, detach the readers and close the read ends; the captured stdout is
-  /// whatever arrived before then.
-  static func drainAndRelease(
-    _ process: SpawnedStreamingProcess, drainGroup: DispatchGroup
-  ) {
-    guard drainGroup.wait(timeout: .now() + timeoutTerminationGraceSeconds) == .timedOut
-    else {
-      return
-    }
-    for handle in [
-      process.standardOutput.fileHandleForReading,
-      process.standardError.fileHandleForReading,
-    ] {
-      handle.readabilityHandler = nil
-      do {
-        try handle.close()
-      } catch {
-        Output.error("Shell: closing drained read handle failed: \(error)")
-      }
-    }
+  /// Wait, bounded, for the drains to finish after the group is killed, so a descendant
+  /// that escaped the process group and kept a pipe write end open cannot hang the wrapper.
+  /// The read ends are not closed here. The kill makes the child's write ends close, so the
+  /// readers reach end of file and exit; the streaming caller then detaches each drain,
+  /// which joins its reader before returning. Closing a read end here would race a reader
+  /// that is still polling it, so the read ends stay open until the spawned process closes
+  /// them.
+  static func drainAndRelease(drainGroup: DispatchGroup) {
+    _ = drainGroup.wait(timeout: .now() + timeoutTerminationGraceSeconds)
   }
 
   /// Call `body` with a NULL-terminated C string array built from `strings`,
