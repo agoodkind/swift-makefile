@@ -69,18 +69,17 @@ func forwardingCallsReturnWhenDescendantHoldsPipes() throws {
 }
 
 @Test(.timeLimit(.minutes(1)))
-func forwardingCapturePreservesFinalOutputAtDeadlineBoundary() throws {
+func forwardingDrainCapturesAndForwardsFinalChunk() throws {
+  // A child writes a marker and exits at once, so the marker is the final chunk and
+  // the reader races the child's EOF. Repeated runs exercise that race. The drain
+  // captures on the reader and forwards on its own queue, and completion waits for the
+  // forwarder to flush, so a run that finishes within the grace delivers the marker to
+  // the capture buffer, the forwarding sink, and the process-wide Output capture alike.
   try TestGlobalLock.withLock {
     for iteration in 0..<finalOutputRaceIterationCount {
-      let pidURL = descendantPIDURL()
-      defer { removeTemporary(pidURL.path) }
       let marker = "finding-\(iteration)"
-      let result = try runDeadlineBoundaryForwardingCapture(
-        pidURL: pidURL,
-        marker: marker)
-      try terminateDescendant(at: pidURL)
+      let result = try runMarkerForwardingCapture(marker: marker)
 
-      #expect(result.callbackStarted)
       #expect(result.status == 1)
       #expect(result.captured == marker)
       #expect(result.forwarded == marker)
@@ -196,6 +195,29 @@ func forwardingStreamingPreservesCapturedOutputOnTimeout() throws {
   }
 }
 
+@Test(.timeLimit(.minutes(1)))
+func blockedSinkDoesNotStallReaderOrHangCaller() throws {
+  let observations = try runWedgedForwardingCapture()
+  // The sink must have blocked, so the wedge is genuinely exercised.
+  #expect(observations.sinkEntered)
+  // The reader must drain the whole pipe into the capture buffer even while the
+  // sink is blocked, proving the reader is decoupled from the sink write.
+  #expect(observations.readerCapturedBytes == sinkWedgePayloadBytes)
+  // The caller must return within the bounded deadline, not hang on the blocked sink.
+  #expect(observations.callerReturnedWithinDeadline)
+}
+
+@Test(.timeLimit(.minutes(1)))
+func detachFencesQueuedSinkWritesAfterCallerReturns() throws {
+  let observations = try runWedgedForwardingCapture()
+  #expect(observations.sinkEntered)
+  #expect(observations.callerReturnedWithinDeadline)
+  // Once the caller returns, the drain is detached, so no queued chunk may begin a
+  // new sink write. The single in-flight write that had already begun before detach
+  // is allowed to finish, so the count must not grow past what it was at return.
+  #expect(observations.writeStartsAfterRelease == observations.writeStartsAtReturn)
+}
+
 private let largeForwardingByteCount = 204_800
 // Ceiling on non-zero bytes in the flooded-streams capture. The produced payload is
 // all zero bytes, so any non-zero byte is a diagnostic the shell or OS wrote to
@@ -206,14 +228,23 @@ private let floodedStreamsNoiseToleranceBytes = 4_096
 private let outputPollIntervalSeconds: TimeInterval = 0.01
 private let descendantHoldSeconds = 5
 private let descendantReturnLimitSeconds: TimeInterval = 2
-private let finalCallbackReleaseDelaySeconds: TimeInterval = 0.35
 private let finalOutputRaceIterationCount = 24
-private let forwardedChunkWaitSeconds: TimeInterval = 1
 // Bound for waiting on the streaming call to return after its child is released.
 // The child exits as soon as the release file appears, so the wait always
 // completes well within this; it exists only to keep a detached streaming thread
 // from outliving the scope and writing to handles the test is about to close.
 private let streamingReleaseWaitSeconds: TimeInterval = 30
+// Payload the wedge test emits on stdout. Larger than one pipe buffer so a reader
+// coupled to a blocked sink would capture only the first chunk, while a decoupled
+// reader captures all of it.
+private let sinkWedgePayloadBytes = 204_800
+// Block size the wedge child writes with, matched to the payload division above.
+private let sinkWedgeBlockBytes = 1_024
+// Bound for the wedge test's setup and return waits. The child emits its payload and
+// exits at once, so a decoupled, bounded caller returns well within this; a caller
+// coupled to the blocked sink hangs past it.
+private let sinkWedgeSetupSeconds: TimeInterval = 10
+private let sinkWedgeReturnSeconds: TimeInterval = 10
 
 private func descendantPIDURL() -> URL {
   FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -231,68 +262,23 @@ private func terminateDescendant(at pidURL: URL) throws {
   _ = kill(pid, SIGTERM)
 }
 
-private func deadlineBoundaryCommand(pidURL: URL, exitURL: URL, marker: String) -> String {
-  "sleep \(descendantHoldSeconds) & printf '%s' \"$!\" > '\(pidURL.path)'; "
-    + "printf '%s' '\(marker)'; "
-    + "while [ ! -e '\(exitURL.path)' ]; do sleep 0.01; done; exit 1"
-}
-
-// Release the blocked callback from a dedicated thread, not the global queue. The
-// callback in onChunk waits on callbackRelease, and this thread leaves it. Under the
-// parallel test run the global queue saturates with other tests' blocking waits, so
-// an async block here could be starved and never run, which would deadlock the
-// callback and hang the drain wait while the caller holds TestGlobalLock. A detached
-// thread always gets its own OS thread, so the release cannot be starved. It records
-// whether the callback started so the caller can assert the boundary was exercised.
-private func startCallbackReleaseThread(
-  callbackStarted: DispatchSemaphore,
-  callbackStartObserved: AtomicFlag,
-  exitURL: URL,
-  callbackRelease: DispatchGroup
-) {
-  Thread.detachNewThread {
-    let callbackDidStart =
-      callbackStarted.wait(timeout: .now() + forwardedChunkWaitSeconds) == .success
-    callbackStartObserved.set(callbackDidStart)
-    _ = FileManager.default.createFile(atPath: exitURL.path, contents: nil)
-    if callbackDidStart {
-      Thread.sleep(forTimeInterval: finalCallbackReleaseDelaySeconds)
-    }
-    callbackRelease.leave()
-  }
-}
-
-private func runDeadlineBoundaryForwardingCapture(pidURL: URL, marker: String) throws
-  -> BoundedForwardingCaptureResult
+private func runMarkerForwardingCapture(marker: String) throws
+  -> MarkerForwardingCaptureResult
 {
-  let exitURL = FileManager.default.temporaryDirectory.appendingPathComponent(
-    "swift-mk-forwarding-exit-\(UUID().uuidString)")
-  defer { removeTemporary(exitURL.path) }
   let process = Process()
   let stdoutPipe = Pipe()
   let stderrPipe = Pipe()
   process.executableURL = URL(fileURLWithPath: "/bin/sh")
-  process.arguments = [
-    "-c",
-    deadlineBoundaryCommand(pidURL: pidURL, exitURL: exitURL, marker: marker),
-  ]
+  process.arguments = ["-c", "printf '%s' '\(marker)'; exit 1"]
   process.standardOutput = stdoutPipe
   process.standardError = stderrPipe
   let forwarded = TestDataBuffer()
-  let callbackStarted = DispatchSemaphore(value: 0)
-  let callbackRelease = DispatchGroup()
-  let callbackFinished = DispatchSemaphore(value: 0)
-  let callbackStartObserved = AtomicFlag()
-  callbackRelease.enter()
   let stdoutDrain = ForwardingDrain(
     handle: stdoutPipe.fileHandleForReading,
     capturing: true
   ) { chunk in
-    callbackStarted.signal()
-    callbackRelease.wait()
     forwarded.append(chunk)
     Output.forwardStandardOutput(chunk)
-    callbackFinished.signal()
   }
   let stderrDrain = ForwardingDrain(handle: stderrPipe.fileHandleForReading) { chunk in
     FileHandle.nullDevice.write(chunk)
@@ -305,23 +291,80 @@ private func runDeadlineBoundaryForwardingCapture(pidURL: URL, marker: String) t
     }
   }
   try process.run()
-  startCallbackReleaseThread(
-    callbackStarted: callbackStarted,
-    callbackStartObserved: callbackStartObserved,
-    exitURL: exitURL,
-    callbackRelease: callbackRelease)
   let status = Shell.waitForDirectProcess(process, drains: [stdoutDrain, stderrDrain])
   let captured = Output.decodeCapturedUTF8(stdoutDrain.snapshot())
   let forwardedOutput = Output.decodeCapturedUTF8(forwarded.snapshot())
   let outputCapture = Output.endCapture()
   captureEnded = true
-  _ = callbackFinished.wait(timeout: .now() + forwardedChunkWaitSeconds)
-  return BoundedForwardingCaptureResult(
+  return MarkerForwardingCaptureResult(
     status: status,
     captured: captured,
     forwarded: forwardedOutput,
-    outputCapture: outputCapture,
-    callbackStarted: callbackStartObserved.get()
+    outputCapture: outputCapture
+  )
+}
+
+// Run a child that emits a large stdout payload through a ForwardingDrain whose sink
+// blocks on its first write, and observe the drain under that wedge. The reader must
+// keep draining while the sink is blocked, the caller must return within a bounded
+// deadline, and once it returns no further sink write may begin.
+private func runWedgedForwardingCapture() throws -> WedgeObservations {
+  let process = Process()
+  let stdoutPipe = Pipe()
+  let stderrPipe = Pipe()
+  process.executableURL = URL(fileURLWithPath: "/bin/sh")
+  let blockCount = sinkWedgePayloadBytes / sinkWedgeBlockBytes
+  process.arguments = [
+    "-c", "dd if=/dev/zero bs=\(sinkWedgeBlockBytes) count=\(blockCount) status=none",
+  ]
+  process.standardOutput = stdoutPipe
+  process.standardError = stderrPipe
+
+  let writeStarts = AtomicInt()
+  let sinkEntered = DispatchSemaphore(value: 0)
+  let sinkGate = DispatchSemaphore(value: 0)
+  let firstSinkReturned = DispatchSemaphore(value: 0)
+  let stdoutDrain = ForwardingDrain(
+    handle: stdoutPipe.fileHandleForReading, capturing: true
+  ) { _ in
+    // Block only the first write, so releasing the gate once lets every path drain
+    // to completion for cleanup, whether or not the drain decoupled the reader.
+    if writeStarts.incrementAndGet() == 1 {
+      sinkEntered.signal()
+      sinkGate.wait()
+      firstSinkReturned.signal()
+    }
+  }
+  // Capture-and-forward nothing: this drain only reads stderr to end of file.
+  let stderrDrain = ForwardingDrain(handle: stderrPipe.fileHandleForReading)
+
+  try process.run()
+  let returned = DispatchSemaphore(value: 0)
+  Thread.detachNewThread {
+    _ = Shell.waitForDirectProcess(process, drains: [stdoutDrain, stderrDrain])
+    returned.signal()
+  }
+
+  let sawSink = sinkEntered.wait(timeout: .now() + sinkWedgeSetupSeconds) == .success
+  // Bound the caller's return WITHOUT releasing the sink first, so the deadline
+  // measures whether the caller can finish while the sink is still blocked.
+  let returnedInTime = returned.wait(timeout: .now() + sinkWedgeReturnSeconds) == .success
+  let capturedBytes = stdoutDrain.snapshot().count
+  let startsAtReturn = writeStarts.get()
+
+  // Cleanup: release the blocked sink and wait for that first write to return, so the
+  // forwarder can observe the fence and no thread outlives this call. `returned` was
+  // already consumed above, so this waits on the sink's own return signal instead.
+  sinkGate.signal()
+  _ = firstSinkReturned.wait(timeout: .now() + sinkWedgeReturnSeconds)
+  let startsAfterRelease = writeStarts.get()
+
+  return WedgeObservations(
+    sinkEntered: sawSink,
+    readerCapturedBytes: capturedBytes,
+    callerReturnedWithinDeadline: returnedInTime,
+    writeStartsAtReturn: startsAtReturn,
+    writeStartsAfterRelease: startsAfterRelease
   )
 }
 
@@ -383,34 +426,42 @@ private func waitForOutput(
   return false
 }
 
-// MARK: - BoundedForwardingCaptureResult
+// MARK: - MarkerForwardingCaptureResult
 
-private struct BoundedForwardingCaptureResult {
+private struct MarkerForwardingCaptureResult {
   let status: Int32
   let captured: String
   let forwarded: String
   let outputCapture: String
-  // Whether the drain callback started before the release fired. When false the run
-  // never exercised the callback-in-flight boundary, so the test must fail rather
-  // than pass on a run that proved nothing.
-  let callbackStarted: Bool
 }
 
-// MARK: - AtomicFlag
+// MARK: - WedgeObservations
 
-/// A thread-safe boolean the deadline-boundary harness sets from its release thread
-/// and reads from the test thread.
-private final class AtomicFlag: @unchecked Sendable {
-  private var value = false
+/// What the wedge harness observed while a forwarding sink was blocked.
+private struct WedgeObservations {
+  let sinkEntered: Bool
+  let readerCapturedBytes: Int
+  let callerReturnedWithinDeadline: Bool
+  let writeStartsAtReturn: Int
+  let writeStartsAfterRelease: Int
+}
+
+// MARK: - AtomicInt
+
+/// A thread-safe counter the wedge harness increments from the sink and reads from
+/// the test thread.
+private final class AtomicInt: @unchecked Sendable {
+  private var value = 0
   private let lock = NSLock()
 
-  func set(_ newValue: Bool) {
+  func incrementAndGet() -> Int {
     lock.lock()
     defer { lock.unlock() }
-    value = newValue
+    value += 1
+    return value
   }
 
-  func get() -> Bool {
+  func get() -> Int {
     lock.lock()
     defer { lock.unlock() }
     return value
