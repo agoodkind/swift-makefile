@@ -12,7 +12,7 @@ The engine infers the signing style from the identity and team rather than letti
 
 ## Post-build signing and notarization
 
-[`Codesign`](../../Sources/SwiftMkCore/Codesign.swift) signs a built product, [`Notarize`](../../Sources/SwiftMkCore/Notarize.swift) submits it to Apple and staples the ticket, and [`SigningVerification`](../../Sources/SwiftMkCore/SigningVerification.swift) confirms the result. Consumer files reach the codesign binary only through the engine; [`BuildToolingAudit`](../../Sources/SwiftMkCore/BuildToolingAudit.swift) fails the gate on a direct `codesign` invocation.
+[`Codesign`](../../Sources/SwiftMkCore/Codesign.swift) signs a built product, [`Notarize`](../../Sources/SwiftMkCore/Notarize.swift) submits it to Apple and staples the ticket, and [`SigningVerification`](../../Sources/SwiftMkCore/SigningVerification.swift) confirms the result. A consumer verifies a fixed list of paths, or points the engine at the directory its build drops products under; the engine then finds each runnable `.app`, strictly checks its signature so its embedded extensions and frameworks are covered too, and confirms the identity and team. Simulator products are ad-hoc by design and are skipped. Consumer files reach the codesign binary only through the engine; [`BuildToolingAudit`](../../Sources/SwiftMkCore/BuildToolingAudit.swift) fails the gate on a direct `codesign` invocation.
 
 ## The dead-code coverage build is the one carve-out
 

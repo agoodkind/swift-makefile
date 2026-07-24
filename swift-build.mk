@@ -38,6 +38,17 @@ SWIFT_MK_VERIFY_XCCONFIG_ARGS = $(if $(strip $(SWIFT_MK_VERIFY_XCCONFIG)),--xcco
 SWIFT_MK_VERIFY_SETTINGS_CMD = $(if $(and $(strip $(SWIFT_MK_VERIFY_WORKSPACE)),$(strip $(SWIFT_MK_VERIFY_SCHEME))),"$(SWIFT_MK_BIN)" verify-signing settings --workspace "$(SWIFT_MK_VERIFY_WORKSPACE)" --scheme "$(SWIFT_MK_VERIFY_SCHEME)" $(if $(strip $(SWIFT_MK_VERIFY_CONFIGURATION)),--configuration "$(SWIFT_MK_VERIFY_CONFIGURATION)") $(SWIFT_MK_VERIFY_XCCONFIG_ARGS) &&,)
 SWIFT_MK_VERIFY_ARTIFACTS_CMD = $(if $(strip $(SWIFT_MK_VERIFY_SIGNING_PATHS)),"$(SWIFT_MK_BIN)" verify-signing artifacts $(SWIFT_MK_VERIFY_SIGNING_PATHS) $(SWIFT_MK_VERIFY_XCCONFIG_ARGS),true)
 
+# Discover-and-verify every runnable product under a root, the counterpart to the
+# explicit SWIFT_MK_VERIFY_SIGNING_PATHS list. A consumer that builds several
+# products (an app plus platform variants) sets SWIFT_MK_VERIFY_SIGNING_ROOTS to the
+# directory the build drops them under, and swift-mk finds each top-level .app and
+# strictly verifies it, so the shippable products are checked as a whole with no
+# per-path hand-listing. Simulator products are ad-hoc by design and are skipped.
+# The --root flag parses up to the next option, so the roots come first and the
+# --xcconfig args follow; leading --xcconfig would swallow the roots.
+SWIFT_MK_VERIFY_SIGNING_ROOTS ?=
+SWIFT_MK_VERIFY_PRODUCTS_CMD = $(if $(strip $(SWIFT_MK_VERIFY_SIGNING_ROOTS)),"$(SWIFT_MK_BIN)" verify-signing products --root $(SWIFT_MK_VERIFY_SIGNING_ROOTS) $(SWIFT_MK_VERIFY_XCCONFIG_ARGS),true)
+
 # Post-build code signing for products the xcconfig override cannot reach. The
 # override only affects xcodebuild; a bare SwiftPM binary from `swift build` is
 # never signed by it. A consumer declares what to sign, and swift-mk signs it
@@ -137,11 +148,14 @@ verify: swift-mk-bin
 		fi; \
 		$(if $(strip $(SWIFT_GENERATE_CMD)),if ! { $(SWIFT_GENERATE_CMD); }; then echo "swift-build.mk: verify generate step failed" >&2; exit 1; fi;,) \
 		if ! { \
+			$(SWIFT_MK_SIGNING_PRELUDE) \
+			$(SWIFT_MK_VERIFY_SETTINGS_CMD) \
 			$(if $(strip $(SWIFT_GENERATE_CMD)),SWIFT_MK_GENERATED=1 )SWIFT_MK_SKIP_INLINE_GATES=1 \
 				SWIFT_BUILD_CMD="$$verify_build_cmd" \
 				"$(SWIFT_MK_BIN)" build \
 				$(SWIFT_MK_POST_BUILD_SIGN_CMD) \
-				&& $(SWIFT_MK_VERIFY_ARTIFACTS_CMD); \
+				&& $(SWIFT_MK_VERIFY_ARTIFACTS_CMD) \
+				&& $(SWIFT_MK_VERIFY_PRODUCTS_CMD); \
 		}; then exit 1; fi; \
 		$(if $(strip $(SWIFT_GENERATE_CMD)),SWIFT_MK_GENERATED=1 ) \
 			SWIFT_TEST_CMD="$$verify_test_cmd" \

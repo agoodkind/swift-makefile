@@ -14,17 +14,22 @@ import Foundation
 /// setting that beats the `XCODE_XCCONFIG_FILE` override is caught rather than
 /// assumed away.
 ///
-/// Two complementary checks, both comparing against `SigningBuildConfig`'s resolved
-/// inputs so the expectation is inferred, never restated:
+/// Three complementary checks, all comparing against `SigningBuildConfig`'s
+/// resolved inputs so the expectation is inferred, never restated:
 ///
 /// - `verifySettings` reads `xcodebuild -showBuildSettings` before a build and
 ///   fails when a target's effective signing does not match the override.
-/// - `verifyArtifacts` reads `codesign` on the produced bundles after a build and
-///   fails when an artifact is ad-hoc where a team was expected, or carries the
-///   wrong `TeamIdentifier`.
+/// - `verifyArtifacts` reads `codesign` on an explicit list of bundles after a
+///   build and fails when an artifact is ad-hoc where a team was expected, or
+///   carries the wrong `TeamIdentifier`.
+/// - `verifyProducts` discovers the runnable `.app` bundles under a product root
+///   and strictly verifies each, so the shippable products the build produced are
+///   checked as a whole without the consumer hand-listing every path. A strict
+///   codesign pass validates a bundle and its embedded code (extensions,
+///   frameworks), so verifying an `.app` verifies what actually runs.
 ///
-/// When neither an identity nor a team is set, both checks pass: an unsigned build
-/// is a valid configuration and swift-mk forces nothing.
+/// When neither an identity nor a team is set, every check passes: an unsigned
+/// build is a valid configuration and swift-mk forces nothing.
 public enum SigningVerification {
   static let adHocIdentity = "-"
 
@@ -169,8 +174,9 @@ public enum SigningVerification {
   // MARK: - Parsing
 
   /// The value of the first line beginning with `prefix`, or nil when absent or
-  /// when codesign reports the field as `not set`.
-  private static func firstValue(in output: String, prefix: String) -> String? {
+  /// when codesign reports the field as `not set`. Internal so the products
+  /// extension reads a codesign field with it.
+  static func firstValue(in output: String, prefix: String) -> String? {
     for raw in output.components(separatedBy: .newlines) {
       let line = raw.trimmingCharacters(in: .whitespaces)
       guard line.hasPrefix(prefix) else {

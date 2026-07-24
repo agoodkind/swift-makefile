@@ -95,3 +95,117 @@ func settingsMatchAdHocContextAcceptsDashAndRejectsRealIdentity() {
       expectedIdentity: "-",
       expectedTeam: ""))
 }
+
+// MARK: - Product discovery
+
+@Test
+func simulatorProductDetectedByConfigurationDirectorySuffix() {
+  #expect(
+    SigningVerification.isSimulatorProduct(
+      path: "Products/Debug-iphonesimulator/CellTunnelPhone.app"))
+  #expect(
+    SigningVerification.isSimulatorProduct(
+      path: "/abs/Products/Release-appletvsimulator/App.app"))
+  #expect(
+    SigningVerification.isSimulatorProduct(
+      path: "Products/Debug-watchsimulator/App.app"))
+}
+
+@Test
+func deviceMacAndCatalystProductsAreNotSimulator() {
+  #expect(
+    !SigningVerification.isSimulatorProduct(
+      path: "Products/Debug-iphoneos/CellTunnelPhone.app"))
+  #expect(
+    !SigningVerification.isSimulatorProduct(path: "Products/Debug/CellTunnelAgent.app"))
+  #expect(
+    !SigningVerification.isSimulatorProduct(
+      path: "Products/Debug-maccatalyst/CellTunnelPhone.app"))
+}
+
+@Test
+func simulatorDetectionIgnoresUnrelatedAncestorDirectories() {
+  // A device product whose ancestor directory merely ends in a simulator suffix
+  // is not a simulator product; only the app's enclosing configuration directory
+  // decides.
+  #expect(
+    !SigningVerification.isSimulatorProduct(
+      path: "/w/test-iphonesimulator/Products/Debug-iphoneos/CellTunnelPhone.app"))
+  #expect(
+    SigningVerification.isSimulatorProduct(
+      path: "/w/anything/Products/Debug-iphonesimulator/CellTunnelPhone.app"))
+}
+
+@Test
+func discoverAppBundlesFindsTopLevelAppsAcrossPlatformDirectories() throws {
+  try withTemporaryProductsTree { root, fileManager in
+    for relative in [
+      "Debug/CellTunnelAgent.app",
+      "Debug-iphoneos/CellTunnelPhone.app",
+      "Debug-iphonesimulator/CellTunnelPhone.app",
+      "Debug-maccatalyst/CellTunnelPhone.app",
+    ] {
+      try fileManager.createDirectory(
+        atPath: (root as NSString).appendingPathComponent(relative),
+        withIntermediateDirectories: true)
+    }
+
+    let discovered = SigningVerification.discoverAppBundles(under: [root])
+      .map { ($0 as NSString).lastPathComponent }
+    let expected = [
+      "CellTunnelAgent.app",
+      "CellTunnelPhone.app",
+      "CellTunnelPhone.app",
+      "CellTunnelPhone.app",
+    ]
+
+    #expect(discovered.sorted() == expected.sorted())
+    #expect(discovered.count == 4)
+  }
+}
+
+@Test
+func discoverAppBundlesDoesNotDescendIntoAnAppOrSkippedDirectories() throws {
+  try withTemporaryProductsTree { root, fileManager in
+    // A nested helper app inside an app must not be returned.
+    try fileManager.createDirectory(
+      atPath: (root as NSString).appendingPathComponent(
+        "Debug/CellTunnelAgent.app/Contents/PlugIns/Helper.app"),
+      withIntermediateDirectories: true)
+    // An app under a build-output directory must be skipped.
+    try fileManager.createDirectory(
+      atPath: (root as NSString).appendingPathComponent(
+        "Intermediates.noindex/Stale.app"),
+      withIntermediateDirectories: true)
+
+    let discovered = SigningVerification.discoverAppBundles(under: [root])
+      .map { ($0 as NSString).lastPathComponent }
+
+    #expect(discovered == ["CellTunnelAgent.app"])
+  }
+}
+
+@Test
+func discoverProductsReportsMissingRootAsUnreadable() {
+  let missing = "/nonexistent-\(UUID().uuidString)/Products"
+  let result = SigningVerification.discoverProducts(under: [missing])
+  #expect(result.apps.isEmpty)
+  #expect(result.unreadable == [missing])
+}
+
+private func withTemporaryProductsTree(
+  _ body: (_ root: String, _ fileManager: FileManager) throws -> Void
+) throws {
+  let fileManager = FileManager.default
+  let root = fileManager.temporaryDirectory
+    .appendingPathComponent("swift-mk-products-\(UUID().uuidString)", isDirectory: true).path
+  try fileManager.createDirectory(atPath: root, withIntermediateDirectories: true)
+  defer {
+    do {
+      try fileManager.removeItem(atPath: root)
+    } catch {
+      Output.warning("cleanup failed: \(error.localizedDescription)")
+    }
+  }
+  try body(root, fileManager)
+}
