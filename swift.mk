@@ -1,4 +1,4 @@
-.PHONY: build deploy install clean help run generate lint lint-tools lint-swiftlint \
+.PHONY: build verify deploy install clean help run generate lint lint-tools lint-swiftlint \
 	lint-swiftlint-baseline lint-swiftlint-baseline-prune-fixed lint-swiftlint-baseline-remove-fixed lint-swiftlint-baseline-accept-new \
 	lint-files lint-diff lint-format lint-complexity lint-complexity-baseline lint-complexity-baseline-prune-fixed lint-complexity-baseline-remove-fixed lint-complexity-baseline-accept-new fmt test analyze audit build-check check \
 	lint-deadcode lint-deadcode-baseline lint-deadcode-baseline-prune-fixed lint-deadcode-baseline-remove-fixed lint-deadcode-baseline-accept-new \
@@ -10,6 +10,9 @@
 help::
 	@printf '%s\n' 'Canonical entry points:'
 	@printf '  %-40s %s\n' 'build' 'run build-check, then execute SWIFT_BUILD_CMD'
+	@printf '  %-40s %s\n' 'verify' 'run the verify build and test (default the normal build and test), then the source quality gates'
+	@printf '  %-40s %s\n' 'SWIFT_VERIFY_BUILD_CMD=...' 'override the verify build command; default SWIFT_BUILD_CMD'
+	@printf '  %-40s %s\n' 'SWIFT_VERIFY_TEST_CMD=...' 'override the verify test command; default SWIFT_TEST_CMD'
 	@printf '  %-40s %s\n' 'build FORCE=1' 'force a full build, skipping the freshness no-op'
 	@printf '  %-40s %s\n' 'build SWIFT_MK_BUILD_FRESH=0' 'disable the freshness no-op for this run'
 	@printf '  %-40s %s\n' 'run' 'run build, then execute SWIFT_RUN_CMD'
@@ -484,6 +487,8 @@ endif
 
 SWIFT_BUILD_CMD ?= "$(SWIFT_MK_BIN)" toolchain swiftpm build
 SWIFT_TEST_CMD ?= "$(SWIFT_MK_BIN)" toolchain swiftpm test
+SWIFT_VERIFY_BUILD_CMD ?=
+SWIFT_VERIFY_TEST_CMD ?=
 SWIFT_RUN_CMD ?=
 SWIFT_GENERATE_CMD ?=
 SWIFT_DEPLOY_CMD ?=
@@ -579,6 +584,8 @@ export BYPASS_CONFIRM
 export BYPASS_TOKEN_CMD
 export SWIFT_MK_GATE_TOKEN_CMD
 export SWIFT_BUILD_CMD
+export SWIFT_VERIFY_BUILD_CMD
+export SWIFT_VERIFY_TEST_CMD
 # Signing context the swift-mk binary reads when it owns a build (the signing
 # xcconfig, the dead-code coverage build). Consumers set these as plain make
 # variables, so without the export the gate processes never see them and a CI

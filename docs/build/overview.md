@@ -20,6 +20,12 @@ Each chokepoint applies the shared compile-cache flags, so a consumer sets nothi
 
 `make build` does no work when the tracked inputs and the built product are unchanged since the last successful build, so a repeated `make build` or `make run` returns at once. [freshness](freshness.md) owns the record, the source digest, and the make guard that ships the no-op to every consumer.
 
+## Verification
+
+`make verify` runs `SWIFT_VERIFY_BUILD_CMD` and `SWIFT_VERIFY_TEST_CMD` when configured, and falls back to the consumer's normal `SWIFT_BUILD_CMD` and `SWIFT_TEST_CMD` when either verify command is empty. It generates the project before building, runs the build through `swift-mk build`, runs the source-quality lint chain without dead-code analysis, and audits dependency lockfiles for known vulnerabilities.
+
+This repository configures each package's verify commands to build the product and test targets together in one release `swift build --build-tests`, then run `swift test --skip-build` against that build tree. The build keeps the gate proof and per-worktree lock while avoiding a second compile.
+
 ## Consumer contract
 
 A consumer routes build, test, and generate work through the `swift-mk` toolchain surface. The default SwiftPM commands call `swift-mk toolchain swiftpm build` and `swift-mk toolchain swiftpm test`; Xcode consumers set their normal project inputs and receive `swift-mk toolchain build`, `test`, `generate`, and `install` commands from `swift.mk`. The command a consumer provides is still its project build, but the engine owns the compiler boundary.

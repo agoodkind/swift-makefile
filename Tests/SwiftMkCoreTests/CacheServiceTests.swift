@@ -63,3 +63,16 @@ func customDerivedDataOutsideBoundaryIsNotCleanable() {
   // The workspace root itself (no subpath) is not a cleanable DerivedData root.
   #expect(CacheService.boundedDerivedDataRoot("/ws", home: "/h", cwd: "/ws") == nil)
 }
+
+@Test
+func verifyGateOwnsTheCompileCache() {
+  // verify compiles the product and test targets once and runs the source-only lints
+  // against that build, so it owns and saves the rolling compile cache the same as
+  // build. A non-compiling lint gate must not, or it would overwrite a compiling
+  // sibling's pile with a partial one.
+  #expect(CacheService.isCompileWriterGate("verify"))
+  #expect(CacheService.isCompileWriterGate("build"))
+  #expect(CacheService.isCompileWriterGate("test"))
+  #expect(!CacheService.isCompileWriterGate("lint-format"))
+  #expect(!CacheService.isCompileWriterGate("quality"))
+}
