@@ -126,44 +126,16 @@ public enum Shell {
     // deadlocks when the child fills the unread pipe before it closes the one
     // being read: the child blocks in write() while this process blocks in
     // read(). Reading both as bytes arrive keeps either stream from blocking.
-    let group = DispatchGroup()
-    let outBuffer = drainAsync(outPipe.fileHandleForReading, into: group)
-    let errBuffer = drainAsync(errPipe.fileHandleForReading, into: group)
-    group.wait()
-    process.waitUntilExit()
+    // Capture-only drains have no sink, so completion is pure end of file, bounded
+    // by the child's exit plus the grace in `waitForDirectProcess`.
+    let outDrain = ForwardingDrain(handle: outPipe.fileHandleForReading, capturing: true)
+    let errDrain = ForwardingDrain(handle: errPipe.fileHandleForReading, capturing: true)
+    let status = waitForDirectProcess(process, drains: [outDrain, errDrain])
     return Result(
-      status: process.terminationStatus,
-      stdout: Output.decodeCapturedUTF8(outBuffer.snapshot()),
-      stderr: Output.decodeCapturedUTF8(errBuffer.snapshot())
+      status: status,
+      stdout: Output.decodeCapturedUTF8(outDrain.snapshot()),
+      stderr: Output.decodeCapturedUTF8(errDrain.snapshot())
     )
-  }
-
-  /// Accumulate a file handle's bytes off the calling thread until the stream
-  /// closes, holding `group` until EOF so the buffer is complete once
-  /// `group.wait()` returns. Reading both of a process's streams this way keeps a
-  /// child that floods one pipe from blocking against a serial reader of the other.
-  private static func drainAsync(_ handle: FileHandle, into group: DispatchGroup) -> LockedData {
-    drainAsync(handle, into: group, onChunk: nil)
-  }
-
-  private static func drainAsync(
-    _ handle: FileHandle,
-    into group: DispatchGroup,
-    onChunk: (@Sendable (Data) -> Void)?
-  ) -> LockedData {
-    let buffer = LockedData()
-    group.enter()
-    handle.readabilityHandler = { source in
-      let chunk = source.availableData
-      if chunk.isEmpty {
-        source.readabilityHandler = nil
-        group.leave()
-      } else {
-        buffer.append(chunk)
-        onChunk?(chunk)
-      }
-    }
-    return buffer
   }
 
   /// Run a program, capturing stdout in full while forwarding stderr live.
@@ -195,10 +167,14 @@ public enum Shell {
     }
 
     let group = DispatchGroup()
-    let outBuffer = drainAsync(spawned.standardOutput.fileHandleForReading, into: group)
-    _ = drainAsync(spawned.standardError.fileHandleForReading, into: group) { chunk in
-      FileHandle.standardError.write(chunk)
-    }
+    let outDrain = ForwardingDrain(
+      handle: spawned.standardOutput.fileHandleForReading,
+      capturing: true,
+      sharedGroup: group)
+    let errDrain = ForwardingDrain(
+      handle: spawned.standardError.fileHandleForReading,
+      onChunk: { chunk in FileHandle.standardError.write(chunk) },
+      sharedGroup: group)
     var timedOut = false
     let status: Int32
     if timeoutSeconds > 0 {
@@ -213,12 +189,20 @@ public enum Shell {
       status = outcome.status
       timedOut = outcome.timedOut
     } else {
-      group.wait()
+      // No-timeout contract: run until the child exits. Reap first (bounded by the child
+      // terminating), then bound the post-exit drain flush so a descendant holding the pipe
+      // or a stalled forwarder cannot hang the caller.
       status = reapProcessBlocking(spawned.processIdentifier)
+      _ = group.wait(timeout: .now() + .milliseconds(forwardingDrainGraceMilliseconds))
     }
+    // Fence both drains before returning, so no queued forwarder write reaches the live
+    // standard-error handle after this call returns. Idempotent, and a no-op on the clean
+    // path where the drains already completed.
+    outDrain.detach()
+    errDrain.detach()
     return StreamingResult(
       status: status,
-      stdout: Output.decodeCapturedUTF8(outBuffer.snapshot()),
+      stdout: Output.decodeCapturedUTF8(outDrain.snapshot()),
       timedOut: timedOut
     )
   }
@@ -388,29 +372,6 @@ public enum Shell {
   }
 }
 
-// MARK: - LockedData
-
-/// A growable byte buffer one `readabilityHandler` appends to off the calling
-/// thread while `Shell.run` reads it back after the stream closes. A reference
-/// type so the handler and the caller share one buffer; an `NSLock` guards every
-/// access, which is why the unchecked `Sendable` conformance is sound.
-private final class LockedData: @unchecked Sendable {
-  private let lock = NSLock()
-  private var data = Data()
-
-  func append(_ chunk: Data) {
-    lock.lock()
-    defer { lock.unlock() }
-    data.append(chunk)
-  }
-
-  func snapshot() -> Data {
-    lock.lock()
-    defer { lock.unlock() }
-    return data
-  }
-}
-
 // MARK: - Shell Forwarding Streaming
 
 extension Shell {
@@ -472,26 +433,39 @@ extension Shell {
     }
 
     // Drain both pipes concurrently, forwarding each chunk to its matching stream
-    // while retaining the bytes for diagnosis after the process exits.
+    // while retaining the bytes for diagnosis after the process exits. The reader
+    // captures and hands off to a forwarder queue, so a slow forwarding sink cannot
+    // stall the reader or the completion signal.
     let group = DispatchGroup()
-    let outBuffer = drainAsync(spawned.standardOutput.fileHandleForReading, into: group) { chunk in
-      forwardingStandardOutput.write(chunk)
-    }
-    let errBuffer = drainAsync(spawned.standardError.fileHandleForReading, into: group) { chunk in
-      forwardingStandardError.write(chunk)
-    }
+    let outDrain = ForwardingDrain(
+      handle: spawned.standardOutput.fileHandleForReading,
+      capturing: true,
+      onChunk: { chunk in forwardingStandardOutput.write(chunk) },
+      sharedGroup: group)
+    let errDrain = ForwardingDrain(
+      handle: spawned.standardError.fileHandleForReading,
+      capturing: true,
+      onChunk: { chunk in forwardingStandardError.write(chunk) },
+      sharedGroup: group)
     let outcome: (status: Int32, timedOut: Bool)
     if timeoutSeconds > 0 {
       outcome = reapOrTerminate(
         spawned, drainGroup: group, deadline: .now() + timeoutSeconds)
     } else {
-      group.wait()
-      outcome = (reapProcessBlocking(spawned.processIdentifier), false)
+      // No-timeout contract: stream until the child exits. Reap first (bounded by the child
+      // terminating), then bound the post-exit drain flush.
+      let status = reapProcessBlocking(spawned.processIdentifier)
+      _ = group.wait(timeout: .now() + .milliseconds(forwardingDrainGraceMilliseconds))
+      outcome = (status, false)
     }
+    // Fence both drains before returning, so no queued forwarder write reaches the
+    // caller-owned forwarding handles after this call returns.
+    outDrain.detach()
+    errDrain.detach()
     return ForwardingStreamingResult(
       status: outcome.status,
-      stdout: Output.decodeCapturedUTF8(outBuffer.snapshot()),
-      stderr: Output.decodeCapturedUTF8(errBuffer.snapshot()),
+      stdout: Output.decodeCapturedUTF8(outDrain.snapshot()),
+      stderr: Output.decodeCapturedUTF8(errDrain.snapshot()),
       timedOut: outcome.timedOut
     )
   }

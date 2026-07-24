@@ -108,6 +108,9 @@ public enum Output {
     return decode(data, UTF8.self)
   }
 
+  // Forwarding writes synchronously to standard output or standard error, so it can
+  // block under downstream backpressure. `ForwardingDrain` calls these on its forwarder
+  // queue, off the pipe reader, so a blocked write stalls only that queue.
   static func forwardStandardOutput(_ data: Data) {
     forward(data, to: .standardOutput)
   }
