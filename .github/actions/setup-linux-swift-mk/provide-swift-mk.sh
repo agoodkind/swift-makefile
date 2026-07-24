@@ -33,13 +33,26 @@ readonly CONNECT_TIMEOUT_SECONDS=15
 readonly BINARY_MAX_SECONDS=300
 readonly CHECKSUM_MAX_SECONDS=60
 
+readonly BUILD_SCRATCH_NAME="swift-mk-build"
+
 announce_binary() {
     printf 'SWIFT_MK_BIN=%s\n' "${BINARY_PATH}" >> "${GITHUB_ENV}"
 }
 
+# Clear the toolchain directory before a fetch or build, but keep the swift-mk-build
+# scratch. swift-mk-build.sh passes that directory as `swift build --scratch-path`, so
+# preserving it lets a restore-keys cache restore recompile incrementally instead of
+# cold. A stale binary or leftover download is still removed, and SwiftPM validates its
+# own build database, so a reused scratch cannot produce a wrong binary.
+clean_toolchain_keep_scratch() {
+    mkdir -p "${TOOLCHAIN_DIR}"
+    find "${TOOLCHAIN_DIR}" -mindepth 1 -maxdepth 1 \
+        ! -name "${BUILD_SCRATCH_NAME}" -exec rm -rf {} +
+}
+
 build_from_source() {
     echo "setup-linux-swift-mk: building swift-mk from source"
-    rm -rf "${TOOLCHAIN_DIR}"
+    clean_toolchain_keep_scratch
     SWIFT_MK_BIN="${BINARY_PATH}" SWIFT_MK_BUILD_REPO="${repo_root}" \
         bash "${repo_root}/scripts/swift-mk-build.sh" resolve
     echo "setup-linux-swift-mk: built ${BINARY_PATH}"
@@ -60,8 +73,7 @@ if [[ "${cache_hit}" == "true" ]]; then
     echo "setup-linux-swift-mk: cache reported a hit but ${BINARY_PATH} is missing; re-fetching" >&2
 fi
 echo "setup-linux-swift-mk: cache miss"
-rm -rf "${TOOLCHAIN_DIR}"
-mkdir -p "${TOOLCHAIN_DIR}"
+clean_toolchain_keep_scratch
 
 # 2. Download the published binary. curl is absent in the Swift container, so install it; an apt
 # failure fails the step.
