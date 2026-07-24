@@ -148,11 +148,6 @@ final class ForwardingDrain: @unchecked Sendable {
     finished.wait(timeout: deadline) == .success
   }
 
-  /// Legacy name kept for callers that stop a drain; identical to `detach()`.
-  func stop() {
-    detach()
-  }
-
   /// Stop the reader and fence the forwarder: the reader appends nothing further and exits
   /// within one poll interval, the queued chunks are freed, and the forwarder dequeues
   /// nothing further after this returns. At most the one chunk the forwarder already
@@ -181,7 +176,11 @@ final class ForwardingDrain: @unchecked Sendable {
     // no-op. If the join times out, the reader may still be using the descriptor, so leave
     // the close to the owning pipe rather than race the reader.
     if joined {
-      try? handle.close()
+      do {
+        try handle.close()
+      } catch {
+        Output.error("Shell: closing drained read handle failed: \(error)")
+      }
     }
     stateLock.lock()
     readerDone = true
