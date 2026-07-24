@@ -136,8 +136,12 @@ final class ForwardingDrain: @unchecked Sendable {
     }
     finished.enter()
     sharedGroup?.enter()
-    let reader = Thread { [weak self] in
-      self?.readLoop()
+    // Capture self strongly: the reader owns the drain until it exits, so the group
+    // enter() above always has a matching leave() in finishReader(), even if the caller
+    // drops its reference before the thread body starts. The drain does not retain the
+    // thread, so this is not a cycle.
+    let reader = Thread {
+      self.readLoop()
     }
     reader.name = "swift-mk.forwarding-drain.reader"
     reader.stackSize = Self.readerThreadStackSize
