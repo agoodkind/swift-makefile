@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import SwiftMkPipe
 
 #if canImport(Darwin)
   import Darwin
@@ -108,6 +109,19 @@ public final class ProcessCommandRunner: CommandRunner {
   private static let waitTimeout: TimeInterval = 300
   private static let terminateGrace: TimeInterval = 5
   private static let timeoutStatus: Int32 = 124
+  // Time to wait for the drains to flush after the child exits before fencing them. A
+  // descendant may keep an inherited write end open, so the reader may never see end of
+  // file; the wait is bounded and detach then makes the drain inert. This path captures a
+  // tool's full output for later parsing (a codesign identity, a version string) and is not
+  // latency sensitive, so the grace is generous: once the child exits the reader reaches end
+  // of file within a poll interval, and the larger bound only delays the return in the rare
+  // case a descendant holds the pipe, where the bytes already read are still returned.
+  private static let drainGraceMilliseconds = 2_000
+  // Log sink handed to each drain so a read-handle close failure surfaces through update
+  // diagnostics. The drain writes nowhere itself.
+  private static let drainCloseErrorLog: @Sendable (String) -> Void = { message in
+    UpdateDiagnostics.debug("update drain: \(message)")
+  }
   // The verifier resolves its own tools rather than inheriting PATH, so a
   // manipulated PATH cannot substitute a lookalike codesign/hdiutil/xcrun and
   // bypass the signature checks. Bare tool names resolve under /usr/bin (where
@@ -137,11 +151,20 @@ public final class ProcessCommandRunner: CommandRunner {
     let stderr = Pipe()
     process.standardOutput = stdout
     process.standardError = stderr
+    // Drain both pipes on dedicated reader threads so a saturated dispatch pool cannot
+    // starve a reader and truncate a capture. The shared group leaves once both readers
+    // reach end of file.
     let group = DispatchGroup()
-    let stdoutData = LockedData()
-    let stderrData = LockedData()
-    drain(stdout.fileHandleForReading, into: stdoutData, group: group)
-    drain(stderr.fileHandleForReading, into: stderrData, group: group)
+    let stdoutDrain = ForwardingDrain(
+      handle: stdout.fileHandleForReading,
+      capturing: true,
+      sharedGroup: group,
+      onCloseError: Self.drainCloseErrorLog)
+    let stderrDrain = ForwardingDrain(
+      handle: stderr.fileHandleForReading,
+      capturing: true,
+      sharedGroup: group,
+      onCloseError: Self.drainCloseErrorLog)
     // Set the termination handler before run() so a fast-exiting process cannot
     // signal before the handler is installed.
     let exited = DispatchSemaphore(value: 0)
@@ -149,8 +172,9 @@ public final class ProcessCommandRunner: CommandRunner {
     do {
       try process.run()
     } catch {
-      stdout.fileHandleForReading.readabilityHandler = nil
-      stderr.fileHandleForReading.readabilityHandler = nil
+      // Fence both drains so their reader threads stop before this returns.
+      stdoutDrain.detach()
+      stderrDrain.detach()
       return CommandOutput(
         status: Self.launchFailureStatus,
         stdout: "",
@@ -159,20 +183,32 @@ public final class ProcessCommandRunner: CommandRunner {
     }
     if exited.wait(timeout: .now() + Self.waitTimeout) == .timedOut {
       terminate(process, exited: exited)
-      group.wait()
+      // Bound the post-exit drain flush, then fence, so a descendant holding the pipe open
+      // cannot hang this caller.
+      _ = group.wait(timeout: .now() + .milliseconds(Self.drainGraceMilliseconds))
+      stdoutDrain.detach()
+      stderrDrain.detach()
       return CommandOutput(
         status: Self.timeoutStatus,
-        stdout: String(data: stdoutData.snapshot(), encoding: .utf8) ?? "",
+        stdout: Self.decodeUTF8(stdoutDrain.snapshot()),
         stderr: "timeout after \(Self.waitTimeout)s: \(tool)\n"
-          + (String(data: stderrData.snapshot(), encoding: .utf8) ?? "")
+          + Self.decodeUTF8(stderrDrain.snapshot())
       )
     }
-    group.wait()
+    // The child exited, so both write ends closed; wait for the readers to reach end of
+    // file within the grace, then fence to join the reader threads before reading.
+    _ = group.wait(timeout: .now() + .milliseconds(Self.drainGraceMilliseconds))
+    stdoutDrain.detach()
+    stderrDrain.detach()
     return CommandOutput(
       status: process.terminationStatus,
-      stdout: String(data: stdoutData.snapshot(), encoding: .utf8) ?? "",
-      stderr: String(data: stderrData.snapshot(), encoding: .utf8) ?? ""
+      stdout: Self.decodeUTF8(stdoutDrain.snapshot()),
+      stderr: Self.decodeUTF8(stderrDrain.snapshot())
     )
+  }
+
+  private static func decodeUTF8(_ data: Data) -> String {
+    String(data: data, encoding: .utf8) ?? ""
   }
 
   /// Terminate a hung process: SIGTERM first, then SIGKILL if it does not exit
@@ -182,19 +218,6 @@ public final class ProcessCommandRunner: CommandRunner {
     if exited.wait(timeout: .now() + Self.terminateGrace) == .timedOut {
       kill(process.processIdentifier, SIGKILL)
       exited.wait()
-    }
-  }
-
-  private func drain(_ handle: FileHandle, into buffer: LockedData, group: DispatchGroup) {
-    group.enter()
-    handle.readabilityHandler = { source in
-      let chunk = source.availableData
-      if chunk.isEmpty {
-        source.readabilityHandler = nil
-        group.leave()
-      } else {
-        buffer.append(chunk)
-      }
     }
   }
 }
@@ -311,25 +334,5 @@ private final class HTTPResponseBox: @unchecked Sendable {
       throw UpdateError.http("no HTTP response was recorded")
     }
     return try result.get()
-  }
-}
-
-// MARK: - LockedData
-
-private final class LockedData: @unchecked Sendable {
-  private let lock = NSLock()
-  private var data = Data()
-
-  func append(_ chunk: Data) {
-    lock.lock()
-    data.append(chunk)
-    lock.unlock()
-  }
-
-  func snapshot() -> Data {
-    lock.lock()
-    let value = data
-    lock.unlock()
-    return value
   }
 }

@@ -21,6 +21,7 @@ let package = Package(
     .executable(name: "swift-mk", targets: ["SwiftMkCLI"]),
     .executable(name: "swift-mk-maint", targets: ["SwiftMkMaint"]),
     .library(name: "SwiftMkCore", targets: ["SwiftMkCore"]),
+    .library(name: "SwiftMkPipe", targets: ["SwiftMkPipe"]),
     .library(name: "SwiftMkRenderCore", targets: ["SwiftMkRenderCore"]),
     .library(name: "SwiftMkUpdate", targets: ["SwiftMkUpdate"]),
   ],
@@ -45,6 +46,9 @@ let package = Package(
     .target(
       name: "SwiftMkRenderCore"
     ),
+    .target(
+      name: "SwiftMkPipe"
+    ),
     .executableTarget(
       name: "SwiftMkRenderCLI",
       dependencies: ["SwiftMkRenderCore"]
@@ -54,7 +58,8 @@ let package = Package(
       dependencies: ["SwiftMkRenderCore"]
     ),
     .target(
-      name: "SwiftMkUpdate"
+      name: "SwiftMkUpdate",
+      dependencies: ["SwiftMkPipe"]
     ),
     .target(
       name: "SwiftMkMaintCore",
@@ -67,6 +72,7 @@ let package = Package(
       name: "SwiftMkCore",
       dependencies: [
         "SwiftMkRenderCore",
+        "SwiftMkPipe",
         .product(name: "OpenTelemetryApi", package: "opentelemetry-swift-core"),
         .product(name: "OpenTelemetrySdk", package: "opentelemetry-swift-core"),
         .product(name: "OpenTelemetryProtocolExporter", package: "opentelemetry-swift"),
@@ -104,8 +110,12 @@ let package = Package(
     ),
     .testTarget(
       name: "SwiftMkCoreTests",
-      dependencies: ["SwiftMkCore"],
+      dependencies: ["SwiftMkCore", "SwiftMkPipe"],
       exclude: ["Fixtures"]
+    ),
+    .testTarget(
+      name: "SwiftMkPipeTests",
+      dependencies: ["SwiftMkPipe"]
     ),
     .testTarget(
       name: "SwiftMkUpdateTests",

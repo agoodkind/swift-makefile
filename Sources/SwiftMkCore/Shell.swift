@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import SwiftMkPipe
 
 #if canImport(Darwin)
   import Darwin
@@ -22,6 +23,13 @@ public enum Shell {
   /// convention for "command not found". Internal so the process-group spawn in
   /// `Shell+ProcessGroup.swift` reports the same launch-failure status.
   static let launchFailureStatus: Int32 = 127
+
+  /// Log sink handed to every drain so a read-handle close failure surfaces through the
+  /// same channel as the rest of Shell. The drain writes nowhere itself, so Shell owns
+  /// the wording.
+  static let drainCloseErrorLog: @Sendable (String) -> Void = { message in
+    Output.error("Shell: \(message)")
+  }
 
   /// Number of launch attempts before a spawn failure is treated as terminal.
   private static let maxLaunchAttempts = 5
@@ -128,8 +136,10 @@ public enum Shell {
     // read(). Reading both as bytes arrive keeps either stream from blocking.
     // Capture-only drains have no sink, so completion is pure end of file, bounded
     // by the child's exit plus the grace in `waitForDirectProcess`.
-    let outDrain = ForwardingDrain(handle: outPipe.fileHandleForReading, capturing: true)
-    let errDrain = ForwardingDrain(handle: errPipe.fileHandleForReading, capturing: true)
+    let outDrain = ForwardingDrain(
+      handle: outPipe.fileHandleForReading, capturing: true, onCloseError: drainCloseErrorLog)
+    let errDrain = ForwardingDrain(
+      handle: errPipe.fileHandleForReading, capturing: true, onCloseError: drainCloseErrorLog)
     let status = waitForDirectProcess(process, drains: [outDrain, errDrain])
     return Result(
       status: status,
@@ -170,11 +180,13 @@ public enum Shell {
     let outDrain = ForwardingDrain(
       handle: spawned.standardOutput.fileHandleForReading,
       capturing: true,
-      sharedGroup: group)
+      sharedGroup: group,
+      onCloseError: drainCloseErrorLog)
     let errDrain = ForwardingDrain(
       handle: spawned.standardError.fileHandleForReading,
       onChunk: { chunk in FileHandle.standardError.write(chunk) },
-      sharedGroup: group)
+      sharedGroup: group,
+      onCloseError: drainCloseErrorLog)
     var timedOut = false
     let status: Int32
     if timeoutSeconds > 0 {
@@ -246,12 +258,14 @@ public enum Shell {
       Output.forwardStandardError(Data("\(message)\n".utf8))
       return launchFailureStatus
     }
-    let outDrain = ForwardingDrain(handle: outPipe.fileHandleForReading) { chunk in
-      Output.forwardStandardOutput(chunk)
-    }
-    let errDrain = ForwardingDrain(handle: errPipe.fileHandleForReading) { chunk in
-      Output.forwardStandardError(chunk)
-    }
+    let outDrain = ForwardingDrain(
+      handle: outPipe.fileHandleForReading,
+      onChunk: { chunk in Output.forwardStandardOutput(chunk) },
+      onCloseError: drainCloseErrorLog)
+    let errDrain = ForwardingDrain(
+      handle: errPipe.fileHandleForReading,
+      onChunk: { chunk in Output.forwardStandardError(chunk) },
+      onCloseError: drainCloseErrorLog)
     return waitForDirectProcess(process, drains: [outDrain, errDrain])
   }
 
@@ -299,16 +313,14 @@ public enum Shell {
     // pipe-buffer-deadlock reason documented on `run`.
     let outDrain = ForwardingDrain(
       handle: outPipe.fileHandleForReading,
-      capturing: true
-    ) { chunk in
-      Output.forwardStandardOutput(chunk)
-    }
+      capturing: true,
+      onChunk: { chunk in Output.forwardStandardOutput(chunk) },
+      onCloseError: drainCloseErrorLog)
     let errDrain = ForwardingDrain(
       handle: errPipe.fileHandleForReading,
-      capturing: true
-    ) { chunk in
-      Output.forwardStandardError(chunk)
-    }
+      capturing: true,
+      onChunk: { chunk in Output.forwardStandardError(chunk) },
+      onCloseError: drainCloseErrorLog)
     let status = waitForDirectProcess(process, drains: [outDrain, errDrain])
     return Result(
       status: status,
@@ -441,12 +453,14 @@ extension Shell {
       handle: spawned.standardOutput.fileHandleForReading,
       capturing: true,
       onChunk: { chunk in forwardingStandardOutput.write(chunk) },
-      sharedGroup: group)
+      sharedGroup: group,
+      onCloseError: drainCloseErrorLog)
     let errDrain = ForwardingDrain(
       handle: spawned.standardError.fileHandleForReading,
       capturing: true,
       onChunk: { chunk in forwardingStandardError.write(chunk) },
-      sharedGroup: group)
+      sharedGroup: group,
+      onCloseError: drainCloseErrorLog)
     let outcome: (status: Int32, timedOut: Bool)
     if timeoutSeconds > 0 {
       outcome = reapOrTerminate(
