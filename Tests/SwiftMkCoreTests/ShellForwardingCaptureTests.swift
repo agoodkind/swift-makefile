@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import SwiftMkPipe
 import Testing
 
 @testable import SwiftMkCore

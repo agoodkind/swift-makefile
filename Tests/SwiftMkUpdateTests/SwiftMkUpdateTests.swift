@@ -138,6 +138,46 @@ enum SwiftMkUpdateTests {
   }
 
   @Test
+  static func processCommandRunnerCapturesStreamsAndStatus() {
+    let runner = ProcessCommandRunner()
+
+    let output = runner.run(
+      "/bin/sh", ["-c", "printf 'out-bytes'; printf 'err-bytes' 1>&2; exit 3"])
+
+    #expect(output.status == 3)
+    #expect(output.stdout == "out-bytes")
+    #expect(output.stderr == "err-bytes")
+  }
+
+  @Test
+  static func processCommandRunnerCapturesLargeStdoutWithoutTruncation() {
+    // Larger than one pipe buffer (about 64 KiB on macOS), so the capture spans several
+    // reader wakeups and would show truncation if the reader dropped bytes.
+    let expectedByteCount = 204_800
+    let runner = ProcessCommandRunner()
+
+    let output = runner.run(
+      "/bin/sh",
+      ["-c", "head -c \(expectedByteCount) /dev/zero | tr '\\0' 'A'"])
+
+    #expect(output.status == 0)
+    #expect(output.stdout.utf8.count == expectedByteCount)
+    #expect(output.stdout.allSatisfy { $0 == "A" })
+    #expect(output.stderr.isEmpty)
+  }
+
+  @Test
+  static func processCommandRunnerReturnsLaunchFailureForMissingTool() {
+    let runner = ProcessCommandRunner()
+
+    let output = runner.run("/nonexistent/tool-does-not-exist", [])
+
+    #expect(output.status == 127)
+    #expect(output.stdout.isEmpty)
+    #expect(output.stderr.contains("launch"))
+  }
+
+  @Test
   static func applyStagesVerifiesAndSwapsCandidate() throws {
     try withPreparedUpdate { setup in
       let updater = Updater(options: setup.options)

@@ -111,14 +111,6 @@ extension SigningVerification {
     return true
   }
 
-  /// Every top-level `.app` bundle under the roots, sorted and de-duplicated. The
-  /// walk records an `.app` without descending into it, so a nested helper `.app`
-  /// inside another app is not returned, and skips build-output directories that
-  /// hold no shippable product.
-  static func discoverAppBundles(under roots: [String]) -> [String] {
-    discoverProducts(under: roots).apps
-  }
-
   /// The runnable `.app` bundles under the roots plus every directory that could not
   /// be read. The apps are the top-level bundles the walk records without descending
   /// into them; the unreadable list lets the caller fail rather than silently miss

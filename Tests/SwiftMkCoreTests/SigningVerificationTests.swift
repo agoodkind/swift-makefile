@@ -150,7 +150,7 @@ func discoverAppBundlesFindsTopLevelAppsAcrossPlatformDirectories() throws {
         withIntermediateDirectories: true)
     }
 
-    let discovered = SigningVerification.discoverAppBundles(under: [root])
+    let discovered = SigningVerification.discoverProducts(under: [root]).apps
       .map { ($0 as NSString).lastPathComponent }
     let expected = [
       "CellTunnelAgent.app",
@@ -178,7 +178,7 @@ func discoverAppBundlesDoesNotDescendIntoAnAppOrSkippedDirectories() throws {
         "Intermediates.noindex/Stale.app"),
       withIntermediateDirectories: true)
 
-    let discovered = SigningVerification.discoverAppBundles(under: [root])
+    let discovered = SigningVerification.discoverProducts(under: [root]).apps
       .map { ($0 as NSString).lastPathComponent }
 
     #expect(discovered == ["CellTunnelAgent.app"])
