@@ -70,13 +70,24 @@ enum DeadcodeCoverageCompleteness {
   /// hard-gate source set, minus the project manifests (which are not dead-code
   /// scanned), resolved to absolute symlink-resolved paths so they compare against the
   /// indexed and package sets. Reuses `LintSourceSet`, so a consumer cannot narrow it.
+  ///
+  /// Discovery is rooted at the process working directory, the package this build
+  /// actually compiles, not at `SWIFT_MK_ROOT`. A recursive self-build of a nested
+  /// package, such as swift-mk gating its own `swiftcheck`, pins `SWIFT_MK_ROOT` to the
+  /// parent repo for shared logging while building the nested package in the process
+  /// working directory. Rooting discovery there keeps the owned set to the sources this
+  /// build compiles, so it matches the package the scan describes rather than reading the
+  /// parent's sources as unscanned. The compile runs in the same working directory, so
+  /// the owned set and the compiled package cannot diverge, and the check stays
+  /// unbypassable. In a normal build the two roots are the same, so nothing changes.
   static func ownedSwiftFiles(context: PathContext) -> Set<String> {
+    let buildRoot = PathContext(pwd: context.pwd, cwd: context.pwd)
     var files: Set<String> = []
-    for path in LintSourceSet.resolve(context: context) where path.hasSuffix(".swift") {
+    for path in LintSourceSet.resolve(context: buildRoot) where path.hasSuffix(".swift") {
       if isManifestOrConfig(path) {
         continue
       }
-      let onDisk = absolute(path, in: context)
+      let onDisk = absolute(path, in: buildRoot)
       // A `#!`-prefixed Swift file is a standalone script run by the interpreter, not a
       // source compiled into any build target, so no index store ever records it and no
       // scan can cover it. App code in an Xcode target carries no shebang, so excluding

@@ -103,6 +103,23 @@ enum DeadcodeCoverageCompletenessTests {
   }
 
   @Test
+  static func ownedSwiftFilesRootAtTheBuildDirectoryNotTheLoggingRoot() throws {
+    try withTemporaryRepo { root, _ in
+      // A recursive self-build gates the nested package while SWIFT_MK_ROOT, carried in
+      // context.cwd, still names the parent repo for shared logging. Owned discovery must
+      // follow the process working directory, context.pwd, the package this build
+      // compiles, so only the nested package's sources are owned and the parent's App.swift
+      // is not read as this build's unscanned code.
+      let nestedBuild = PathContext(pwd: root + "/Nested/", cwd: root + "/")
+      let owned = DeadcodeCoverageCompleteness.ownedSwiftFiles(context: nestedBuild)
+      let tool = IndexCompleteness.standardize(root + "/Nested/Tool.swift")
+      let app = IndexCompleteness.standardize(root + "/Sources/App.swift")
+      #expect(owned.contains(tool))
+      #expect(!owned.contains(app))
+    }
+  }
+
+  @Test
   static func isManifestOrConfigRecognizesBuildSystemManifests() {
     #expect(DeadcodeCoverageCompleteness.isManifestOrConfig("Package.swift"))
     #expect(DeadcodeCoverageCompleteness.isManifestOrConfig("Project.swift"))
