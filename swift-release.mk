@@ -78,7 +78,7 @@ release-build:
 
 release-publish:
 	@if [ -z "$${RELEASE_TAG:-}" ]; then echo "release-publish: RELEASE_TAG is not set" >&2; exit 1; fi; \
-	if [ "$${RELEASE_TRACK:-}" != "prerelease" ] && [ "$${RELEASE_TRACK:-}" != "stable" ]; then echo "release-publish: RELEASE_TRACK must be prerelease or stable" >&2; exit 1; fi; \
+	if [ -n "$${RELEASE_TRACK:-}" ] && [ "$${RELEASE_TRACK:-}" != "prerelease" ] && [ "$${RELEASE_TRACK:-}" != "stable" ]; then echo "release-publish: RELEASE_TRACK must be prerelease or stable" >&2; exit 1; fi; \
 	git config user.name "github-actions[bot]"; \
 	git config user.email "github-actions[bot]@users.noreply.github.com"; \
 	if [ "$${GITHUB_REF_TYPE:-}" != "tag" ]; then \

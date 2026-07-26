@@ -30,6 +30,15 @@ expected_outputs = [
 ]
 actual_outputs = triggers.dig("workflow_call", "outputs").keys.sort
 require_value(actual_outputs, expected_outputs.sort, "reusable workflow outputs")
+
+workflow_inputs = triggers.dig("workflow_call", "inputs")
+release_track_input = workflow_inputs.fetch("release-track")
+require_value(release_track_input["default"], "", "legacy release track default")
+require_value(release_track_input["required"], nil, "legacy release track requirement")
+allow_source_sha_input = workflow_inputs.fetch("allow-source-sha")
+require_value(allow_source_sha_input["default"], false, "legacy source SHA acknowledgement default")
+require_value(allow_source_sha_input["required"], nil, "legacy source SHA acknowledgement requirement")
+
 require_value(workflow.dig("concurrency", "group"), "release-${{ github.repository }}", "concurrency group")
 require_value(workflow.dig("concurrency", "cancel-in-progress"), false, "concurrency cancellation")
 
@@ -70,5 +79,7 @@ release_makefile_path = File.join(repository_root, "swift-release.mk")
 release_makefile = File.read(release_makefile_path)
 abort "release workflow contract: pre-release publishing flag is missing" unless
   release_makefile.include?("prerelease_arg=\"--prerelease\"")
+abort "release workflow contract: legacy release publishing is missing" unless
+  release_makefile.include?('if [ -n "$${RELEASE_TRACK:-}" ]')
 abort "release workflow contract: publish source SHA is missing" unless
   release_makefile.include?("RELEASE_SOURCE_SHA:-$${GITHUB_SHA")

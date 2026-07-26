@@ -4,6 +4,7 @@ set -euo pipefail
 
 release_tag=""
 source_ref=""
+source_sha="${GITHUB_SHA}"
 
 next_stable_tag() {
     local base_tag
@@ -35,7 +36,9 @@ next_stable_tag() {
     printf '%s-r%s\n' "${base_tag}" "${revision}"
 }
 
-if [[ "${RELEASE_TRACK}" == "prerelease" ]]; then
+if [[ -z "${RELEASE_TRACK}" ]]; then
+    :
+elif [[ "${RELEASE_TRACK}" == "prerelease" ]]; then
     if [[ -n "${CANDIDATE_TAG}" || -n "${SOURCE_SHA}" || "${ALLOW_SOURCE_SHA}" == "true" ]]; then
         echo "pre-release builds use the workflow commit and cannot select a stable source" >&2
         exit 1
@@ -78,7 +81,9 @@ else
     exit 1
 fi
 
-source_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${source_ref}" --jq .sha)"
+if [[ -n "${source_ref}" ]]; then
+    source_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${source_ref}" --jq .sha)"
+fi
 {
     echo "source_sha=${source_sha}"
     echo "release_tag=${release_tag}"

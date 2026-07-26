@@ -20,7 +20,7 @@ on:
         default: false
       release-track:
         type: string
-        required: true
+        default: ""
       candidate-tag:
         type: string
         default: ""
@@ -29,7 +29,7 @@ on:
         default: ""
       allow-source-sha:
         type: boolean
-        required: true
+        default: false
       candidate-asset-pattern:
         type: string
         default: "*.dmg"

@@ -16,6 +16,22 @@ import Testing
 @Suite(.serialized)
 enum ReleaseSourceScriptTests {
   @Test
+  static func resolvesLegacyCallersFromTheWorkflowCommit() throws {
+    try withHarness { harness in
+      let result = try harness.run(
+        track: "", candidateTag: "", sourceSHA: "", allowSourceSHA: "false")
+
+      #expect(result.status == 0)
+      guard result.status == 0 else {
+        return
+      }
+      let output = try harness.output()
+      #expect(output.contains("source_sha=pre-source-sha"))
+      #expect(output.contains("release_tag=\n"))
+    }
+  }
+
+  @Test
   static func resolvesPrereleaseFromTheWorkflowCommit() throws {
     try withHarness { harness in
       let result = try harness.run(
