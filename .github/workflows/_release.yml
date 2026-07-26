@@ -224,11 +224,11 @@ jobs:
     # change-detection job, which runs the same binary in the same image.
     container: swift:6.3
     outputs:
-      tag: ${{ steps.meta.outputs.release_tag || steps.meta.outputs.tag }}
-      release_tag: ${{ steps.meta.outputs.release_tag || steps.meta.outputs.tag }}
+      tag: ${{ steps.normalize.outputs.release_tag }}
+      release_tag: ${{ steps.normalize.outputs.release_tag }}
       release_track: ${{ steps.meta.outputs.release_track }}
       source_sha: ${{ needs.source.outputs.source_sha }}
-      artifact_version: ${{ steps.meta.outputs.artifact_version || replace(steps.meta.outputs.release_tag || steps.meta.outputs.tag, '+', '-') }}
+      artifact_version: ${{ steps.normalize.outputs.artifact_version }}
       build_version: ${{ steps.meta.outputs.build_version }}
       marketing_version: ${{ steps.meta.outputs.marketing_version }}
     steps:
@@ -305,6 +305,22 @@ jobs:
           RELEASE_TAG: ${{ needs.source.outputs.release_tag }}
           SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
         run: make release-meta SWIFT_MK_BIN="${SWIFT_MK_BIN}"
+      - name: Normalize release metadata
+        id: normalize
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.meta.outputs.release_tag }}
+          LEGACY_TAG: ${{ steps.meta.outputs.tag }}
+          ARTIFACT_VERSION: ${{ steps.meta.outputs.artifact_version }}
+        run: |
+          set -euo pipefail
+
+          release_tag="${RELEASE_TAG:-${LEGACY_TAG:-}}"
+          artifact_version="${ARTIFACT_VERSION:-${release_tag//+/-}}"
+          {
+            printf 'release_tag=%s\n' "${release_tag}"
+            printf 'artifact_version=%s\n' "${artifact_version}"
+          } >> "${GITHUB_OUTPUT}"
 
   build:
     name: Build

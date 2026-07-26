@@ -56,14 +56,21 @@ require_value(meta_engine_checkout.fetch("uses"), "actions/checkout@v7", "metada
 require_value(meta_engine_checkout.dig("with", "repository"), "${{ job.workflow_repository }}", "metadata engine repository")
 require_value(meta_engine_checkout.dig("with", "ref"), "${{ job.workflow_sha }}", "metadata engine revision")
 require_value(meta_engine_checkout.dig("with", "path"), ".swift-makefile", "metadata engine path")
-legacy_tag_fallback = "${{ steps.meta.outputs.release_tag || steps.meta.outputs.tag }}"
-require_value(meta_job.dig("outputs", "tag"), legacy_tag_fallback, "legacy metadata tag fallback")
-require_value(meta_job.dig("outputs", "release_tag"), legacy_tag_fallback, "legacy release tag fallback")
-require_value(
-  meta_job.dig("outputs", "artifact_version"),
-  "${{ steps.meta.outputs.artifact_version || replace(steps.meta.outputs.release_tag || steps.meta.outputs.tag, '+', '-') }}",
-  "legacy artifact version fallback",
-)
+workflow_source = File.read(workflow_path)
+abort "release workflow contract: unsupported expression replace is present" if workflow_source.include?("replace(")
+metadata_normalization = find_step(meta_job.fetch("steps"), "Normalize release metadata")
+require_value(metadata_normalization.fetch("id"), "normalize", "metadata normalization identifier")
+require_value(metadata_normalization.fetch("shell"), "bash", "metadata normalization shell")
+require_value(metadata_normalization.dig("env", "RELEASE_TAG"), "${{ steps.meta.outputs.release_tag }}", "metadata release tag input")
+require_value(metadata_normalization.dig("env", "LEGACY_TAG"), "${{ steps.meta.outputs.tag }}", "legacy metadata tag input")
+require_value(metadata_normalization.dig("env", "ARTIFACT_VERSION"), "${{ steps.meta.outputs.artifact_version }}", "metadata artifact version input")
+abort "release workflow contract: metadata normalization does not prefer the explicit release tag" unless
+  metadata_normalization.fetch("run").include?('release_tag="${RELEASE_TAG:-${LEGACY_TAG:-}}"')
+abort "release workflow contract: metadata normalization does not derive a safe legacy artifact version" unless
+  metadata_normalization.fetch("run").include?('artifact_version="${ARTIFACT_VERSION:-${release_tag//+/-}}"')
+require_value(meta_job.dig("outputs", "tag"), "${{ steps.normalize.outputs.release_tag }}", "legacy metadata tag fallback")
+require_value(meta_job.dig("outputs", "release_tag"), "${{ steps.normalize.outputs.release_tag }}", "legacy release tag fallback")
+require_value(meta_job.dig("outputs", "artifact_version"), "${{ steps.normalize.outputs.artifact_version }}", "legacy artifact version fallback")
 
 build_job = workflow.dig("jobs", "build")
 build_checkout = build_job.fetch("steps").find { |step| step["uses"] == "actions/checkout@v7" }
