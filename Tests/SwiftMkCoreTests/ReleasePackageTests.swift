@@ -59,3 +59,26 @@ func releasePackageStampsMaintVersionFileAndFailsWhenDevLiteralIsMissing() throw
     try ReleasePackage.stampVersion(tag: "faketag-0000", versionFile: versionFile.path)
   }
 }
+
+@Test
+func releasePackageAcceptsAPrereleaseTagWithBuildMetadata() throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "swift-mk-release-package-tag-\(UUID().uuidString)", isDirectory: true)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer {
+    do {
+      try FileManager.default.removeItem(at: directory)
+    } catch {
+      Output.warning("cleanup failed: \(error.localizedDescription)")
+    }
+  }
+  let versionFile = directory.appendingPathComponent("ReleaseVersion.swift")
+  try "public static let current = \"dev\"\n".write(
+    to: versionFile, atomically: true, encoding: .utf8)
+
+  let tag = "26.7.26-pre.202607261401+c95d264"
+  try ReleasePackage.stampVersion(tag: tag, versionFile: versionFile.path)
+
+  let stamped = try String(contentsOf: versionFile, encoding: .utf8)
+  #expect(stamped == "public static let current = \"\(tag)\"\n")
+}

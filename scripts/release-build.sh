@@ -5,7 +5,7 @@
 # the shared _release.yml workflow runs via `make release-build`.
 #
 # Artifacts:
-#   - swift-makefile-<tag>.tar.gz  the source snapshot (unsigned)
+#   - swift-makefile-<artifact-version>.tar.gz  the source snapshot (unsigned)
 #   - swift-mk_darwin_arm64.dmg    the signed swift-mk CLI, ready for notarize+staple
 #   - checksums.txt                sha256 of both artifacts
 #
@@ -36,9 +36,13 @@ fi
 
 dist="${SWIFT_MK_DIST_DIR:-dist}"
 tag="${RELEASE_TAG:-dev}"
-# tag goes into a filename, so reject anything but a safe filename charset.
-if [[ ! "$tag" =~ ^[A-Za-z0-9._-]+$ ]]; then
-    echo "release-build: RELEASE_TAG has unsafe characters (want [A-Za-z0-9._-]): $tag" >&2
+artifact_version="${ARTIFACT_VERSION:-${tag//+/-}}"
+if [[ ! "$tag" =~ ^[A-Za-z0-9._+-]+$ ]]; then
+    echo "release-build: RELEASE_TAG has unsafe characters (want [A-Za-z0-9._+-]): $tag" >&2
+    exit 1
+fi
+if [[ ! "$artifact_version" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "release-build: ARTIFACT_VERSION has unsafe characters (want [A-Za-z0-9._-]): $artifact_version" >&2
     exit 1
 fi
 asset="swift-mk_darwin_arm64.dmg"
@@ -57,7 +61,7 @@ engine_repo="$PWD"
 mkdir -p "$dist"
 
 # 1. Source snapshot (kept for parity with the prior self-release; unsigned).
-git archive --format tar.gz --output "$dist/swift-makefile-$tag.tar.gz" HEAD
+git archive --format tar.gz --output "$dist/swift-makefile-$artifact_version.tar.gz" HEAD
 
 # 2. Resolve the full engine that owns stamping, lean build, dmg assembly, and signing.
 SWIFT_MK_ROOT="$engine_root" SWIFT_MK_BUILD_REPO="$engine_repo" bash scripts/swift-mk-build.sh resolve
@@ -67,7 +71,7 @@ engine="$(SWIFT_MK_ROOT="$engine_root" bash scripts/swift-mk-build.sh path)"
 # 3. Checksums over every published artifact.
 (
     cd "$dist"
-    shasum -a 256 "swift-makefile-$tag.tar.gz" "$asset" > checksums.txt
+    shasum -a 256 "swift-makefile-$artifact_version.tar.gz" "$asset" > checksums.txt
 )
 
 echo "release-build: built $dist/$asset and checksums.txt for tag $tag"
