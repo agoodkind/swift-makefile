@@ -43,8 +43,12 @@ require_value(workflow.dig("concurrency", "group"), "release-${{ github.reposito
 require_value(workflow.dig("concurrency", "cancel-in-progress"), false, "concurrency cancellation")
 
 source_job = workflow.dig("jobs", "source")
+source_checkout = source_job.fetch("steps").find { |step| step["uses"] == "actions/checkout@v7" }
+require_value(source_checkout.dig("with", "repository"), "${{ job.workflow_repository }}", "source resolver repository")
+require_value(source_checkout.dig("with", "ref"), "${{ job.workflow_sha }}", "source resolver revision")
+require_value(source_checkout.dig("with", "path"), ".swift-makefile", "source resolver path")
 source_step = find_step(source_job.fetch("steps"), "Resolve source")
-require_value(source_step.fetch("run"), "bash scripts/release-source.sh", "source resolver")
+require_value(source_step.fetch("run"), "bash .swift-makefile/scripts/release-source.sh", "source resolver")
 
 build_job = workflow.dig("jobs", "build")
 build_checkout = build_job.fetch("steps").find { |step| step["uses"] == "actions/checkout@v7" }
