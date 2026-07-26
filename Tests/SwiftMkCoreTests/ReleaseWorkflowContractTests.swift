@@ -17,12 +17,14 @@ import Testing
 enum ReleaseWorkflowContractTests {
   @Test
   static func validatesTheReusableReleaseWorkflowContract() throws {
-    let script = try scriptPath()
-    let workflow = try workflowPath()
-    let result = Shell.run("ruby", [script, workflow])
+    try TestGlobalLock.withLock {
+      let script = try scriptPath()
+      let workflow = try workflowPath()
+      let result = Shell.run("ruby", [script, workflow])
 
-    #expect(result.status == 0)
-    #expect(result.stderr.isEmpty)
+      #expect(result.status == 0)
+      #expect(result.stderr.isEmpty)
+    }
   }
 
   private static func scriptPath() throws -> String {
