@@ -52,7 +52,7 @@ public enum ReleasePackageError: Error, Equatable, CustomStringConvertible {
     case .signingIdentityUnavailable(let reason):
       return "signing identity unavailable: \(reason)"
     case .unsafeTag(let tag):
-      return "release tag has unsafe characters (want [A-Za-z0-9._-]): \(tag)"
+      return "release tag has unsafe characters (want [A-Za-z0-9._+-]): \(tag)"
     case let .versionStampFailed(file, tag):
       return "failed to stamp version \(tag) into \(file)"
     }
@@ -67,7 +67,7 @@ public enum ReleasePackage {
   // a mismatch would silently make stamping fail to match.
   private static let versionNeedle = "static let current = \"\(devVersion)\""
   private static let safeTagScalars = CharacterSet(
-    charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
+    charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._+-")
 
   public static func plan(
     tag: String,
