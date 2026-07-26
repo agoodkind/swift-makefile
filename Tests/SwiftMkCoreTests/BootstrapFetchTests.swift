@@ -115,22 +115,102 @@ func helperColdProvisionWritesEveryAsset() throws {
   #expect(readMakeFile(directory, "swift.mk") == "# swift.mk v1\n")
   #expect(readMakeFile(directory, "Package.swift") != nil)
   #expect(readMakeFile(directory, "scripts/swift-mk-build.sh") != nil)
-  #expect(server.requests().count == 1)
+  let requests = server.requests()
+  #expect(requests.count == 1)
+  // Proves the helper asked for the configured repo and ref, not just any
+  // path the test server happened to answer.
+  #expect(requests.first?.path == "/agoodkind/swift-makefile/tar.gz/main")
 }
 
 @Test
-func helperLeavesSnapshotIntactWhenUpstreamIsUnreachable() throws {
+func helperLeavesSnapshotIntactWhenUpstreamReturnsAnError() throws {
+  // A real server that answers with a real HTTP error, not an unreachable
+  // port. A helper that merely runs `exit 1`, is missing entirely (exit 127),
+  // or has a syntax error would also leave the warm tree untouched, without
+  // ever making a request; asserting the request count rules those out and
+  // proves the helper actually reached the network and then chose, on a real
+  // failure response, not to touch .make.
+  let server = try FetchServer(files: engineFiles())
+  defer { server.shutdown() }
+  server.forceStatus(500)
+
   let directory = try temporaryConsumer()
   try writeMakeFile(directory, "swift.mk", "# warm swift.mk\n")
   try writeMakeFile(directory, "Package.swift", "// warm\n")
   try writeMakeFile(directory, "scripts/swift-mk-build.sh", "#!/usr/bin/env bash\nexit 0\n")
 
-  // A port nothing listens on, so every request fails at connect.
   let result = runHelper(
-    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": "http://127.0.0.1:9"])
+    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
   #expect(result.status != 0)
+  #expect(server.requests().count == 1)
 
   // The point of the task: a failed fetch must not remove what was there.
   #expect(readMakeFile(directory, "swift.mk") == "# warm swift.mk\n")
   #expect(readMakeFile(directory, "Package.swift") == "// warm\n")
+}
+
+@Test
+func helperRejectsIncompleteSnapshotAndPreservesWarmTree() throws {
+  // The server answers 200 with a real tarball that extracts cleanly, but the
+  // tarball is missing Package.swift. This is the case the staged-verification
+  // design exists for: a fetch that succeeds at the transport level must
+  // still be rejected, and rejected before anything under .make is touched.
+  var incompleteFiles = engineFiles()
+  incompleteFiles.removeValue(forKey: "Package.swift")
+  let server = try FetchServer(files: incompleteFiles)
+  defer { server.shutdown() }
+
+  let directory = try temporaryConsumer()
+  try writeMakeFile(directory, "swift.mk", "# warm swift.mk\n")
+  try writeMakeFile(directory, "Package.swift", "// warm\n")
+  try writeMakeFile(directory, "scripts/swift-mk-build.sh", "#!/usr/bin/env bash\nexit 0\n")
+
+  let result = runHelper(
+    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+  #expect(result.status != 0)
+  #expect(server.requests().count == 1)
+
+  #expect(readMakeFile(directory, "swift.mk") == "# warm swift.mk\n")
+  #expect(readMakeFile(directory, "Package.swift") == "// warm\n")
+}
+
+@Test
+func helperSwapFailureLeavesWarmTreeIntactForLaterSkipFetch() throws {
+  let server = try FetchServer(files: engineFiles())
+  defer { server.shutdown() }
+
+  let directory = try temporaryConsumer()
+  try writeMakeFile(directory, "swift.mk", "# warm swift.mk\n")
+  try writeMakeFile(directory, "Package.swift", "// warm\n")
+  try writeMakeFile(directory, "scripts/swift-mk-build.sh", "#!/usr/bin/env bash\nexit 0\n")
+  // A file outside the three assets assets_complete checks, so a partial swap
+  // that happened to keep only those three would still be caught here.
+  try writeMakeFile(directory, "scripts/swift-mk-fetch-one.sh", "#!/usr/bin/env bash\nexit 0\n")
+
+  // Deny write access to the consumer root itself, so the helper cannot
+  // create the staging directory it needs before it may touch .make. This is
+  // a real, unmocked failure (EACCES), not an injected one.
+  try FileManager.default.setAttributes(
+    [.posixPermissions: 0o555], ofItemAtPath: directory)
+  defer {
+    try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory)
+  }
+
+  let result = runHelper(
+    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+  #expect(result.status != 0)
+
+  #expect(readMakeFile(directory, "swift.mk") == "# warm swift.mk\n")
+  #expect(readMakeFile(directory, "Package.swift") == "// warm\n")
+  #expect(readMakeFile(directory, "scripts/swift-mk-fetch-one.sh") != nil)
+
+  // Restore write access and prove the untouched warm tree is still complete:
+  // the earlier failure never left .make half swapped.
+  try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory)
+  let skipFetchResult = runHelper(
+    directory: directory,
+    environment: [
+      "SWIFT_MK_CODELOAD_BASE": server.codeloadBase, "SWIFT_MK_SKIP_FETCH": "1",
+    ])
+  #expect(skipFetchResult.status == 0, "skip-fetch failed: \(skipFetchResult.stderr)")
 }

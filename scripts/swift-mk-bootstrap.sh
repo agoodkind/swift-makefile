@@ -39,6 +39,13 @@ reexec_from_temp_copy() {
     SWIFT_MK_BOOTSTRAP_REEXEC=1 exec bash "${temp_copy}" "$@"
 }
 
+# A single-line, length-capped excerpt of a captured stderr log, so a failure
+# message carries a concrete reason (a 403 body, a DNS error, a tar format
+# complaint) instead of one generic sentence for every kind of failure.
+stderr_sample() {
+    tr '\n' ' ' < "$1" | cut -c1-200
+}
+
 required_assets() {
     printf '%s\n' "swift.mk"
     printf '%s\n' "Package.swift"
@@ -60,47 +67,111 @@ assets_complete() {
     return 0
 }
 
-# install_from_stage replaces the engine tree under .make with the verified
-# staged tree, preserving the generated runtime files a build depends on. It
-# mirrors snapshot_clear_engine's preserve list in scripts/swift-mk-sync.sh.
-install_from_stage() {
-    local stage_dir="$1"
-    find "${MAKE_DIR}" -mindepth 1 -maxdepth 1 \
-        ! -name logs \
-        ! -name build.lock \
-        ! -name swift-mk \
-        ! -name swift-mk.key \
-        ! -name swift-mk-build \
-        ! -name dev \
-        ! -name .swift-mk-snapshot-ref \
-        ! -name swift.mk \
-        ! -name '*.log' \
-        -exec rm -rf {} +
-    cp -R "${stage_dir}/." "${MAKE_DIR}/"
-    find "${MAKE_DIR}/scripts" -type f -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
-}
-
+# stage_fetch_and_verify downloads the pinned ref's archive into stage_root and
+# extracts it into stage_dir. Every failure path prints the exit code and a
+# short stderr excerpt from the command that actually failed, so a 403, a DNS
+# failure, and a corrupt tarball each leave a distinct diagnostic instead of
+# one generic message. Nothing under .make is touched here.
 stage_fetch_and_verify() {
     local stage_root="$1"
     local stage_dir="$2"
+    local url="${SWIFT_MK_CODELOAD_BASE}/${SWIFT_MK_API_REPO}/tar.gz/${SWIFT_MK_API_REF}"
+    local curl_log="${stage_root}/curl.log"
+    local tar_log="${stage_root}/tar.log"
     local status_code
+    local curl_status=0
+    local tar_status=0
 
-    if ! status_code=$(curl -sS --connect-timeout 5 --max-time "${FETCH_MAX_TIME}" \
+    status_code=$(curl -sS --connect-timeout 5 --max-time "${FETCH_MAX_TIME}" \
         -o "${stage_root}/snapshot.tar.gz" -w '%{http_code}' \
-        "${SWIFT_MK_CODELOAD_BASE}/${SWIFT_MK_API_REPO}/tar.gz/${SWIFT_MK_API_REF}" 2>/dev/null); then
+        "${url}" 2>"${curl_log}") || curl_status=$?
+    if [[ ${curl_status} -ne 0 ]]; then
+        printf 'error: fetch failed (curl exit %d) for %s: %s\n' \
+            "${curl_status}" "${url}" "$(stderr_sample "${curl_log}")" >&2
         return 1
     fi
     if [[ "${status_code}" != "200" ]]; then
+        printf 'error: fetch returned HTTP %s for %s\n' "${status_code}" "${url}" >&2
         return 1
     fi
 
     mkdir -p "${stage_dir}"
-    if ! tar -xzf "${stage_root}/snapshot.tar.gz" -C "${stage_dir}" --strip-components 1 2>/dev/null; then
+    tar -xzf "${stage_root}/snapshot.tar.gz" -C "${stage_dir}" --strip-components 1 \
+        2>"${tar_log}" || tar_status=$?
+    if [[ ${tar_status} -ne 0 ]]; then
+        printf 'error: tar extraction failed (exit %d): %s\n' \
+            "${tar_status}" "$(stderr_sample "${tar_log}")" >&2
         return 1
     fi
     if ! assets_complete "${stage_dir}"; then
+        printf 'error: fetched snapshot is missing a required asset\n' >&2
         return 1
     fi
+    return 0
+}
+
+# install_from_stage assembles the verified staged tree next to .make,
+# bringing forward the generated runtime files a build depends on (the same
+# set snapshot_clear_engine preserves in scripts/swift-mk-sync.sh), then swaps
+# it into place with mv. Nothing under .make is removed until the replacement
+# is fully staged and verified, so a cp that fails partway, or any other
+# failure before the final mv, leaves the existing .make exactly as it was.
+install_from_stage() {
+    local stage_dir="$1"
+    local next_dir="${MAKE_DIR}.next"
+    local previous_dir="${MAKE_DIR}.previous"
+    local cp_log
+    local cp_status=0
+    cp_log="$(dirname "${stage_dir}")/install-cp.log"
+
+    rm -rf "${next_dir}" "${previous_dir}"
+    if ! mkdir -p "${next_dir}"; then
+        printf 'error: could not create staging directory %s\n' "${next_dir}" >&2
+        return 1
+    fi
+
+    if [[ -d "${MAKE_DIR}" ]]; then
+        find "${MAKE_DIR}" -mindepth 1 -maxdepth 1 \
+            \( -name logs -o -name build.lock -o -name swift-mk -o -name swift-mk.key \
+               -o -name swift-mk-build -o -name dev -o -name .swift-mk-snapshot-ref \
+               -o -name swift.mk -o -name '*.log' \) \
+            -exec cp -R {} "${next_dir}/" \;
+    fi
+
+    cp -R "${stage_dir}/." "${next_dir}/" 2>"${cp_log}" || cp_status=$?
+    if [[ ${cp_status} -ne 0 ]]; then
+        printf 'error: staging the engine tree failed (cp exit %d): %s\n' \
+            "${cp_status}" "$(stderr_sample "${cp_log}")" >&2
+        rm -rf "${next_dir}"
+        return 1
+    fi
+
+    find "${next_dir}/scripts" -type f -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
+
+    if ! assets_complete "${next_dir}"; then
+        printf 'error: staged engine tree is missing a required asset after copy\n' >&2
+        rm -rf "${next_dir}"
+        return 1
+    fi
+
+    if [[ -d "${MAKE_DIR}" ]]; then
+        if ! mv "${MAKE_DIR}" "${previous_dir}"; then
+            printf 'error: could not move the current .make aside for the swap\n' >&2
+            rm -rf "${next_dir}"
+            return 1
+        fi
+    fi
+
+    if ! mv "${next_dir}" "${MAKE_DIR}"; then
+        printf 'error: could not swap the staged engine tree into .make\n' >&2
+        if [[ -d "${previous_dir}" ]]; then
+            mv "${previous_dir}" "${MAKE_DIR}"
+        fi
+        rm -rf "${next_dir}"
+        return 1
+    fi
+
+    rm -rf "${previous_dir}"
     return 0
 }
 
@@ -118,7 +189,9 @@ provision() {
         if ! stage_fetch_and_verify "${stage_root}" "${stage_dir}"; then
             exit 1
         fi
-        install_from_stage "${stage_dir}"
+        if ! install_from_stage "${stage_dir}"; then
+            exit 1
+        fi
     )
 }
 

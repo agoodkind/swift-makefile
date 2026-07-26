@@ -19,8 +19,9 @@ import NIOPosix
 // MARK: - FetchRecord
 
 /// One served request, so a test can assert how many times the helper reached
-/// the network and what each call returned.
+/// the network, which path it asked for, and what each call returned.
 struct FetchRecord: Sendable {
+  let path: String
   let ifNoneMatch: String
   let status: Int
   let bytes: Int
@@ -36,6 +37,8 @@ final class FetchState: @unchecked Sendable {
   private var etagValue = ""
   private var stallSeconds: Double = 0
   private var records: [FetchRecord] = []
+  private var forcedStatus: Int?
+  private var etagEnabled = true
 
   func setFiles(_ files: [String: String]) {
     let archive = TarballBuilder.build(files)
@@ -55,10 +58,24 @@ final class FetchState: @unchecked Sendable {
     stallSeconds = seconds
   }
 
-  func snapshot() -> (tarball: [UInt8], etag: String, stall: Double) {
+  func setForcedStatus(_ status: Int?) {
     lock.lock()
     defer { lock.unlock() }
-    return (tarball, etagValue, stallSeconds)
+    forcedStatus = status
+  }
+
+  func setETagEnabled(_ enabled: Bool) {
+    lock.lock()
+    defer { lock.unlock() }
+    etagEnabled = enabled
+  }
+
+  func snapshot() -> (
+    tarball: [UInt8], etag: String, stall: Double, forcedStatus: Int?, etagEnabled: Bool
+  ) {
+    lock.lock()
+    defer { lock.unlock() }
+    return (tarball, etagValue, stallSeconds, forcedStatus, etagEnabled)
   }
 
   func record(_ entry: FetchRecord) {
@@ -116,6 +133,20 @@ final class FetchServer: @unchecked Sendable {
     state.stall(seconds)
   }
 
+  /// Force every later response to the given status (for example 404 or 500)
+  /// with an empty body, bypassing the normal ETag-based 200/304 choice. Pass
+  /// nil to restore normal behavior. Lets a test drive the helper's handling
+  /// of an upstream error response.
+  func forceStatus(_ status: Int?) {
+    state.setForcedStatus(status)
+  }
+
+  /// Stop sending the ETag header on every later response, so a test can
+  /// drive the path where no conditional validation is possible.
+  func setETagEnabled(_ enabled: Bool) {
+    state.setETagEnabled(enabled)
+  }
+
   func requests() -> [FetchRecord] {
     state.requests()
   }
@@ -133,6 +164,7 @@ private final class FetchHandler: ChannelInboundHandler {
   typealias OutboundOut = HTTPServerResponsePart
 
   private let state: FetchState
+  private var requestPath = ""
   private var ifNoneMatch = ""
 
   init(state: FetchState) {
@@ -142,6 +174,7 @@ private final class FetchHandler: ChannelInboundHandler {
   func channelRead(context: ChannelHandlerContext, data: NIOAny) {
     switch unwrapInboundIn(data) {
       case .head(let head):
+        requestPath = head.uri
         ifNoneMatch = head.headers.first(name: "If-None-Match") ?? ""
       case .body:
         break
@@ -156,12 +189,21 @@ private final class FetchHandler: ChannelInboundHandler {
       Thread.sleep(forTimeInterval: current.stall)
     }
 
-    let matched = ifNoneMatch == current.etag
-    let status: HTTPResponseStatus = matched ? .notModified : .ok
-    let bodyBytes = matched ? [] : current.tarball
+    let status: HTTPResponseStatus
+    let bodyBytes: [UInt8]
+    if let forcedStatus = current.forcedStatus {
+      status = HTTPResponseStatus(statusCode: forcedStatus)
+      bodyBytes = []
+    } else {
+      let matched = current.etagEnabled && ifNoneMatch == current.etag
+      status = matched ? .notModified : .ok
+      bodyBytes = matched ? [] : current.tarball
+    }
 
     var headers = HTTPHeaders()
-    headers.add(name: "ETag", value: current.etag)
+    if current.etagEnabled {
+      headers.add(name: "ETag", value: current.etag)
+    }
     headers.add(name: "Content-Length", value: String(bodyBytes.count))
 
     let head = HTTPResponseHead(version: .http1_1, status: status, headers: headers)
@@ -174,7 +216,9 @@ private final class FetchHandler: ChannelInboundHandler {
     context.writeAndFlush(wrapOutboundOut(.end(nil)), promise: nil)
 
     state.record(
-      FetchRecord(ifNoneMatch: ifNoneMatch, status: Int(status.code), bytes: bodyBytes.count))
+      FetchRecord(
+        path: requestPath, ifNoneMatch: ifNoneMatch, status: Int(status.code),
+        bytes: bodyBytes.count))
   }
 }
 

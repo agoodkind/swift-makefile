@@ -78,3 +78,40 @@ func fetchServerArchiveExtractsWithSystemTar() throws {
   #expect(extracted == "# swift.mk v1\n")
   #expect(manager.fileExists(atPath: target.appendingPathComponent("scripts/swift-mk-build.sh").path))
 }
+
+@Test
+func fetchServerRecordsThePathAndCanForceAnErrorStatus() async throws {
+  let server = try FetchServer(files: ["swift.mk": "SWIFT_MK := 1\n"])
+  defer { server.shutdown() }
+
+  let url = try #require(
+    URL(string: server.codeloadBase + "/agoodkind/swift-makefile/tar.gz/main"))
+
+  server.forceStatus(404)
+  let (firstBody, firstResponse) = try await URLSession.shared.data(from: url)
+  #expect((firstResponse as? HTTPURLResponse)?.statusCode == 404)
+  #expect(firstBody.isEmpty)
+
+  server.forceStatus(500)
+  let (secondBody, secondResponse) = try await URLSession.shared.data(from: url)
+  #expect((secondResponse as? HTTPURLResponse)?.statusCode == 500)
+  #expect(secondBody.isEmpty)
+
+  let requests = server.requests()
+  #expect(requests.map(\.status) == [404, 500])
+  #expect(requests.allSatisfy { $0.path == "/agoodkind/swift-makefile/tar.gz/main" })
+}
+
+@Test
+func fetchServerCanOmitTheETagHeader() async throws {
+  let server = try FetchServer(files: ["swift.mk": "SWIFT_MK := 1\n"])
+  defer { server.shutdown() }
+  server.setETagEnabled(false)
+
+  let url = try #require(
+    URL(string: server.codeloadBase + "/agoodkind/swift-makefile/tar.gz/main"))
+  let (_, response) = try await URLSession.shared.data(from: url)
+  let http = try #require(response as? HTTPURLResponse)
+  #expect(http.statusCode == 200)
+  #expect(http.value(forHTTPHeaderField: "ETag") == nil)
+}
