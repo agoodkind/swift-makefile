@@ -25,7 +25,7 @@ release: release-check
 SWIFT_MK_DIST_DIR ?= dist
 # Consumer hook: build the release artifacts into $(SWIFT_MK_DIST_DIR).
 SWIFT_MK_RELEASE_BUILD_CMD ?=
-# Optional wholesale override of the tag scheme.
+# Optional wholesale override of the tag scheme for legacy callers without a release track.
 SWIFT_MK_RELEASE_META_CMD ?=
 # Optional hook run after the GitHub release is created.
 SWIFT_MK_RELEASE_PUBLISH_EXTRA_CMD ?=
@@ -35,7 +35,7 @@ SWIFT_MK_RELEASE_PUBLISH_EXTRA_CMD ?=
 # CFBundleVersion's 18-character limit. marketing_version is yy.m.d without
 # leading zeros, computed portably (BSD date has no %-m).
 release-meta:
-	@if [ -n "$(strip $(SWIFT_MK_RELEASE_META_CMD))" ]; then eval "$(SWIFT_MK_RELEASE_META_CMD)"; exit $$?; fi; \
+	@if [ -z "$${RELEASE_TRACK:-}" ] && [ -n "$(strip $(SWIFT_MK_RELEASE_META_CMD))" ]; then eval "$(SWIFT_MK_RELEASE_META_CMD)"; exit $$?; fi; \
 	out="$${GITHUB_OUTPUT:-/dev/stdout}"; \
 	if [ -n "$(strip $(SWIFT_MK_BIN))" ] && [ -x "$(SWIFT_MK_BIN)" ]; then \
 		"$(SWIFT_MK_BIN)" version-meta >> "$$out"; \
@@ -78,14 +78,17 @@ release-build:
 
 release-publish:
 	@if [ -z "$${RELEASE_TAG:-}" ]; then echo "release-publish: RELEASE_TAG is not set" >&2; exit 1; fi; \
+	if [ -n "$${RELEASE_TRACK:-}" ] && [ "$${RELEASE_TRACK:-}" != "prerelease" ] && [ "$${RELEASE_TRACK:-}" != "stable" ]; then echo "release-publish: RELEASE_TRACK must be prerelease or stable" >&2; exit 1; fi; \
 	git config user.name "github-actions[bot]"; \
 	git config user.email "github-actions[bot]@users.noreply.github.com"; \
 	if [ "$${GITHUB_REF_TYPE:-}" != "tag" ]; then \
 		git tag "$$RELEASE_TAG"; \
 		git push origin "$$RELEASE_TAG"; \
 	fi; \
-	gh release create "$$RELEASE_TAG" $(SWIFT_MK_DIST_DIR)/* \
-		--target "$${GITHUB_SHA:-$$(git rev-parse HEAD)}" \
+	prerelease_arg=""; \
+	if [ "$${RELEASE_TRACK}" = "prerelease" ]; then prerelease_arg="--prerelease"; fi; \
+	gh release create "$$RELEASE_TAG" $(SWIFT_MK_DIST_DIR)/* $$prerelease_arg \
+		--target "$${RELEASE_SOURCE_SHA:-$${GITHUB_SHA:-$$(git rev-parse HEAD)}}" \
 		--title "$$RELEASE_TAG" \
-		--notes "Automated release for $${GITHUB_SHA:-$$(git rev-parse HEAD)}"; \
+		--notes "Automated release for $${RELEASE_SOURCE_SHA:-$${GITHUB_SHA:-$$(git rev-parse HEAD)}}"; \
 	if [ -n "$(strip $(SWIFT_MK_RELEASE_PUBLISH_EXTRA_CMD))" ]; then eval "$(SWIFT_MK_RELEASE_PUBLISH_EXTRA_CMD)"; fi

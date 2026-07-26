@@ -6,10 +6,29 @@ on:
       - main
   pull_request:
   workflow_dispatch:
+    inputs:
+      candidate-tag:
+        description: Published pre-release tag to promote.
+        required: false
+        type: string
+      source-sha:
+        description: Emergency source commit SHA.
+        required: false
+        type: string
+      allow-source-sha:
+        description: Acknowledge emergency source SHA promotion.
+        required: true
+        default: false
+        type: boolean
+      candidate-asset-pattern:
+        description: Candidate release asset required for stable promotion.
+        required: false
+        default: "*.dmg"
+        type: string
 
 # Match ci.yml: one concurrency group per ref. A new pull request push cancels
 # the prior signed dry run so a superseded run does not hold a pool slot. A push
-# to main is a real release, so it never cancels an in-flight publish.
+# to main or manual promotion is a real release, so it never cancels an in-flight publish.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -32,6 +51,11 @@ jobs:
     uses: ./.github/workflows/_release.yml
     with:
       ephemeral: ${{ github.event_name == 'pull_request' }}
+      release-track: ${{ github.event_name == 'workflow_dispatch' && 'stable' || 'prerelease' }}
+      candidate-tag: ${{ inputs.candidate-tag }}
+      source-sha: ${{ inputs.source-sha }}
+      allow-source-sha: ${{ inputs.allow-source-sha || false }}
+      candidate-asset-pattern: ${{ inputs.candidate-asset-pattern || '*.dmg' }}
       # Notarize and staple the signed swift-mk dmg; a dmg is the CLI-friendly
       # format that can carry a stapled ticket. Match only the dmg so the
       # unsigned source tarball is skipped.
