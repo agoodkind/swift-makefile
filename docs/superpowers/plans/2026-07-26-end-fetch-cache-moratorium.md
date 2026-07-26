@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Validation request bound: `--connect-timeout 2 --max-time 3`. Measured `304` is 0.88s median on a 201ms RTT link.
-- Reuse window after a failed validation: 3600 seconds (1 hour), a hardcoded constant, not a variable.
+- Reuse window after a failed validation: 3600 seconds (1 hour), a hardcoded constant, not a variable. The clock runs from the last completed download and a successful `304` never resets it, so the window is fixed rather than sliding. Offline reuse is therefore available only within an hour of a real download, which is the intended strictness.
 - CI test: `GITHUB_ACTIONS` equals `true` AND `GITHUB_RUN_ID` is non-empty, matching `Build.runsInlineGates` in `Sources/SwiftMkCore/Build.swift:29`. `GITHUB_ACTIONS` alone is not CI.
 - In CI: never read state, never write state, never send a conditional request, never serve disk on failure.
 - No new user-facing variable. `SWIFT_MK_SKIP_FETCH` stays the only knob. `SWIFT_MK_CODELOAD_BASE` is internal and test-only, in the same category as the existing `SWIFT_MK_API_REPO` and `SWIFT_MK_API_REF` overrides.
@@ -1084,7 +1084,9 @@ main() {
         status_code=$(validate_upstream "${probe_root}/snapshot.tar.gz" "${known_etag}" || printf '')
         rm -rf "${probe_root}"
         if [[ "${status_code}" == "304" ]]; then
-            write_marker "${known_etag}"
+            # Deliberately no marker write. The reuse window is a fixed hour
+            # from the last real download, not a window a successful check can
+            # slide forward, and a 304 must leave .make byte-for-byte alone.
             return 0
         fi
     fi
@@ -1103,7 +1105,7 @@ main() {
 }
 ```
 
-Note that `write_marker` on the `304` path rewrites the marker file, which is outside the extracted tree, so the mtime guarantee for engine sources holds.
+The `304` path writes nothing at all, which is what keeps the reuse window fixed and the `.make` tree untouched.
 
 - [ ] **Step 4: Run test to verify it passes**
 

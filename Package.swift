@@ -41,6 +41,10 @@ let package = Package(
       revision: "ed1f232d33b8e03956af0f4206fbd30171a43138"),
     .package(url: "https://github.com/tuist/XcodeProj.git", from: "9.13.0"),
     .package(url: "https://github.com/kylef/PathKit.git", from: "1.0.0"),
+    // Already in the graph through grpc-swift and pinned in Package.resolved.
+    // Declared here so the test target can run a local HTTP server, which is
+    // what makes the fetch tests exercise real conditional requests.
+    .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
   ],
   targets: [
     .target(
@@ -110,7 +114,13 @@ let package = Package(
     ),
     .testTarget(
       name: "SwiftMkCoreTests",
-      dependencies: ["SwiftMkCore", "SwiftMkPipe"],
+      dependencies: [
+        "SwiftMkCore",
+        "SwiftMkPipe",
+        .product(name: "NIOCore", package: "swift-nio"),
+        .product(name: "NIOHTTP1", package: "swift-nio"),
+        .product(name: "NIOPosix", package: "swift-nio"),
+      ],
       exclude: ["Fixtures"]
     ),
     .testTarget(
