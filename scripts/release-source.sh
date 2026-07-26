@@ -68,7 +68,8 @@ elif [[ "${RELEASE_TRACK}" == "stable" ]]; then
         release_tag="$(next_stable_tag "${CANDIDATE_TAG%%-pre.*}")"
     elif [[ -n "${SOURCE_SHA}" && "${ALLOW_SOURCE_SHA}" == "true" ]]; then
         source_ref="${SOURCE_SHA}"
-        release_tag="$(next_stable_tag "$(date -u +%y).$(date -u +%-m).$(date -u +%-d)")"
+        utc_calendar_tag="$(date -u '+%y.%-m.%-d')"
+        release_tag="$(next_stable_tag "${utc_calendar_tag}")"
     elif [[ -n "${SOURCE_SHA}" ]]; then
         echo "source-sha requires allow-source-sha=true" >&2
         exit 1

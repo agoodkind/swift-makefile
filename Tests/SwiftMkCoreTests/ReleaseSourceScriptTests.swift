@@ -89,6 +89,20 @@ enum ReleaseSourceScriptTests {
     }
   }
 
+  @Test
+  static func usesOneClockReadForEmergencyStableTag() throws {
+    try withHarness { harness in
+      let result = try harness.run(
+        track: "stable", candidateTag: "", sourceSHA: "emergency-sha", allowSourceSHA: "true")
+      let output = try harness.output()
+
+      #expect(result.status == 0)
+      #expect(output.contains("source_sha=emergency-commit-sha"))
+      #expect(output.contains("release_tag=26.7.26-r1"))
+      #expect(try harness.dateCallCount() == 1)
+    }
+  }
+
   private static func withHarness(_ body: (Harness) throws -> Void) throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
       "swift-mk-release-source-\(UUID().uuidString)", isDirectory: true)
@@ -106,13 +120,16 @@ enum ReleaseSourceScriptTests {
   private struct Harness {
     let directory: URL
     let binDirectory: URL
+    let dateCallsFile: URL
     let outputFile: URL
 
     init(directory: URL) throws {
       self.directory = directory
       binDirectory = directory.appendingPathComponent("bin", isDirectory: true)
+      dateCallsFile = directory.appendingPathComponent("date-calls")
       outputFile = directory.appendingPathComponent("output")
       try FileManager.default.createDirectory(at: binDirectory, withIntermediateDirectories: true)
+      try writeFakeDate()
       try writeFakeGitHub()
     }
 
@@ -131,6 +148,7 @@ enum ReleaseSourceScriptTests {
           "CANDIDATE_ASSET_PATTERN": "*.dmg",
           "CANDIDATE_IS_DRAFT": candidateIsDraft,
           "CANDIDATE_TAG": candidateTag,
+          "DATE_CALLS_FILE": dateCallsFile.path,
           "GITHUB_OUTPUT": outputFile.path,
           "GITHUB_REPOSITORY": "example/repo",
           "GITHUB_SHA": "pre-source-sha",
@@ -143,6 +161,14 @@ enum ReleaseSourceScriptTests {
 
     func output() throws -> String {
       try String(contentsOf: outputFile, encoding: .utf8)
+    }
+
+    func dateCallCount() throws -> Int {
+      guard FileManager.default.fileExists(atPath: dateCallsFile.path) else {
+        return 0
+      }
+      let calls = try String(contentsOf: dateCallsFile, encoding: .utf8)
+      return calls.split(whereSeparator: \.isNewline).count
     }
 
     private func scriptPath() throws -> String {
@@ -187,8 +213,42 @@ enum ReleaseSourceScriptTests {
             *"api repos/example/repo/commits/pre-source-sha"*)
                 printf 'pre-source-sha\\n'
                 ;;
+            *"api repos/example/repo/commits/emergency-sha"*)
+                printf 'emergency-commit-sha\\n'
+                ;;
             *)
                 printf 'unexpected gh call: %s\\n' "$*" >&2
+                exit 2
+                ;;
+        esac
+        """
+      try script.write(to: executable, atomically: true, encoding: .utf8)
+      try FileManager.default.setAttributes(
+        [.posixPermissions: NSNumber(value: 0o755)], ofItemAtPath: executable.path)
+    }
+
+    private func writeFakeDate() throws {
+      let executable = binDirectory.appendingPathComponent("date")
+      let script = """
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        printf '%s\\n' "$*" >> "${DATE_CALLS_FILE}"
+        case "$*" in
+            "-u +%y")
+                printf '26\\n'
+                ;;
+            "-u +%-m")
+                printf '7\\n'
+                ;;
+            "-u +%-d")
+                printf '26\\n'
+                ;;
+            "-u +%y.%-m.%-d")
+                printf '26.7.26\\n'
+                ;;
+            *)
+                printf 'unexpected date call: %s\\n' "$*" >&2
                 exit 2
                 ;;
         esac

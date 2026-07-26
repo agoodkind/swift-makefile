@@ -273,7 +273,7 @@ public enum VersionMeta {
     let hasSourceSHA = !sourceSHA.isEmpty
     if track == .prerelease {
       if hasCandidateTag || hasSourceSHA || allowSourceSHA {
-        throw VersionError.invalidSourceSelection("prerelease builds use the workflow commit")
+        throw VersionError.invalidSourceSelection("pre-release builds use the workflow commit")
       }
       return
     }
@@ -283,7 +283,7 @@ public enum VersionMeta {
     if hasCandidateTag {
       if !isValidPrereleaseTag(candidateTag) {
         throw VersionError.invalidSourceSelection(
-          "candidate-tag must use the prerelease tag format")
+          "candidate-tag must use the pre-release tag format")
       }
       return
     }

@@ -153,6 +153,40 @@ enum VersionMetaTests {
   }
 
   @Test
+  static func sourceValidationCallsTheTrackPreRelease() {
+    let workflowCommitError = sourceValidationError {
+      try VersionMeta.validateSource(
+        track: .prerelease,
+        candidateTag: "26.7.26-pre.202607261030+abc1234",
+        sourceSHA: "",
+        allowSourceSHA: false)
+    }
+    let candidateTagError = sourceValidationError {
+      try VersionMeta.validateSource(
+        track: .stable,
+        candidateTag: "not-a-pre-release-tag",
+        sourceSHA: "",
+        allowSourceSHA: false)
+    }
+
+    #expect(
+      workflowCommitError
+        == "version-meta: invalid release source selection: pre-release builds use the workflow commit")
+    #expect(
+      candidateTagError
+        == "version-meta: invalid release source selection: candidate-tag must use the pre-release tag format")
+  }
+
+  private static func sourceValidationError(_ operation: () throws -> Void) -> String {
+    do {
+      try operation()
+      return ""
+    } catch {
+      return String(describing: error)
+    }
+  }
+
+  @Test
   static func tagRefUsesThePushedTagName() throws {
     let version = try VersionMeta.compute(
       inputs(githubRefType: "tag", githubRefName: "v1.2.3", githubRunNumber: "80"))
