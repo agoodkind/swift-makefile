@@ -45,6 +45,21 @@ enum ReleaseSourceScriptTests {
   }
 
   @Test
+  static func rejectsADraftCandidate() throws {
+    try withHarness { harness in
+      let result = try harness.run(
+        track: "stable",
+        candidateTag: "26.7.26-pre.202607261030+abc1234",
+        sourceSHA: "",
+        allowSourceSHA: "false",
+        candidateIsDraft: "true")
+
+      #expect(result.status != 0)
+      #expect(result.stderr.contains("published non-draft GitHub pre-release"))
+    }
+  }
+
+  @Test
   static func rejectsAnEmergencySourceSHAWithoutAcknowledgement() throws {
     try withHarness { harness in
       let result = try harness.run(
@@ -89,7 +104,8 @@ enum ReleaseSourceScriptTests {
       track: String,
       candidateTag: String,
       sourceSHA: String,
-      allowSourceSHA: String
+      allowSourceSHA: String,
+      candidateIsDraft: String = "false"
     ) throws -> Shell.Result {
       Shell.run(
         "bash",
@@ -97,6 +113,7 @@ enum ReleaseSourceScriptTests {
         environment: [
           "ALLOW_SOURCE_SHA": allowSourceSHA,
           "CANDIDATE_ASSET_PATTERN": "*.dmg",
+          "CANDIDATE_IS_DRAFT": candidateIsDraft,
           "CANDIDATE_TAG": candidateTag,
           "GITHUB_OUTPUT": outputFile.path,
           "GITHUB_REPOSITORY": "example/repo",
@@ -132,6 +149,9 @@ enum ReleaseSourceScriptTests {
         set -euo pipefail
 
         case "$*" in
+            *"release view 26.7.26-pre.202607261030+abc1234"*"--json isPrerelease,isDraft"*)
+                printf 'true\\t%s\\n' "${CANDIDATE_IS_DRAFT}"
+                ;;
             *"release view 26.7.26-pre.202607261030+abc1234"*"--jq .isPrerelease"*)
                 printf 'true\\n'
                 ;;

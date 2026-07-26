@@ -79,6 +79,19 @@ enum VersionMetaTests {
     #expect(version.track == .prerelease)
   }
 
+  @Test
+  static func stableTrackUsesTheResolvedTagBaseForMarketingVersion() throws {
+    let version = try VersionMeta.compute(
+      inputs(
+        githubRunNumber: "87",
+        calendar: "26.7.27",
+        releaseTrack: .stable,
+        releaseTag: "26.7.26-r1"))
+
+    #expect(version.marketing == "26.7.26")
+    #expect(version.tag == "26.7.26-r1")
+  }
+
   @Test(arguments: ["26.7.26", "26.7.26-r1", "26.7.26-r12"])
   static func stableTagsAcceptBaseAndSameDayRevisions(tag: String) {
     // Rejecting a valid revision tag would prevent a corrected same-day stable release.

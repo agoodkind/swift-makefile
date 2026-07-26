@@ -37,7 +37,7 @@ next_stable_tag() {
 
 if [[ "${RELEASE_TRACK}" == "prerelease" ]]; then
     if [[ -n "${CANDIDATE_TAG}" || -n "${SOURCE_SHA}" || "${ALLOW_SOURCE_SHA}" == "true" ]]; then
-        echo "prerelease releases use the workflow commit and cannot select a stable source" >&2
+        echo "pre-release builds use the workflow commit and cannot select a stable source" >&2
         exit 1
     fi
     source_ref="${GITHUB_SHA}"
@@ -48,11 +48,12 @@ elif [[ "${RELEASE_TRACK}" == "stable" ]]; then
     fi
     if [[ -n "${CANDIDATE_TAG}" ]]; then
         if [[ ! "${CANDIDATE_TAG}" =~ ^[0-9]+\.[0-9]+\.[0-9]+-pre\.[0-9]{12}\+[A-Za-z0-9]+$ ]]; then
-            echo "candidate-tag must use the prerelease tag format" >&2
+            echo "candidate-tag must use the pre-release tag format" >&2
             exit 1
         fi
-        if [[ "$(gh release view "${CANDIDATE_TAG}" --repo "${GITHUB_REPOSITORY}" --json isPrerelease --jq .isPrerelease)" != "true" ]]; then
-            echo "candidate-tag must identify a published GitHub pre-release" >&2
+        candidate_release_state="$(gh release view "${CANDIDATE_TAG}" --repo "${GITHUB_REPOSITORY}" --json isPrerelease,isDraft --jq '[.isPrerelease, .isDraft] | @tsv')"
+        if [[ "${candidate_release_state}" != $'true\tfalse' ]]; then
+            echo "candidate-tag must identify a published non-draft GitHub pre-release" >&2
             exit 1
         fi
         candidate_asset="$(gh release view "${CANDIDATE_TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name' | while IFS= read -r asset_name; do if [[ "${asset_name}" == ${CANDIDATE_ASSET_PATTERN} ]]; then printf '%s\n' "${asset_name}"; break; fi; done)"

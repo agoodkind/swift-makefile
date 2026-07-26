@@ -137,8 +137,14 @@ public enum VersionMeta {
     }
     if let releaseTrack = inputs.releaseTrack {
       let build = fixedWidthBuildVersion(inputs.timestamp, runNumber: inputs.githubRunNumber)
+      let marketing: String
+      if releaseTrack == .stable {
+        marketing = stableMarketingVersion(for: tag)
+      } else {
+        marketing = inputs.calendar
+      }
       return Version(
-        marketing: inputs.calendar, build: build, tag: tag, track: releaseTrack)
+        marketing: marketing, build: build, tag: tag, track: releaseTrack)
     }
     if isPositiveInteger(inputs.githubRunNumber) {
       return Version(
@@ -221,6 +227,14 @@ public enum VersionMeta {
   public static func isValidStableTag(_ tag: String) -> Bool {
     let stableTagPattern = "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-r[1-9][0-9]*)?$"
     return tag.range(of: stableTagPattern, options: .regularExpression) != nil
+  }
+
+  static func stableMarketingVersion(for tag: String) -> String {
+    let revisionPattern = "-r[1-9][0-9]*$"
+    guard let revisionRange = tag.range(of: revisionPattern, options: .regularExpression) else {
+      return tag
+    }
+    return String(tag[..<revisionRange.lowerBound])
   }
 
   public static func isValidPrereleaseTag(_ tag: String) -> Bool {
