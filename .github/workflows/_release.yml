@@ -18,6 +18,21 @@ on:
       ephemeral:
         type: boolean
         default: false
+      release-track:
+        type: string
+        required: true
+      candidate-tag:
+        type: string
+        default: ""
+      source-sha:
+        type: string
+        default: ""
+      allow-source-sha:
+        type: boolean
+        required: true
+      candidate-asset-pattern:
+        type: string
+        default: "*.dmg"
       # Self-hosted macOS pool routing, shared with _ci.yml through the reusable
       # _plan-runners.yml. When the broker reports capacity the macOS jobs (build,
       # notarize) run on local-pool-label; otherwise they fall back to inputs.runner.
@@ -92,6 +107,19 @@ on:
       timeout-minutes:
         type: number
         default: 45
+    outputs:
+      release-tag:
+        value: ${{ jobs.meta.outputs.release_tag }}
+      release-track:
+        value: ${{ jobs.meta.outputs.release_track }}
+      source-sha:
+        value: ${{ jobs.meta.outputs.source_sha }}
+      artifact-version:
+        value: ${{ jobs.meta.outputs.artifact_version }}
+      build-version:
+        value: ${{ jobs.meta.outputs.build_version }}
+      marketing-version:
+        value: ${{ jobs.meta.outputs.marketing_version }}
     secrets:
       APPLE_DEVELOPER_ID_P12_BASE64:
         required: false
@@ -118,7 +146,34 @@ env:
   # Match CI diagnostics logging when the pull request carries the label.
   SWIFT_MK_LOG_LEVEL: ${{ inputs.ephemeral && contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') && 'debug' || '' }}
 
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
 jobs:
+  source:
+    name: Resolve Release Source
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: Resolve source
+        id: resolve
+        shell: bash
+        env:
+          RELEASE_TRACK: ${{ inputs.release-track }}
+          CANDIDATE_TAG: ${{ inputs.candidate-tag }}
+          SOURCE_SHA: ${{ inputs.source-sha }}
+          ALLOW_SOURCE_SHA: ${{ inputs.allow-source-sha }}
+          CANDIDATE_ASSET_PATTERN: ${{ inputs.candidate-asset-pattern }}
+        run: bash scripts/release-source.sh
+
   # Decide pool-or-hosted for the macOS jobs, reusing the same capacity check the
   # CI gates use, so release is infra-agnostic. This runs the plan-runner action
   # as a normal job, so the check reads `Release / swift / Route` with no reusable
@@ -157,6 +212,7 @@ jobs:
 
   meta:
     name: Meta
+    needs: source
     runs-on: ubuntu-latest
     # Run in the Swift toolchain image so the prebuilt Linux swift-mk can load
     # libIndexStore.so.21.0, which ships only inside the toolchain. On a bare
@@ -165,7 +221,11 @@ jobs:
     # change-detection job, which runs the same binary in the same image.
     container: swift:6.3
     outputs:
-      tag: ${{ steps.meta.outputs.tag }}
+      tag: ${{ steps.meta.outputs.release_tag }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      release_track: ${{ steps.meta.outputs.release_track }}
+      source_sha: ${{ needs.source.outputs.source_sha }}
+      artifact_version: ${{ steps.meta.outputs.artifact_version }}
       build_version: ${{ steps.meta.outputs.build_version }}
       marketing_version: ${{ steps.meta.outputs.marketing_version }}
     steps:
@@ -209,6 +269,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ref: ${{ needs.source.outputs.source_sha }}
       - name: Check out the swift-makefile engine
         uses: actions/checkout@v7
         with:
@@ -236,6 +297,10 @@ jobs:
         uses: ./.swift-makefile/.github/actions/setup-linux-swift-mk
       - name: Compute release metadata
         id: meta
+        env:
+          RELEASE_TRACK: ${{ inputs.release-track }}
+          RELEASE_TAG: ${{ needs.source.outputs.release_tag }}
+          SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
         run: make release-meta SWIFT_MK_BIN="${SWIFT_MK_BIN}"
 
   build:
@@ -252,6 +317,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ref: ${{ needs.meta.outputs.source_sha }}
 
       - name: Install brew packages
         if: inputs.brew-packages != ''
@@ -503,6 +569,9 @@ jobs:
           TEAM_ID: ${{ inputs.apple-team-id }}
           PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile.outputs.profile-specifier }}
           RELEASE_TAG: ${{ needs.meta.outputs.tag }}
+          RELEASE_TRACK: ${{ needs.meta.outputs.release_track }}
+          RELEASE_SOURCE_SHA: ${{ needs.meta.outputs.source_sha }}
+          ARTIFACT_VERSION: ${{ needs.meta.outputs.artifact_version }}
           MARKETING_VERSION: ${{ needs.meta.outputs.marketing_version }}
           CURRENT_PROJECT_VERSION: ${{ needs.meta.outputs.build_version }}
           SWIFT_MK_DIST_DIR: ${{ inputs.dist-dir }}
@@ -631,6 +700,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ref: ${{ needs.meta.outputs.source_sha }}
       - uses: actions/download-artifact@v8
         with:
           name: release-dist-stapled-${{ needs.meta.outputs.tag }}
@@ -638,6 +708,8 @@ jobs:
       - name: Publish release
         env:
           RELEASE_TAG: ${{ needs.meta.outputs.tag }}
+          RELEASE_TRACK: ${{ needs.meta.outputs.release_track }}
+          RELEASE_SOURCE_SHA: ${{ needs.meta.outputs.source_sha }}
           SWIFT_MK_DIST_DIR: ${{ inputs.dist-dir }}
         run: make release-publish
 

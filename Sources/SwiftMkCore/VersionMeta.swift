@@ -20,17 +20,32 @@ import Foundation
 // MARK: - VersionMeta
 
 public enum VersionMeta {
+  public enum ReleaseTrack: String, Sendable, Equatable {
+    case prerelease
+    case stable
+  }
+
   /// A resolved version: the marketing (short) string, the build number, and the
   /// release tag.
   public struct Version: Sendable, Equatable {
     public let marketing: String
     public let build: String
     public let tag: String
+    public let artifact: String
+    public let track: ReleaseTrack?
 
-    public init(marketing: String, build: String, tag: String) {
+    public init(
+      marketing: String,
+      build: String,
+      tag: String,
+      artifact: String? = nil,
+      track: ReleaseTrack? = nil
+    ) {
       self.marketing = marketing
       self.build = build
       self.tag = tag
+      self.artifact = artifact ?? artifactVersion(for: tag)
+      self.track = track
     }
   }
 
@@ -42,6 +57,12 @@ public enum VersionMeta {
   /// release-meta.
   static let tagHexRadix = 16
 
+  /// GitHub run numbers are encoded into the final six build-number digits.
+  static let releaseRunNumberMaxDigits = 6
+
+  /// A release run number must be positive because zero is reserved for absence.
+  static let minimumReleaseRunNumber = 1
+
   /// The xcodebuild build-setting keys the chokepoint injects, uppercased. The
   /// stamp resolves the version only when at least one of these is missing from a
   /// request, so a build that already carries both never triggers resolution.
@@ -51,6 +72,9 @@ public enum VersionMeta {
 
   public enum VersionError: Error, CustomStringConvertible {
     case buildVersionTooLong(String)
+    case invalidReleaseRunNumber(String)
+    case invalidReleaseTag(String)
+    case invalidSourceSelection(String)
 
     public var description: String {
       switch self {
@@ -58,6 +82,14 @@ public enum VersionMeta {
         return
           "version-meta: build_version \(value) exceeds CFBundleVersion's "
           + "\(VersionMeta.buildVersionMaxLength) characters"
+      case .invalidReleaseRunNumber(let value):
+        return
+          "version-meta: release run number \(value) must be a nonzero decimal "
+          + "value up to six digits"
+      case .invalidReleaseTag(let value):
+        return "version-meta: invalid release tag \(value)"
+      case .invalidSourceSelection(let reason):
+        return "version-meta: invalid release source selection: \(reason)"
       }
     }
   }
@@ -79,6 +111,8 @@ public enum VersionMeta {
     let calendar: String
     /// Short git sha, or empty when git is unavailable.
     let shortSHA: String
+    let releaseTrack: ReleaseTrack?
+    let releaseTag: String
   }
 
   // MARK: Pure computation
@@ -95,7 +129,16 @@ public enum VersionMeta {
   static func computed(_ inputs: Inputs) -> Version {
     let tag = resolveTag(inputs)
     if !inputs.marketingEnv.isEmpty, !inputs.buildEnv.isEmpty {
-      return Version(marketing: inputs.marketingEnv, build: inputs.buildEnv, tag: tag)
+      return Version(
+        marketing: inputs.marketingEnv,
+        build: inputs.buildEnv,
+        tag: tag,
+        track: inputs.releaseTrack)
+    }
+    if let releaseTrack = inputs.releaseTrack {
+      let build = fixedWidthBuildVersion(inputs.timestamp, runNumber: inputs.githubRunNumber)
+      return Version(
+        marketing: inputs.calendar, build: build, tag: tag, track: releaseTrack)
     }
     if isPositiveInteger(inputs.githubRunNumber) {
       return Version(
@@ -111,14 +154,30 @@ public enum VersionMeta {
   /// Compute the version and enforce the 18-character build-number cap, the
   /// authoritative path `version-meta` prints and the release relies on.
   static func compute(_ inputs: Inputs) throws -> Version {
+    if inputs.releaseTrack != nil {
+      try assertReleaseRunNumber(inputs.githubRunNumber)
+      try assertReleaseTag(resolveTag(inputs), track: inputs.releaseTrack)
+    }
     let version = computed(inputs)
     try assertBuildLength(version.build)
+    if version.track != nil {
+      try assertFixedWidthBuildVersion(version.build)
+    }
     return version
   }
 
   /// The release tag: the pushed tag name on a tag ref, else `<timestamp>-<hex run
   /// number>-<sha>` in CI, else a dev tag for a local build.
   static func resolveTag(_ inputs: Inputs) -> String {
+    if !inputs.releaseTag.isEmpty {
+      return inputs.releaseTag
+    }
+    if inputs.releaseTrack == .prerelease {
+      return "\(inputs.calendar)-pre.\(inputs.timestamp)+\(inputs.shortSHA)"
+    }
+    if inputs.releaseTrack == .stable {
+      return inputs.calendar
+    }
     if inputs.githubRefType == "tag", !inputs.githubRefName.isEmpty {
       return inputs.githubRefName
     }
@@ -136,6 +195,92 @@ public enum VersionMeta {
     if build.count > buildVersionMaxLength {
       throw VersionError.buildVersionTooLong(build)
     }
+  }
+
+  static func fixedWidthBuildVersion(_ timestamp: String, runNumber: String) -> String {
+    let parsedRunNumber = UInt64(runNumber) ?? 0
+    return timestamp + String(format: "%06llu", parsedRunNumber)
+  }
+
+  static func assertReleaseRunNumber(_ runNumber: String) throws {
+    guard let parsedRunNumber = UInt64(runNumber),
+      parsedRunNumber >= minimumReleaseRunNumber,
+      runNumber.count <= releaseRunNumberMaxDigits
+    else {
+      throw VersionError.invalidReleaseRunNumber(runNumber)
+    }
+  }
+
+  static func assertFixedWidthBuildVersion(_ build: String) throws {
+    let fixedWidthBuildPattern = "^[0-9]{18}$"
+    if build.range(of: fixedWidthBuildPattern, options: .regularExpression) == nil {
+      throw VersionError.invalidReleaseTag(build)
+    }
+  }
+
+  public static func isValidStableTag(_ tag: String) -> Bool {
+    let stableTagPattern = "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-r[1-9][0-9]*)?$"
+    return tag.range(of: stableTagPattern, options: .regularExpression) != nil
+  }
+
+  public static func isValidPrereleaseTag(_ tag: String) -> Bool {
+    let prereleaseTagPattern =
+      "^[0-9]+\\.[0-9]+\\.[0-9]+-pre\\.[0-9]{12}\\+[A-Za-z0-9]+$"
+    return tag.range(of: prereleaseTagPattern, options: .regularExpression) != nil
+  }
+
+  public static func artifactVersion(for tag: String) -> String {
+    tag.replacingOccurrences(of: "+", with: "-")
+  }
+
+  static func assertReleaseTag(_ tag: String, track: ReleaseTrack?) throws {
+    guard let track else {
+      return
+    }
+    let isValid: Bool
+    switch track {
+    case .prerelease:
+      isValid = isValidPrereleaseTag(tag)
+    case .stable:
+      isValid = isValidStableTag(tag)
+    }
+    if !isValid {
+      throw VersionError.invalidReleaseTag(tag)
+    }
+  }
+
+  public static func validateSource(
+    track: ReleaseTrack,
+    candidateTag: String,
+    sourceSHA: String,
+    allowSourceSHA: Bool
+  ) throws {
+    let hasCandidateTag = !candidateTag.isEmpty
+    let hasSourceSHA = !sourceSHA.isEmpty
+    if track == .prerelease {
+      if hasCandidateTag || hasSourceSHA || allowSourceSHA {
+        throw VersionError.invalidSourceSelection("prerelease builds use the workflow commit")
+      }
+      return
+    }
+    if hasCandidateTag, hasSourceSHA {
+      throw VersionError.invalidSourceSelection("candidate-tag and source-sha conflict")
+    }
+    if hasCandidateTag {
+      if !isValidPrereleaseTag(candidateTag) {
+        throw VersionError.invalidSourceSelection(
+          "candidate-tag must use the prerelease tag format")
+      }
+      return
+    }
+    if hasSourceSHA, allowSourceSHA {
+      return
+    }
+    if hasSourceSHA {
+      throw VersionError.invalidSourceSelection("source-sha requires allow-source-sha=true")
+    }
+    throw VersionError.invalidSourceSelection(
+      "stable builds require candidate-tag or acknowledged source-sha")
   }
 
   /// A run number is only usable when it parses as a base-ten unsigned integer.
@@ -163,7 +308,9 @@ public enum VersionMeta {
       githubRunNumber: Env.get("GITHUB_RUN_NUMBER"),
       timestamp: timestamp(from: components),
       calendar: calendarVersion(from: components),
-      shortSHA: shortSHA())
+      shortSHA: shortSHA(),
+      releaseTrack: ReleaseTrack(rawValue: Env.get("RELEASE_TRACK")),
+      releaseTag: Env.get("RELEASE_TAG"))
   }
 
   /// Resolve the version from the live environment, enforcing the build cap. This

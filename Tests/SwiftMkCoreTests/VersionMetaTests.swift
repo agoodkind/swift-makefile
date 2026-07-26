@@ -24,7 +24,9 @@ enum VersionMetaTests {
     githubRunNumber: String = "",
     timestamp: String = "202607221530",
     calendar: String = "26.7.22",
-    shortSHA: String = "a1b2c3d"
+    shortSHA: String = "a1b2c3d",
+    releaseTrack: VersionMeta.ReleaseTrack? = nil,
+    releaseTag: String = ""
   ) -> VersionMeta.Inputs {
     VersionMeta.Inputs(
       marketingEnv: marketingEnv,
@@ -34,7 +36,9 @@ enum VersionMetaTests {
       githubRunNumber: githubRunNumber,
       timestamp: timestamp,
       calendar: calendar,
-      shortSHA: shortSHA)
+      shortSHA: shortSHA,
+      releaseTrack: releaseTrack,
+      releaseTag: releaseTag)
   }
 
   @Test
@@ -63,6 +67,79 @@ enum VersionMetaTests {
   }
 
   @Test
+  static func prereleaseTrackBuildsTheApprovedTagAndArtifactVersion() throws {
+    // Removing the prerelease tag grammar would make a candidate impossible to
+    // publish and a filename unsafe for a literal plus sign.
+    let version = try VersionMeta.compute(
+      inputs(githubRunNumber: "87", releaseTrack: .prerelease))
+    #expect(version.marketing == "26.7.22")
+    #expect(version.build == "202607221530000087")
+    #expect(version.tag == "26.7.22-pre.202607221530+a1b2c3d")
+    #expect(version.artifact == "26.7.22-pre.202607221530-a1b2c3d")
+    #expect(version.track == .prerelease)
+  }
+
+  @Test(arguments: ["26.7.26", "26.7.26-r1", "26.7.26-r12"])
+  static func stableTagsAcceptBaseAndSameDayRevisions(tag: String) {
+    // Rejecting a valid revision tag would prevent a corrected same-day stable release.
+    #expect(VersionMeta.isValidStableTag(tag))
+  }
+
+  @Test(arguments: ["26.7.26-r0", "26.7.26-r01", "26.7.26-pre.202607261030+abc1234"])
+  static func stableTagsRejectInvalidFormats(tag: String) {
+    // Accepting a pre-release or malformed revision as stable would cross tracks.
+    #expect(!VersionMeta.isValidStableTag(tag))
+  }
+
+  @Test
+  static func fixedWidthBuildNumbersPreserveSameDayOrdering() throws {
+    // Dropping zero padding would make run 87 rank after run 123456 in lexical consumers.
+    let earlier = try VersionMeta.compute(
+      inputs(githubRunNumber: "87", releaseTrack: .prerelease))
+    let later = try VersionMeta.compute(
+      inputs(githubRunNumber: "88", releaseTrack: .prerelease))
+    #expect(earlier.build == "202607221530000087")
+    #expect(later.build == "202607221530000088")
+    #expect(earlier.build.count == 18)
+    #expect(earlier.build < later.build)
+  }
+
+  @Test(arguments: ["", "0", "000000", "abc", "1000000"])
+  static func invalidRunNumbersFailTheReleaseContract(runNumber: String) {
+    // Treating an invalid run number as a distributable version would break ordering.
+    #expect(throws: VersionMeta.VersionError.self) {
+      try VersionMeta.compute(inputs(githubRunNumber: runNumber, releaseTrack: .prerelease))
+    }
+  }
+
+  @Test
+  static func sourceSelectionRejectsConflictingAndUnacknowledgedInputs() {
+    // Accepting either combination could publish a stable release from an unintended commit.
+    #expect(throws: VersionMeta.VersionError.self) {
+      try VersionMeta.validateSource(
+        track: .stable,
+        candidateTag: "26.7.26-pre.202607261030+abc1234",
+        sourceSHA: "abc1234",
+        allowSourceSHA: true)
+    }
+    #expect(throws: VersionMeta.VersionError.self) {
+      try VersionMeta.validateSource(
+        track: .stable,
+        candidateTag: "",
+        sourceSHA: "abc1234",
+        allowSourceSHA: false)
+    }
+  }
+
+  @Test
+  static func prereleaseSourceSelectionUsesTheWorkflowCommit() throws {
+    // Rejecting an empty pre-release selection would prevent the workflow commit
+    // from being the pre-release source.
+    try VersionMeta.validateSource(
+      track: .prerelease, candidateTag: "", sourceSHA: "", allowSourceSHA: false)
+  }
+
+  @Test
   static func tagRefUsesThePushedTagName() throws {
     let version = try VersionMeta.compute(
       inputs(githubRefType: "tag", githubRefName: "v1.2.3", githubRunNumber: "80"))
@@ -77,11 +154,12 @@ enum VersionMetaTests {
     let version = try VersionMeta.compute(
       inputs(
         marketingEnv: "26.7.22",
-        buildEnv: "20260722153080",
-        githubRunNumber: "80"))
+        buildEnv: "202607221530000080",
+        githubRunNumber: "80",
+        releaseTrack: .prerelease))
     #expect(version.marketing == "26.7.22")
-    #expect(version.build == "20260722153080")
-    #expect(version.tag == "202607221530-50-a1b2c3d")
+    #expect(version.build == "202607221530000080")
+    #expect(version.tag == "26.7.22-pre.202607221530+a1b2c3d")
   }
 
   @Test
