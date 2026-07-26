@@ -22,6 +22,7 @@ import NIOPosix
 /// the network, which path it asked for, and what each call returned.
 struct FetchRecord: Sendable {
   let path: String
+  let method: String
   let ifNoneMatch: String
   let status: Int
   let bytes: Int
@@ -165,6 +166,7 @@ private final class FetchHandler: ChannelInboundHandler {
 
   private let state: FetchState
   private var requestPath = ""
+  private var requestMethod: HTTPMethod = .GET
   private var ifNoneMatch = ""
 
   init(state: FetchState) {
@@ -175,6 +177,7 @@ private final class FetchHandler: ChannelInboundHandler {
     switch unwrapInboundIn(data) {
       case .head(let head):
         requestPath = head.uri
+        requestMethod = head.method
         ifNoneMatch = head.headers.first(name: "If-None-Match") ?? ""
       case .body:
         break
@@ -190,35 +193,38 @@ private final class FetchHandler: ChannelInboundHandler {
     }
 
     let status: HTTPResponseStatus
-    let bodyBytes: [UInt8]
+    let contentBytes: [UInt8]
     if let forcedStatus = current.forcedStatus {
       status = HTTPResponseStatus(statusCode: forcedStatus)
-      bodyBytes = []
+      contentBytes = []
     } else {
       let matched = current.etagEnabled && ifNoneMatch == current.etag
       status = matched ? .notModified : .ok
-      bodyBytes = matched ? [] : current.tarball
+      contentBytes = matched ? [] : current.tarball
     }
+    // A HEAD response reports the same status and content length a GET would,
+    // but never actually transmits a body, matching real codeload.github.com.
+    let transmittedBytes = requestMethod == .HEAD ? [] : contentBytes
 
     var headers = HTTPHeaders()
     if current.etagEnabled {
       headers.add(name: "ETag", value: current.etag)
     }
-    headers.add(name: "Content-Length", value: String(bodyBytes.count))
+    headers.add(name: "Content-Length", value: String(contentBytes.count))
 
     let head = HTTPResponseHead(version: .http1_1, status: status, headers: headers)
     context.write(wrapOutboundOut(.head(head)), promise: nil)
-    if !bodyBytes.isEmpty {
-      var buffer = context.channel.allocator.buffer(capacity: bodyBytes.count)
-      buffer.writeBytes(bodyBytes)
+    if !transmittedBytes.isEmpty {
+      var buffer = context.channel.allocator.buffer(capacity: transmittedBytes.count)
+      buffer.writeBytes(transmittedBytes)
       context.write(wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
     }
     context.writeAndFlush(wrapOutboundOut(.end(nil)), promise: nil)
 
     state.record(
       FetchRecord(
-        path: requestPath, ifNoneMatch: ifNoneMatch, status: Int(status.code),
-        bytes: bodyBytes.count))
+        path: requestPath, method: requestMethod.rawValue, ifNoneMatch: ifNoneMatch,
+        status: Int(status.code), bytes: transmittedBytes.count))
   }
 }
 

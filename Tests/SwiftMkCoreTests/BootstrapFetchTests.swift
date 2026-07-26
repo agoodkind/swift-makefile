@@ -60,16 +60,25 @@ func runHelper(directory: String, environment: [String: String]) -> (
   stdout: String, stderr: String, status: Int32
 ) {
   let helper = repositoryRoot() + "/scripts/swift-mk-bootstrap.sh"
-  var merged: [String: String] = [
-    "PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin",
-    "HOME": ProcessInfo.processInfo.environment["HOME"] ?? "",
-    "SWIFT_MK_API_REPO": "agoodkind/swift-makefile",
-    "SWIFT_MK_API_REF": "main",
-    "SWIFT_MK_DEV_DIR": "",
-    "SWIFT_MK_MODULES": "",
-    "GITHUB_ACTIONS": "",
-    "GITHUB_RUN_ID": "",
-  ]
+  // Reading ProcessInfo.processInfo.environment enumerates the process-wide libc
+  // environ table. Several other suites in this target call setenv/unsetenv
+  // (see TestGlobalLock in GatedBuildHarness.swift), and Swift Testing runs
+  // suites in parallel within this one process, so an unsynchronized read here
+  // can race a concurrent setenv and observe a corrupted or partially-freed
+  // PATH/HOME value. TestGlobalLock is the same lock those setenv call sites
+  // already hold, so this read is now serialized against them.
+  var merged: [String: String] = TestGlobalLock.withLock {
+    [
+      "PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin",
+      "HOME": ProcessInfo.processInfo.environment["HOME"] ?? "",
+      "SWIFT_MK_API_REPO": "agoodkind/swift-makefile",
+      "SWIFT_MK_API_REF": "main",
+      "SWIFT_MK_DEV_DIR": "",
+      "SWIFT_MK_MODULES": "",
+      "GITHUB_ACTIONS": "",
+      "GITHUB_RUN_ID": "",
+    ]
+  }
   for (key, value) in environment {
     merged[key] = value
   }
@@ -316,9 +325,21 @@ func helperTouchesNothingWhenUpstreamReturnsNotModified() throws {
       .status == 0)
 
   let path = makePath(directory, "swift.mk")
+  let markerPath = makePath(directory, ".swift-mk-snapshot-ref")
   let before = try FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date
-  // A 304 must not re-extract, so the mtime must not move. Sleep past the
-  // filesystem timestamp granularity so a re-extract would be detectable.
+  // The marker's raw bytes, not just its parsed fields, so a rewrite that
+  // happens to preserve every field's value but reorders the lines would
+  // still be caught. Content alone is not enough, though: the recorded
+  // timestamp field has one-second resolution, so a rewrite landing in the
+  // same wall-clock second as the original write would still produce
+  // byte-identical content. The marker's own modification time closes that
+  // gap, since the filesystem records it independently of what was written.
+  let markerBefore = readMakeFile(directory, ".swift-mk-snapshot-ref")
+  #expect(markerBefore != nil)
+  let markerMtimeBefore =
+    try FileManager.default.attributesOfItem(atPath: markerPath)[.modificationDate] as? Date
+  // Sleep past the filesystem timestamp granularity so a re-extract, or a
+  // marker rewrite, would be detectable.
   Thread.sleep(forTimeInterval: 1.1)
 
   let second = runHelper(
@@ -327,6 +348,14 @@ func helperTouchesNothingWhenUpstreamReturnsNotModified() throws {
 
   let after = try FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date
   #expect(before == after, "a 304 re-extracted the tree and moved mtimes")
+
+  let markerAfter = readMakeFile(directory, ".swift-mk-snapshot-ref")
+  #expect(markerBefore == markerAfter, "a 304 rewrote the marker instead of leaving it untouched")
+  let markerMtimeAfter =
+    try FileManager.default.attributesOfItem(atPath: markerPath)[.modificationDate] as? Date
+  #expect(
+    markerMtimeBefore == markerMtimeAfter,
+    "a 304 touched the marker's modification time instead of leaving it untouched")
 
   let requests = server.requests()
   #expect(requests.count == 2)
@@ -440,4 +469,81 @@ func helperProvisionsUnconditionallyInCI() throws {
   #expect(server.requests().count == 1)
   #expect(server.requests()[0].ifNoneMatch.isEmpty, "CI sent a conditional request")
   #expect(server.requests()[0].status == 200)
+}
+
+@Test
+func helperFailsWhenUpstreamOmitsTheETagHeader() throws {
+  // Recording a marker with an empty etag would silently degrade every later
+  // run into an unconditional full download forever, with nothing ever
+  // printed to explain why validation never kicks in. The provision must fail
+  // loudly here instead, and leave .make exactly as it found it (empty, on a
+  // cold run), so the next run tries again rather than limping along with a
+  // marker that can never validate.
+  let server = try FetchServer(files: engineFiles())
+  defer { server.shutdown() }
+  server.setETagEnabled(false)
+  let directory = try temporaryConsumer()
+
+  let result = runHelper(
+    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+  #expect(result.status != 0)
+  #expect(readMakeFile(directory, "swift.mk") == nil)
+  #expect(readMarker(directory)["etag"] == nil)
+}
+
+@Test
+func helperValidatesWithAHeadRequestCarryingNoBody() throws {
+  // A GET-based probe would download and discard the full tarball on every
+  // run whose upstream moved, doubling the transfer and making the 3 second
+  // validation budget dishonest for anything but a tiny snapshot. A HEAD
+  // probe carries no body either way, so the budget stays honest and a moved
+  // upstream costs one real transfer instead of two. The cold run's marker
+  // carries the real recorded etag, so the follow-up run's validation
+  // genuinely matches and 304s, proving the HEAD request alone is enough
+  // to confirm nothing changed.
+  let server = try FetchServer(files: engineFiles())
+  defer { server.shutdown() }
+  let directory = try temporaryConsumer()
+
+  #expect(
+    runHelper(directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+      .status == 0)
+
+  let result = runHelper(
+    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+  #expect(result.status == 0, "\(result.stderr)")
+
+  let requests = server.requests()
+  #expect(requests.count == 2)
+  #expect(requests[1].method == "HEAD")
+  #expect(requests[1].bytes == 0)
+  #expect(requests[1].status == 304)
+}
+
+@Test
+func helperDoesNotReuseAnEtagRecordedForADifferentRef() throws {
+  // A marker recorded while pinned to one ref must never validate against a
+  // different ref: an unreachable new ref falling back to the old ref's
+  // cached snapshot would be a wrong-content serve, not a safe reuse.
+  let server = try FetchServer(files: engineFiles())
+  defer { server.shutdown() }
+  let directory = try temporaryConsumer()
+  try warmSnapshot(directory)
+  try writeMarker(
+    directory, ref: "main", etag: "\"cached-for-main\"",
+    timestamp: Int(Date().timeIntervalSince1970) - 600)
+
+  let result = runHelper(
+    directory: directory,
+    environment: [
+      "SWIFT_MK_CODELOAD_BASE": server.codeloadBase,
+      "SWIFT_MK_API_REF": "release/2.0",
+    ])
+  #expect(result.status == 0, "\(result.stderr)")
+
+  #expect(server.requests().count == 1)
+  #expect(
+    server.requests()[0].ifNoneMatch.isEmpty,
+    "a marker recorded for a different ref must not be sent as a conditional header")
+  #expect(server.requests()[0].path == "/agoodkind/swift-makefile/tar.gz/release/2.0")
 }

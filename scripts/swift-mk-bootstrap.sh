@@ -252,19 +252,28 @@ write_marker() {
     } > "${MARKER_PATH}"
 }
 
+# validate_upstream sends a HEAD request instead of a GET. A GET probe would
+# download and discard the full tarball on every run whose upstream moved,
+# doubling the transfer and making the 3 second validation budget dishonest
+# for anything larger than a tiny snapshot; a HEAD carries no body either way,
+# on a 200 or a 304, so the budget stays honest and a moved upstream costs one
+# real transfer (the later provision fetch) instead of two.
 validate_upstream() {
-    local destination_path="$1"
-    local known_etag="$2"
+    local known_etag="$1"
     local status_code
     local -a header_args=()
     if [[ -n "${known_etag}" ]]; then
         header_args=(-H "If-None-Match: ${known_etag}")
     fi
-    if ! status_code=$(curl -sS \
+    # "${header_args[@]+"${header_args[@]}"}" instead of a bare
+    # "${header_args[@]}": under bash 3.2 (still /bin/bash on stock macOS)
+    # with `set -u`, expanding a zero-element array directly raises "unbound
+    # variable". The `+` form only expands the array when it is non-empty.
+    if ! status_code=$(curl -sS --head \
         --connect-timeout "${VALIDATION_CONNECT_TIMEOUT}" \
         --max-time "${VALIDATION_MAX_TIME}" \
-        "${header_args[@]}" \
-        -o "${destination_path}" -w '%{http_code}' \
+        "${header_args[@]+"${header_args[@]}"}" \
+        -o /dev/null -w '%{http_code}' \
         "${SWIFT_MK_CODELOAD_BASE}/${SWIFT_MK_API_REPO}/tar.gz/${SWIFT_MK_API_REF}" 2>/dev/null); then
         return 1
     fi
@@ -329,17 +338,32 @@ provision() {
         if ! stage_fetch_and_verify "${stage_root}" "${stage_dir}"; then
             exit 1
         fi
+
+        # Checked before install_from_stage runs, not after, so a response
+        # with no ETag header leaves .make exactly as it was, the same
+        # invariant every other failure path here holds. Recording a marker
+        # with an empty etag would silently degrade every later run into an
+        # unconditional full download forever, with nothing printed to
+        # explain why validation never engages again; failing loudly here
+        # instead means the next run tries again rather than limping along.
+        etag_value=$(awk 'tolower($1) == "etag:" { print $2 }' "${stage_root}/headers" | tr -d '\r' | tail -n 1)
+        if [[ -z "${etag_value}" ]]; then
+            printf 'error: upstream response for %s carried no ETag header; cannot safely record a validation marker\n' \
+                "${SWIFT_MK_API_REF}" >&2
+            exit 1
+        fi
+
         if ! install_from_stage "${stage_dir}"; then
             exit 1
         fi
-        write_marker "$(awk 'tolower($1) == "etag:" { print $2 }' "${stage_root}/headers" | tr -d '\r' | tail -n 1)"
+        write_marker "${etag_value}"
     )
 }
 
 main() {
     local known_etag=""
     local status_code=""
-    local probe_root
+    local stored_ref=""
 
     mkdir -p "${MAKE_DIR}"
 
@@ -359,13 +383,20 @@ main() {
     # a failed fetch never falls back to reusing what is on disk: a CI run
     # provisions unconditionally or fails outright.
     if ! running_in_ci && assets_complete "${MAKE_DIR}"; then
-        known_etag=$(read_marker_field "etag" || printf '')
+        # The etag is only trustworthy against the ref it was recorded for.
+        # If SWIFT_MK_API_REF has changed since, the stored etag describes a
+        # different ref's content: validating against it, or worse, serving
+        # it from disk when the new ref is unreachable, would be a
+        # wrong-content serve. A ref mismatch is treated the same as no
+        # marker at all.
+        stored_ref=$(read_marker_field "ref" || printf '')
+        if [[ "${stored_ref}" == "${SWIFT_MK_API_REF}" ]]; then
+            known_etag=$(read_marker_field "etag" || printf '')
+        fi
     fi
 
     if [[ -n "${known_etag}" ]]; then
-        probe_root=$(mktemp -d "${TMPDIR:-/tmp}/swift-mk-probe.XXXXXXXX") || return 1
-        status_code=$(validate_upstream "${probe_root}/snapshot.tar.gz" "${known_etag}" || printf '')
-        rm -rf "${probe_root}"
+        status_code=$(validate_upstream "${known_etag}" || printf '')
         if [[ "${status_code}" == "304" ]]; then
             # Deliberately no marker write. The reuse window is a fixed hour
             # from the last real download, not a window a successful check can
