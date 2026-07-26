@@ -276,8 +276,8 @@ jobs:
       - name: Check out the swift-makefile engine
         uses: actions/checkout@v7
         with:
-          repository: agoodkind/swift-makefile
-          ref: ${{ github.repository == 'agoodkind/swift-makefile' && github.sha || 'main' }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .swift-makefile
           fetch-depth: 1
       - name: Trust the workspace for git

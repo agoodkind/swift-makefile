@@ -50,6 +50,13 @@ require_value(source_checkout.dig("with", "path"), ".swift-makefile", "source re
 source_step = find_step(source_job.fetch("steps"), "Resolve source")
 require_value(source_step.fetch("run"), "bash .swift-makefile/scripts/release-source.sh", "source resolver")
 
+meta_job = workflow.dig("jobs", "meta")
+meta_engine_checkout = find_step(meta_job.fetch("steps"), "Check out the swift-makefile engine")
+require_value(meta_engine_checkout.fetch("uses"), "actions/checkout@v7", "metadata engine checkout action")
+require_value(meta_engine_checkout.dig("with", "repository"), "${{ job.workflow_repository }}", "metadata engine repository")
+require_value(meta_engine_checkout.dig("with", "ref"), "${{ job.workflow_sha }}", "metadata engine revision")
+require_value(meta_engine_checkout.dig("with", "path"), ".swift-makefile", "metadata engine path")
+
 build_job = workflow.dig("jobs", "build")
 build_checkout = build_job.fetch("steps").find { |step| step["uses"] == "actions/checkout@v7" }
 require_value(build_checkout.dig("with", "ref"), "${{ needs.meta.outputs.source_sha }}", "build source checkout")
