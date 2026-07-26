@@ -261,3 +261,150 @@ func helperSkipFetchRejectsARequiredAssetThatIsActuallyADirectory() throws {
     environment: ["SWIFT_MK_CODELOAD_BASE": "http://127.0.0.1:9", "SWIFT_MK_SKIP_FETCH": "1"])
   #expect(result.status != 0)
 }
+
+func readMarker(_ directory: String) -> [String: String] {
+  guard let body = readMakeFile(directory, ".swift-mk-snapshot-ref") else {
+    return [:]
+  }
+  var fields: [String: String] = [:]
+  for line in body.split(separator: "\n") {
+    let parts = line.split(separator: "=", maxSplits: 1)
+    if parts.count == 2 {
+      fields[String(parts[0])] = String(parts[1])
+    }
+  }
+  return fields
+}
+
+func writeMarker(_ directory: String, ref: String, etag: String, timestamp: Int) throws {
+  try writeMakeFile(
+    directory, ".swift-mk-snapshot-ref", "ref=\(ref)\netag=\(etag)\ntimestamp=\(timestamp)\n")
+}
+
+/// Populates .make with a complete engine tree so only the validation decision
+/// is under test.
+func warmSnapshot(_ directory: String) throws {
+  for (name, body) in engineFiles() where name != "scripts/swift-mk-bootstrap.sh" {
+    try writeMakeFile(directory, name, body)
+  }
+}
+
+@Test
+func helperRecordsMarkerWithEtagOnColdProvision() throws {
+  let server = try FetchServer(files: engineFiles())
+  defer { server.shutdown() }
+  let directory = try temporaryConsumer()
+
+  let result = runHelper(
+    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+  #expect(result.status == 0, "\(result.stderr)")
+
+  let marker = readMarker(directory)
+  #expect(marker["ref"] == "main")
+  #expect(marker["etag"]?.isEmpty == false)
+  #expect(Int(marker["timestamp"] ?? "") != nil)
+}
+
+@Test
+func helperTouchesNothingWhenUpstreamReturnsNotModified() throws {
+  let server = try FetchServer(files: engineFiles())
+  defer { server.shutdown() }
+  let directory = try temporaryConsumer()
+
+  #expect(
+    runHelper(directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+      .status == 0)
+
+  let path = makePath(directory, "swift.mk")
+  let before = try FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date
+  // A 304 must not re-extract, so the mtime must not move. Sleep past the
+  // filesystem timestamp granularity so a re-extract would be detectable.
+  Thread.sleep(forTimeInterval: 1.1)
+
+  let second = runHelper(
+    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+  #expect(second.status == 0, "\(second.stderr)")
+
+  let after = try FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date
+  #expect(before == after, "a 304 re-extracted the tree and moved mtimes")
+
+  let requests = server.requests()
+  #expect(requests.count == 2)
+  #expect(requests[1].status == 304)
+  #expect(requests[1].bytes == 0)
+}
+
+@Test
+func helperUnfreezesAMarkerThatHoldsOnlyARefName() throws {
+  let server = try FetchServer(files: engineFiles())
+  defer { server.shutdown() }
+  let directory = try temporaryConsumer()
+  try warmSnapshot(directory)
+  // The format the current engine writes: a bare ref name, no ETag.
+  try writeMakeFile(directory, ".swift-mk-snapshot-ref", "main\n")
+
+  let result = runHelper(
+    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+  #expect(result.status == 0, "\(result.stderr)")
+
+  #expect(server.requests().count == 1)
+  #expect(server.requests()[0].status == 200, "a bare-ref marker must force a real fetch")
+  #expect(readMarker(directory)["etag"]?.isEmpty == false)
+}
+
+@Test
+func helperServesSnapshotWhenUpstreamStallsAndMarkerIsRecent() throws {
+  let server = try FetchServer(files: engineFiles())
+  defer { server.shutdown() }
+  let directory = try temporaryConsumer()
+  try warmSnapshot(directory)
+  try writeMarker(
+    directory, ref: "main", etag: "\"cached\"", timestamp: Int(Date().timeIntervalSince1970) - 600)
+  server.stall(5)
+
+  let result = runHelper(
+    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+  #expect(result.status == 0, "\(result.stderr)")
+  #expect(result.stderr.contains("serving the .make snapshot validated"))
+  #expect(readMakeFile(directory, "swift.mk") == "# swift.mk v1\n")
+}
+
+@Test
+func helperFailsWhenUpstreamStallsAndMarkerIsStale() throws {
+  let server = try FetchServer(files: engineFiles())
+  defer { server.shutdown() }
+  let directory = try temporaryConsumer()
+  try warmSnapshot(directory)
+  try writeMarker(
+    directory, ref: "main", etag: "\"cached\"", timestamp: Int(Date().timeIntervalSince1970) - 7200)
+  server.stall(5)
+
+  let result = runHelper(
+    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+  #expect(result.status != 0)
+  #expect(!result.stderr.contains("serving the .make snapshot validated"))
+  // Nothing may be destroyed even on the failing path.
+  #expect(readMakeFile(directory, "swift.mk") == "# swift.mk v1\n")
+}
+
+@Test
+func helperProvisionsUnconditionallyInCI() throws {
+  let server = try FetchServer(files: engineFiles())
+  defer { server.shutdown() }
+  let directory = try temporaryConsumer()
+  try warmSnapshot(directory)
+  try writeMarker(
+    directory, ref: "main", etag: "\"cached\"", timestamp: Int(Date().timeIntervalSince1970))
+
+  let result = runHelper(
+    directory: directory,
+    environment: [
+      "SWIFT_MK_CODELOAD_BASE": server.codeloadBase,
+      "GITHUB_ACTIONS": "true",
+      "GITHUB_RUN_ID": "1",
+    ])
+  #expect(result.status == 0, "\(result.stderr)")
+  #expect(server.requests().count == 1)
+  #expect(server.requests()[0].ifNoneMatch.isEmpty, "CI sent a conditional request")
+  #expect(server.requests()[0].status == 200)
+}

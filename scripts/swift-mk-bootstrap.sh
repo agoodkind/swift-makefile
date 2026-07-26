@@ -25,6 +25,10 @@ SWIFT_MK_MODULES="${SWIFT_MK_MODULES:-}"
 
 MAKE_DIR=".make"
 FETCH_MAX_TIME=60
+MARKER_PATH="${MAKE_DIR}/.swift-mk-snapshot-ref"
+VALIDATION_CONNECT_TIMEOUT=2
+VALIDATION_MAX_TIME=3
+REUSE_WINDOW_SECONDS=3600
 
 # Re-execute from a temp copy so replacing this file mid-run is safe. The guard
 # variable stops the copy from re-executing itself.
@@ -88,6 +92,7 @@ stage_fetch_and_verify() {
     local tar_status=0
 
     status_code=$(curl -sS --connect-timeout 5 --max-time "${FETCH_MAX_TIME}" \
+        -D "${stage_root}/headers" \
         -o "${stage_root}/snapshot.tar.gz" -w '%{http_code}' \
         "${url}" 2>"${curl_log}") || curl_status=$?
     if [[ ${curl_status} -ne 0 ]]; then
@@ -211,6 +216,105 @@ install_from_stage() {
     return 0
 }
 
+current_epoch_seconds() {
+    if [[ -n "${EPOCHSECONDS:-}" ]]; then
+        printf '%s' "${EPOCHSECONDS}"
+        return 0
+    fi
+    date +%s
+}
+
+# read_marker_field returns one field of the marker. A marker holding only a
+# bare ref name, which the previous engine wrote, has no fields, so every
+# lookup fails and the caller takes the cold path. That is what unfreezes a
+# consumer exactly once.
+read_marker_field() {
+    local field_name="$1"
+    local line
+    if [[ ! -s "${MARKER_PATH}" ]]; then
+        return 1
+    fi
+    while IFS= read -r line; do
+        if [[ "${line}" == "${field_name}="* ]]; then
+            printf '%s' "${line#"${field_name}="}"
+            return 0
+        fi
+    done < "${MARKER_PATH}"
+    return 1
+}
+
+write_marker() {
+    local etag_value="$1"
+    {
+        printf 'ref=%s\n' "${SWIFT_MK_API_REF}"
+        printf 'etag=%s\n' "${etag_value}"
+        printf 'timestamp=%s\n' "$(current_epoch_seconds)"
+    } > "${MARKER_PATH}"
+}
+
+validate_upstream() {
+    local destination_path="$1"
+    local known_etag="$2"
+    local status_code
+    local -a header_args=()
+    if [[ -n "${known_etag}" ]]; then
+        header_args=(-H "If-None-Match: ${known_etag}")
+    fi
+    if ! status_code=$(curl -sS \
+        --connect-timeout "${VALIDATION_CONNECT_TIMEOUT}" \
+        --max-time "${VALIDATION_MAX_TIME}" \
+        "${header_args[@]}" \
+        -o "${destination_path}" -w '%{http_code}' \
+        "${SWIFT_MK_CODELOAD_BASE}/${SWIFT_MK_API_REPO}/tar.gz/${SWIFT_MK_API_REF}" 2>/dev/null); then
+        return 1
+    fi
+    printf '%s' "${status_code}"
+}
+
+# marker_is_recent reports whether the recorded validation is inside the reuse
+# window. A timestamp in the future, which a backwards clock produces, is not
+# recent, so a bad clock forces a real fetch rather than an unbounded serve.
+marker_is_recent() {
+    local recorded
+    local now
+    if ! recorded=$(read_marker_field "timestamp"); then
+        return 1
+    fi
+    if [[ ! "${recorded}" =~ ^[0-9]+$ ]]; then
+        return 1
+    fi
+    now=$(current_epoch_seconds)
+    if (( recorded > now )); then
+        return 1
+    fi
+    (( now - recorded <= REUSE_WINDOW_SECONDS ))
+}
+
+format_age() {
+    local seconds="$1"
+    if (( seconds < 60 )); then
+        printf '%ds' "${seconds}"
+        return 0
+    fi
+    printf '%dm' "$(( seconds / 60 ))"
+}
+
+serve_from_disk_with_warning() {
+    local recorded
+    local etag_value
+    local now
+    recorded=$(read_marker_field "timestamp")
+    etag_value=$(read_marker_field "etag" || printf 'unknown')
+    now=$(current_epoch_seconds)
+    printf '%s\n' "swift-mk: upstream unreachable; serving the .make snapshot validated $(format_age $(( now - recorded ))) ago (etag ${etag_value}). Set SWIFT_MK_SKIP_FETCH=1 to silence, or check network access to ${SWIFT_MK_CODELOAD_BASE}" >&2
+}
+
+# running_in_ci matches the test Build.runsInlineGates already uses.
+# GITHUB_ACTIONS alone is not a CI run.
+running_in_ci() {
+    [[ "${GITHUB_ACTIONS:-}" == "true" && -n "${GITHUB_RUN_ID:-}" ]]
+}
+
 # A trap set with `trap ... RETURN` is not scoped to the function that set it:
 # it also fires when an enclosing caller later returns, which here would read
 # a stage_root local that has already gone out of scope. The staging work runs
@@ -228,10 +332,15 @@ provision() {
         if ! install_from_stage "${stage_dir}"; then
             exit 1
         fi
+        write_marker "$(awk 'tolower($1) == "etag:" { print $2 }' "${stage_root}/headers" | tr -d '\r' | tail -n 1)"
     )
 }
 
 main() {
+    local known_etag=""
+    local status_code=""
+    local probe_root
+
     mkdir -p "${MAKE_DIR}"
 
     if [[ -n "${SWIFT_MK_DEV_DIR}" ]]; then
@@ -244,6 +353,41 @@ main() {
         fi
         printf '%s\n' "error: SWIFT_MK_SKIP_FETCH=1 but .make is missing a required asset" >&2
         return 1
+    fi
+
+    # In CI the marker is never read, no conditional request is ever sent, and
+    # a failed fetch never falls back to reusing what is on disk: a CI run
+    # provisions unconditionally or fails outright.
+    if ! running_in_ci && assets_complete "${MAKE_DIR}"; then
+        known_etag=$(read_marker_field "etag" || printf '')
+    fi
+
+    if [[ -n "${known_etag}" ]]; then
+        probe_root=$(mktemp -d "${TMPDIR:-/tmp}/swift-mk-probe.XXXXXXXX") || return 1
+        status_code=$(validate_upstream "${probe_root}/snapshot.tar.gz" "${known_etag}" || printf '')
+        rm -rf "${probe_root}"
+        if [[ "${status_code}" == "304" ]]; then
+            # Deliberately no marker write. The reuse window is a fixed hour
+            # from the last real download, not a window a successful check can
+            # slide forward, and a 304 must leave .make byte-for-byte alone.
+            return 0
+        fi
+
+        if [[ -z "${status_code}" ]]; then
+            # The conditional request itself did not complete (timeout, DNS
+            # failure, connection refused). A recent marker still covers this
+            # with bounded offline reuse; a stale one fails outright here
+            # rather than escalating to a slower unconditional fetch against
+            # the same upstream the validation request could not reach.
+            if ! running_in_ci && marker_is_recent; then
+                serve_from_disk_with_warning
+                return 0
+            fi
+            printf '%s\n' "error: could not validate the swift-makefile engine snapshot against ${SWIFT_MK_CODELOAD_BASE}, and the cached snapshot is stale. Set SWIFT_MK_DEV_DIR, or check network access to ${SWIFT_MK_CODELOAD_BASE}" >&2
+            return 1
+        fi
+        # Any other real response (a 200 carrying changed content, or an
+        # unexpected error status) falls through to a full re-provision below.
     fi
 
     # `if provision; then` puts provision, and everything it calls, in bash's
