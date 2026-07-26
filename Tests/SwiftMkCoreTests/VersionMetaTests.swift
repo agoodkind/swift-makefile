@@ -171,10 +171,12 @@ enum VersionMetaTests {
 
     #expect(
       workflowCommitError
-        == "version-meta: invalid release source selection: pre-release builds use the workflow commit")
+        == "version-meta: invalid release source selection: pre-release builds use the workflow commit"
+    )
     #expect(
       candidateTagError
-        == "version-meta: invalid release source selection: candidate-tag must use the pre-release tag format")
+        == "version-meta: invalid release source selection: candidate-tag must use the pre-release tag format"
+    )
   }
 
   private static func sourceValidationError(_ operation: () throws -> Void) -> String {
