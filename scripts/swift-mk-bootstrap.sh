@@ -372,22 +372,19 @@ main() {
             # slide forward, and a 304 must leave .make byte-for-byte alone.
             return 0
         fi
+    fi
 
-        if [[ -z "${status_code}" ]]; then
-            # The conditional request itself did not complete (timeout, DNS
-            # failure, connection refused). A recent marker still covers this
-            # with bounded offline reuse; a stale one fails outright here
-            # rather than escalating to a slower unconditional fetch against
-            # the same upstream the validation request could not reach.
-            if ! running_in_ci && marker_is_recent; then
-                serve_from_disk_with_warning
-                return 0
-            fi
-            printf '%s\n' "error: could not validate the swift-makefile engine snapshot against ${SWIFT_MK_CODELOAD_BASE}, and the cached snapshot is stale. Set SWIFT_MK_DEV_DIR, or check network access to ${SWIFT_MK_CODELOAD_BASE}" >&2
-            return 1
-        fi
-        # Any other real response (a 200 carrying changed content, or an
-        # unexpected error status) falls through to a full re-provision below.
+    # A validation that did not complete (timeout, DNS failure, connection
+    # refused) or that returned something other than 304 still has one bounded
+    # offline-reuse option: a marker inside the reuse window serves the warm
+    # tree with a warning instead of blocking on a slow network. A marker
+    # outside the window falls through to a real provision attempt instead of
+    # failing here, since a validation timeout only proves the cheap 3 second
+    # check did not finish, not that the full fetch would also fail; only a
+    # provision that itself fails is a real failure.
+    if ! running_in_ci && [[ -n "${known_etag}" && -z "${status_code}" ]] && marker_is_recent; then
+        serve_from_disk_with_warning
+        return 0
     fi
 
     # `if provision; then` puts provision, and everything it calls, in bash's

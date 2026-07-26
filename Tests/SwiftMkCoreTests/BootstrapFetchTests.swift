@@ -371,7 +371,39 @@ func helperServesSnapshotWhenUpstreamStallsAndMarkerIsRecent() throws {
 
 @Test
 func helperFailsWhenUpstreamStallsAndMarkerIsStale() throws {
+  // The validation request stalls past its own 3 second budget and times out,
+  // but a stale marker forces a real provision attempt next, so the upstream
+  // also has to genuinely fail that second request (a real 500, not just a
+  // slow response) for the whole run to fail. Without forceStatus(500) here,
+  // the forced provision would stall the same 5 seconds and then succeed,
+  // since its budget is 60 seconds; see
+  // helperForceProvisionsWhenValidationTimesOutAndMarkerIsStale for that case.
   let server = try FetchServer(files: engineFiles())
+  defer { server.shutdown() }
+  let directory = try temporaryConsumer()
+  try warmSnapshot(directory)
+  try writeMarker(
+    directory, ref: "main", etag: "\"cached\"", timestamp: Int(Date().timeIntervalSince1970) - 7200)
+  server.stall(5)
+  server.forceStatus(500)
+
+  let result = runHelper(
+    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+  #expect(result.status != 0)
+  #expect(!result.stderr.contains("serving the .make snapshot validated"))
+  // Nothing may be destroyed even on the failing path.
+  #expect(readMakeFile(directory, "swift.mk") == "# swift.mk v1\n")
+}
+
+@Test
+func helperForceProvisionsWhenValidationTimesOutAndMarkerIsStale() throws {
+  // Regression guard: a validation timeout only proves the cheap 3 second
+  // check did not finish, not that the network is down. A stale marker must
+  // still force a real provision attempt with its own 60 second budget, and
+  // that attempt can succeed even though validation did not.
+  var updatedFiles = engineFiles()
+  updatedFiles["swift.mk"] = "# swift.mk v2\n"
+  let server = try FetchServer(files: updatedFiles)
   defer { server.shutdown() }
   let directory = try temporaryConsumer()
   try warmSnapshot(directory)
@@ -381,10 +413,11 @@ func helperFailsWhenUpstreamStallsAndMarkerIsStale() throws {
 
   let result = runHelper(
     directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
-  #expect(result.status != 0)
+  #expect(result.status == 0, "\(result.stderr)")
   #expect(!result.stderr.contains("serving the .make snapshot validated"))
-  // Nothing may be destroyed even on the failing path.
-  #expect(readMakeFile(directory, "swift.mk") == "# swift.mk v1\n")
+  // The forced provision reached the upstream and installed its current
+  // content, not the stale warm tree the marker described.
+  #expect(readMakeFile(directory, "swift.mk") == "# swift.mk v2\n")
 }
 
 @Test
