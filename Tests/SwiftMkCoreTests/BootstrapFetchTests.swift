@@ -214,3 +214,50 @@ func helperSwapFailureLeavesWarmTreeIntactForLaterSkipFetch() throws {
     ])
   #expect(skipFetchResult.status == 0, "skip-fetch failed: \(skipFetchResult.stderr)")
 }
+
+@Test
+func helperFailsWhenPreservingAGeneratedFileCannotBeCopied() throws {
+  // `if provision; then` puts everything provision calls in bash's -e ignore
+  // list, so a step inside install_from_stage that fails without an explicit
+  // check would be silently ignored rather than aborting. Forwarding a
+  // preserved runtime file that cannot be read is exactly such a step: it
+  // must fail loudly instead of quietly dropping the file from the new .make.
+  let server = try FetchServer(files: engineFiles())
+  defer { server.shutdown() }
+
+  let directory = try temporaryConsumer()
+  try writeMakeFile(directory, "swift.mk", "# warm swift.mk\n")
+  try writeMakeFile(directory, "Package.swift", "// warm\n")
+  try writeMakeFile(directory, "scripts/swift-mk-build.sh", "#!/usr/bin/env bash\nexit 0\n")
+  try writeMakeFile(directory, "build.lock", "warm lock\n")
+  let lockPath = makePath(directory, "build.lock")
+  try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: lockPath)
+  defer {
+    try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: lockPath)
+  }
+
+  let result = runHelper(
+    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+  #expect(result.status != 0)
+
+  // The install must abort rather than silently swap in a tree that dropped
+  // build.lock; the original warm tree, unreadable file included, survives.
+  #expect(readMakeFile(directory, "swift.mk") == "# warm swift.mk\n")
+  #expect(readMakeFile(directory, "Package.swift") == "// warm\n")
+}
+
+@Test
+func helperSkipFetchRejectsARequiredAssetThatIsActuallyADirectory() throws {
+  // assets_complete's old check, `-s` alone, is true for a non-empty
+  // directory as well as a regular file, so a required asset path that is
+  // actually a directory would have been accepted as complete.
+  let directory = try temporaryConsumer()
+  try writeMakeFile(directory, "swift.mk", "# warm swift.mk\n")
+  try writeMakeFile(directory, "Package.swift", "// warm\n")
+  try writeMakeFile(directory, "scripts/swift-mk-build.sh/placeholder", "not a script\n")
+
+  let result = runHelper(
+    directory: directory,
+    environment: ["SWIFT_MK_CODELOAD_BASE": "http://127.0.0.1:9", "SWIFT_MK_SKIP_FETCH": "1"])
+  #expect(result.status != 0)
+}

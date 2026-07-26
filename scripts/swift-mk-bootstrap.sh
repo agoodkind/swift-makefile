@@ -59,8 +59,13 @@ required_assets() {
 assets_complete() {
     local base_dir="$1"
     local asset_name
+    local asset_path
     while IFS= read -r asset_name; do
-        if [[ ! -s "${base_dir}/${asset_name}" ]]; then
+        asset_path="${base_dir}/${asset_name}"
+        # -s alone is true for a non-empty directory as well as a file, so a
+        # required asset path that is actually a directory would pass. -f
+        # requires it to be a regular file.
+        if [[ ! -f "${asset_path}" || ! -s "${asset_path}" ]]; then
             return 1
         fi
     done < <(required_assets)
@@ -95,7 +100,10 @@ stage_fetch_and_verify() {
         return 1
     fi
 
-    mkdir -p "${stage_dir}"
+    if ! mkdir -p "${stage_dir}"; then
+        printf 'error: could not create %s\n' "${stage_dir}" >&2
+        return 1
+    fi
     tar -xzf "${stage_root}/snapshot.tar.gz" -C "${stage_dir}" --strip-components 1 \
         2>"${tar_log}" || tar_status=$?
     if [[ ${tar_status} -ne 0 ]]; then
@@ -116,12 +124,20 @@ stage_fetch_and_verify() {
 # it into place with mv. Nothing under .make is removed until the replacement
 # is fully staged and verified, so a cp that fails partway, or any other
 # failure before the final mv, leaves the existing .make exactly as it was.
+#
+# This function runs inside provision's `if provision; then` condition, and
+# bash suppresses -e for the entire duration of a command used as an if/while
+# condition, including every function and subshell called from it. -e cannot
+# be relied on here at all: every step below that can fail is checked
+# explicitly and returns 1 itself, rather than assuming an unguarded command
+# would abort the function.
 install_from_stage() {
     local stage_dir="$1"
     local next_dir="${MAKE_DIR}.next"
     local previous_dir="${MAKE_DIR}.previous"
     local cp_log
     local cp_status=0
+    local preserved_path
     cp_log="$(dirname "${stage_dir}")/install-cp.log"
 
     rm -rf "${next_dir}" "${previous_dir}"
@@ -131,11 +147,17 @@ install_from_stage() {
     fi
 
     if [[ -d "${MAKE_DIR}" ]]; then
-        find "${MAKE_DIR}" -mindepth 1 -maxdepth 1 \
+        while IFS= read -r -d '' preserved_path; do
+            if ! cp -R "${preserved_path}" "${next_dir}/"; then
+                printf 'error: could not preserve %s while staging the engine tree\n' \
+                    "${preserved_path}" >&2
+                rm -rf "${next_dir}"
+                return 1
+            fi
+        done < <(find "${MAKE_DIR}" -mindepth 1 -maxdepth 1 \
             \( -name logs -o -name build.lock -o -name swift-mk -o -name swift-mk.key \
                -o -name swift-mk-build -o -name dev -o -name .swift-mk-snapshot-ref \
-               -o -name swift.mk -o -name '*.log' \) \
-            -exec cp -R {} "${next_dir}/" \;
+               -o -name swift.mk -o -name '*.log' \) -print0)
     fi
 
     cp -R "${stage_dir}/." "${next_dir}/" 2>"${cp_log}" || cp_status=$?
@@ -146,6 +168,8 @@ install_from_stage() {
         return 1
     fi
 
+    # Best-effort only: a script that fails to gain +x here still fails loudly
+    # and correctly the moment a build tries to execute it.
     find "${next_dir}/scripts" -type f -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
 
     if ! assets_complete "${next_dir}"; then
@@ -168,6 +192,18 @@ install_from_stage() {
             mv "${previous_dir}" "${MAKE_DIR}"
         fi
         rm -rf "${next_dir}"
+        return 1
+    fi
+
+    # Re-verify the tree that is now actually at .make, not just the staged
+    # copy the mv came from, and roll back to the previous tree if it somehow
+    # does not hold rather than leaving a known-broken .make in place.
+    if ! assets_complete "${MAKE_DIR}"; then
+        printf 'error: .make is missing a required asset after the swap\n' >&2
+        if [[ -d "${previous_dir}" ]]; then
+            rm -rf "${MAKE_DIR}"
+            mv "${previous_dir}" "${MAKE_DIR}"
+        fi
         return 1
     fi
 
@@ -210,6 +246,11 @@ main() {
         return 1
     fi
 
+    # `if provision; then` puts provision, and everything it calls, in bash's
+    # -e ignore list for the duration of this call: an unguarded failing
+    # command anywhere under here would not abort on its own. provision and
+    # install_from_stage check every step's exit status explicitly instead of
+    # relying on -e to catch a mid-install failure.
     if provision; then
         return 0
     fi
