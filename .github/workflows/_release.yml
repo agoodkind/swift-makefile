@@ -224,11 +224,11 @@ jobs:
     # change-detection job, which runs the same binary in the same image.
     container: swift:6.3
     outputs:
-      tag: ${{ steps.meta.outputs.release_tag }}
-      release_tag: ${{ steps.meta.outputs.release_tag }}
+      tag: ${{ steps.meta.outputs.release_tag || steps.meta.outputs.tag }}
+      release_tag: ${{ steps.meta.outputs.release_tag || steps.meta.outputs.tag }}
       release_track: ${{ steps.meta.outputs.release_track }}
       source_sha: ${{ needs.source.outputs.source_sha }}
-      artifact_version: ${{ steps.meta.outputs.artifact_version }}
+      artifact_version: ${{ steps.meta.outputs.artifact_version || replace(steps.meta.outputs.release_tag || steps.meta.outputs.tag, '+', '-') }}
       build_version: ${{ steps.meta.outputs.build_version }}
       marketing_version: ${{ steps.meta.outputs.marketing_version }}
     steps:

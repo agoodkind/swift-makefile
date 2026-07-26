@@ -56,6 +56,14 @@ require_value(meta_engine_checkout.fetch("uses"), "actions/checkout@v7", "metada
 require_value(meta_engine_checkout.dig("with", "repository"), "${{ job.workflow_repository }}", "metadata engine repository")
 require_value(meta_engine_checkout.dig("with", "ref"), "${{ job.workflow_sha }}", "metadata engine revision")
 require_value(meta_engine_checkout.dig("with", "path"), ".swift-makefile", "metadata engine path")
+legacy_tag_fallback = "${{ steps.meta.outputs.release_tag || steps.meta.outputs.tag }}"
+require_value(meta_job.dig("outputs", "tag"), legacy_tag_fallback, "legacy metadata tag fallback")
+require_value(meta_job.dig("outputs", "release_tag"), legacy_tag_fallback, "legacy release tag fallback")
+require_value(
+  meta_job.dig("outputs", "artifact_version"),
+  "${{ steps.meta.outputs.artifact_version || replace(steps.meta.outputs.release_tag || steps.meta.outputs.tag, '+', '-') }}",
+  "legacy artifact version fallback",
+)
 
 build_job = workflow.dig("jobs", "build")
 build_checkout = build_job.fetch("steps").find { |step| step["uses"] == "actions/checkout@v7" }
