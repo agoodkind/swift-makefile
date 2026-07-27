@@ -87,8 +87,8 @@ enum BootstrapHelperRunner {
     let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
     return Result(
-      stdout: String(decoding: outData, as: UTF8.self),
-      stderr: String(decoding: errData, as: UTF8.self),
+      stdout: Output.decodeCapturedUTF8(outData),
+      stderr: Output.decodeCapturedUTF8(errData),
       status: process.terminationStatus
     )
   }
