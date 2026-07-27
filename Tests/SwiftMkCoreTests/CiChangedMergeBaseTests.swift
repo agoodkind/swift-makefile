@@ -25,6 +25,17 @@ extension EnvironmentSerialized {
     /// on any PR and ran every gate every time.
     @Test
     func resolvesMergeBaseFromPullRequestMergeRefWithoutFetching() throws {
+      // TestGlobalLock as well as the `.serialized` parent. The parent orders this suite
+      // only against its `EnvironmentSerialized` siblings, while the harnesses that also
+      // change the working directory are top-level suites holding this lock. Without it
+      // the two sets interleave, and a chdir here restores the other harness's directory
+      // rather than the repository root, because that is what it finds when it saves.
+      try TestGlobalLock.withLock {
+        try expectMergeBaseFromPullRequestMergeRef()
+      }
+    }
+
+    private func expectMergeBaseFromPullRequestMergeRef() throws {
       let root = try makeTempDirectory()
       defer { removeTemporary(root.path) }
       let repo = root.appendingPathComponent("repo", isDirectory: true)
@@ -74,6 +85,12 @@ extension EnvironmentSerialized {
     /// so the caller fails safe to a full run.
     @Test
     func doesNotUseLocalMergeCommitParentsForPushEvents() throws {
+      try TestGlobalLock.withLock {
+        try expectNoMergeBaseFromLocalMergeParents()
+      }
+    }
+
+    private func expectNoMergeBaseFromLocalMergeParents() throws {
       let root = try makeTempDirectory()
       defer { removeTemporary(root.path) }
       let repo = root.appendingPathComponent("repo", isDirectory: true)
