@@ -16,6 +16,8 @@ import NIOCore
 import NIOHTTP1
 import NIOPosix
 
+@testable import SwiftMkCore
+
 // MARK: - FetchRecord
 
 /// One served request, so a test can assert how many times the helper reached
@@ -41,12 +43,12 @@ final class FetchState: @unchecked Sendable {
   private var forcedStatus: Int?
   private var etagEnabled = true
 
-  func setFiles(_ files: [String: String]) {
-    let archive = TarballBuilder.build(files)
-    // Digest the file set, not the archive bytes: gzip stamps a timestamp into
-    // its header, so identical content would otherwise produce a new ETag on
-    // every rebuild and no request would ever validate as unchanged.
-    let fingerprint = TarballBuilder.fingerprint(files)
+  /// Install an already-built archive. The build itself spawns `tar` and blocks
+  /// waiting for it, so callers run it through `OffPoolWork` and hand the bytes here.
+  /// The fingerprint digests the file set, not the archive bytes: gzip stamps a
+  /// timestamp into its header, so identical content would otherwise produce a new
+  /// ETag on every rebuild and no request would ever validate as unchanged.
+  func setArchive(_ archive: [UInt8], fingerprint: String) {
     lock.lock()
     defer { lock.unlock() }
     tarball = archive
@@ -98,34 +100,71 @@ final class FetchState: @unchecked Sendable {
 final class FetchServer: @unchecked Sendable {
   private let group: MultiThreadedEventLoopGroup
   private let channel: Channel
-  private let state = FetchState()
+  private let state: FetchState
 
   /// The base URL to pass as `SWIFT_MK_CODELOAD_BASE`.
   var codeloadBase: String {
     "http://127.0.0.1:\(channel.localAddress?.port ?? 0)"
   }
 
-  init(files: [String: String]) throws {
-    state.setFiles(files)
+  /// Every wait here suspends rather than blocking. Swift Testing runs test bodies on
+  /// its cooperative pool, and NIO marks the blocking forms unavailable from an async
+  /// context for that reason; see `OffPoolWork` for what blocking one of those threads
+  /// costs.
+  init(files: [String: String]) async throws {
+    let handlerState = FetchState()
+    state = handlerState
+    await Self.installArchive(files, into: handlerState)
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     self.group = group
-    let handlerState = state
-    channel = try ServerBootstrap(group: group)
-      .serverChannelOption(ChannelOptions.backlog, value: 16)
-      .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
-      .childChannelInitializer { channel in
-        channel.pipeline.configureHTTPServerPipeline().flatMap {
-          channel.pipeline.addHandler(FetchHandler(state: handlerState))
+    do {
+      channel = try await ServerBootstrap(group: group)
+        .serverChannelOption(ChannelOptions.backlog, value: 16)
+        .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+        .childChannelInitializer { channel in
+          channel.pipeline.configureHTTPServerPipeline().flatMap {
+            channel.pipeline.addHandler(FetchHandler(state: handlerState))
+          }
         }
-      }
-      .bind(host: "127.0.0.1", port: 0)
-      .wait()
+        .bind(host: "127.0.0.1", port: 0)
+        .get()
+    } catch {
+      // The group owns a thread and traps if it is deinited without a shutdown, so a
+      // failed bind has to release it before the error leaves this initializer.
+      try? await group.shutdownGracefully()
+      throw error
+    }
+  }
+
+  /// Run a scoped server, shutting it down on every exit path. `shutdown` has to be
+  /// awaited, and `defer` cannot await, so this is what guarantees the group is
+  /// released when the body throws.
+  static func withServer<Value>(
+    files: [String: String],
+    _ body: (FetchServer) async throws -> Value
+  ) async throws -> Value {
+    let server = try await FetchServer(files: files)
+    do {
+      let value = try await body(server)
+      await server.shutdown()
+      return value
+    } catch {
+      await server.shutdown()
+      throw error
+    }
   }
 
   /// Replace the served tree, which changes the ETag and simulates upstream
   /// moving.
-  func setFiles(_ files: [String: String]) {
-    state.setFiles(files)
+  func setFiles(_ files: [String: String]) async {
+    await Self.installArchive(files, into: state)
+  }
+
+  /// Build the archive off the cooperative pool (it spawns `tar` and waits for it),
+  /// then install it.
+  private static func installArchive(_ files: [String: String], into state: FetchState) async {
+    let archive = await OffPoolWork.run { TarballBuilder.build(files) }
+    state.setArchive(archive, fingerprint: TarballBuilder.fingerprint(files))
   }
 
   /// Make every later request sleep before responding, so a test can drive the
@@ -152,15 +191,27 @@ final class FetchServer: @unchecked Sendable {
     state.requests()
   }
 
-  func shutdown() {
-    try? channel.close().wait()
-    try? group.syncShutdownGracefully()
+  /// Close the listener and release the event-loop group.
+  ///
+  /// `syncShutdownGracefully` stood here and is what wedged the suite. NIO delivers its
+  /// completion on `DispatchQueue.global()` and then blocks the caller on a semaphore
+  /// until that block runs, which is why NIO marks it `noasync`. Called from enough test
+  /// bodies at once it holds every cooperative thread, the completion block can no
+  /// longer be scheduled, and nothing can ever signal the semaphore. The async form
+  /// suspends instead, so the thread is free and the completion always gets one.
+  func shutdown() async {
+    try? await channel.close().get()
+    try? await group.shutdownGracefully()
   }
 }
 
 // MARK: - FetchHandler
 
-private final class FetchHandler: ChannelInboundHandler {
+/// Unchecked because the handler's per-request fields are only ever touched from the
+/// channel's own event loop, which NIO guarantees is a single thread. The bootstrap now
+/// runs from an async context, so the closure that constructs the handler is checked
+/// for sendability where it was not before.
+private final class FetchHandler: ChannelInboundHandler, @unchecked Sendable {
   typealias InboundIn = HTTPServerRequestPart
   typealias OutboundOut = HTTPServerResponsePart
 
@@ -175,14 +226,14 @@ private final class FetchHandler: ChannelInboundHandler {
 
   func channelRead(context: ChannelHandlerContext, data: NIOAny) {
     switch unwrapInboundIn(data) {
-      case .head(let head):
-        requestPath = head.uri
-        requestMethod = head.method
-        ifNoneMatch = head.headers.first(name: "If-None-Match") ?? ""
-      case .body:
-        break
-      case .end:
-        respond(context: context)
+    case .head(let head):
+      requestPath = head.uri
+      requestMethod = head.method
+      ifNoneMatch = head.headers.first(name: "If-None-Match") ?? ""
+    case .body:
+      break
+    case .end:
+      respond(context: context)
     }
   }
 
@@ -271,13 +322,22 @@ enum TarballBuilder {
           "HOME": ProcessInfo.processInfo.environment["HOME"] ?? "",
         ]
       }
+      // A child inherits the process working directory when none is set, and several
+      // suites in this target chdir into a temporary tree and then delete it. A spawn
+      // that lands in that window fails with ENOENT on a directory it never asked for.
+      // Naming the directory explicitly takes this tar off that shared global entirely.
+      process.currentDirectoryURL = root
       try process.run()
       process.waitUntilExit()
       guard process.terminationStatus == 0 else {
+        Output.error("test: tarball tar exited \(process.terminationStatus)")
         return []
       }
       return [UInt8](try Data(contentsOf: archive))
     } catch {
+      // Returning an empty archive silently made every downstream failure read as a
+      // fetch problem, so the real cause has to reach the log.
+      Output.error("test: could not build the served tarball: \(error)")
       return []
     }
   }

@@ -54,209 +54,172 @@ func readMakeFile(_ directory: String, _ relative: String) -> String? {
   try? String(contentsOfFile: makePath(directory, relative), encoding: .utf8)
 }
 
-/// Runs the helper with the working directory at `directory` and an environment
-/// that never inherits a real CI context.
-func runHelper(directory: String, environment: [String: String]) -> (
-  stdout: String, stderr: String, status: Int32
-) {
-  let helper = repositoryRoot() + "/scripts/swift-mk-bootstrap.sh"
-  // Reading ProcessInfo.processInfo.environment enumerates the process-wide libc
-  // environ table. Several other suites in this target call setenv/unsetenv
-  // (see TestGlobalLock in GatedBuildHarness.swift), and Swift Testing runs
-  // suites in parallel within this one process, so an unsynchronized read here
-  // can race a concurrent setenv and observe a corrupted or partially-freed
-  // PATH/HOME value. TestGlobalLock is the same lock those setenv call sites
-  // already hold, so this read is now serialized against them.
-  var merged: [String: String] = TestGlobalLock.withLock {
-    [
-      "PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin",
-      "HOME": ProcessInfo.processInfo.environment["HOME"] ?? "",
-      "SWIFT_MK_API_REPO": "agoodkind/swift-makefile",
-      "SWIFT_MK_API_REF": "main",
-      "SWIFT_MK_DEV_DIR": "",
-      "SWIFT_MK_MODULES": "",
-      "GITHUB_ACTIONS": "",
-      "GITHUB_RUN_ID": "",
-    ]
-  }
-  for (key, value) in environment {
-    merged[key] = value
-  }
-
-  let process = Process()
-  process.executableURL = URL(fileURLWithPath: "/bin/bash")
-  process.arguments = [helper]
-  process.currentDirectoryURL = URL(fileURLWithPath: directory)
-  process.environment = merged
-  let outPipe = Pipe()
-  let errPipe = Pipe()
-  process.standardOutput = outPipe
-  process.standardError = errPipe
-  try? process.run()
-  let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-  let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-  process.waitUntilExit()
-  return (
-    String(decoding: outData, as: UTF8.self),
-    String(decoding: errData, as: UTF8.self),
-    process.terminationStatus
-  )
+/// Run the bootstrap helper. See `BootstrapHelperRunner` for why the wait happens on a
+/// thread of its own.
+func runHelper(
+  directory: String,
+  environment: [String: String]
+) async -> BootstrapHelperRunner.Result {
+  await BootstrapHelperRunner.run(directory: directory, environment: environment)
 }
 
-func repositoryRoot() -> String {
-  URL(fileURLWithPath: #filePath)
-    .deletingLastPathComponent()
-    .deletingLastPathComponent()
-    .deletingLastPathComponent()
-    .path
+/// A marker just written, which the helper reads as current.
+let freshMarkerAge = 0
+/// A marker old enough to be worth validating, young enough to still serve from disk.
+let recentMarkerAge = 600
+/// A marker old enough that the helper must force a real provision.
+let staleMarkerAge = 7_200
+/// Longer than the filesystem's one-second timestamp granularity, so a rewrite that did
+/// happen is detectable.
+let pastTimestampGranularityMilliseconds = 1_100
+/// How many requests a cold provision followed by one validation makes.
+let coldThenValidateRequestCount = 2
+/// The status a matching conditional request gets back.
+let notModifiedStatus = 304
+
+@Test
+func helperColdProvisionWritesEveryAsset() async throws {
+  try await FetchServer.withServer(files: engineFiles()) { server in
+    let directory = try temporaryConsumer()
+
+    let result = await runHelper(
+      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+    #expect(result.status == 0, "helper failed: \(result.stderr)")
+
+    #expect(readMakeFile(directory, "swift.mk") == "# swift.mk v1\n")
+    #expect(readMakeFile(directory, "Package.swift") != nil)
+    #expect(readMakeFile(directory, "scripts/swift-mk-build.sh") != nil)
+    let requests = server.requests()
+    #expect(requests.count == 1)
+    // Proves the helper asked for the configured repo and ref, not just any
+    // path the test server happened to answer.
+    #expect(requests.first?.path == "/agoodkind/swift-makefile/tar.gz/main")
+  }
 }
 
 @Test
-func helperColdProvisionWritesEveryAsset() throws {
-  let server = try FetchServer(files: engineFiles())
-  defer { server.shutdown() }
-  let directory = try temporaryConsumer()
-
-  let result = runHelper(
-    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
-  #expect(result.status == 0, "helper failed: \(result.stderr)")
-
-  #expect(readMakeFile(directory, "swift.mk") == "# swift.mk v1\n")
-  #expect(readMakeFile(directory, "Package.swift") != nil)
-  #expect(readMakeFile(directory, "scripts/swift-mk-build.sh") != nil)
-  let requests = server.requests()
-  #expect(requests.count == 1)
-  // Proves the helper asked for the configured repo and ref, not just any
-  // path the test server happened to answer.
-  #expect(requests.first?.path == "/agoodkind/swift-makefile/tar.gz/main")
-}
-
-@Test
-func helperLeavesSnapshotIntactWhenUpstreamReturnsAnError() throws {
+func helperLeavesSnapshotIntactWhenUpstreamReturnsAnError() async throws {
   // A real server that answers with a real HTTP error, not an unreachable
   // port. A helper that merely runs `exit 1`, is missing entirely (exit 127),
   // or has a syntax error would also leave the warm tree untouched, without
   // ever making a request; asserting the request count rules those out and
   // proves the helper actually reached the network and then chose, on a real
   // failure response, not to touch .make.
-  let server = try FetchServer(files: engineFiles())
-  defer { server.shutdown() }
-  server.forceStatus(500)
+  try await FetchServer.withServer(files: engineFiles()) { server in
+    server.forceStatus(500)
 
-  let directory = try temporaryConsumer()
-  try writeMakeFile(directory, "swift.mk", "# warm swift.mk\n")
-  try writeMakeFile(directory, "Package.swift", "// warm\n")
-  try writeMakeFile(directory, "scripts/swift-mk-build.sh", "#!/usr/bin/env bash\nexit 0\n")
+    let directory = try temporaryConsumer()
+    try writeMakeFile(directory, "swift.mk", "# warm swift.mk\n")
+    try writeMakeFile(directory, "Package.swift", "// warm\n")
+    try writeMakeFile(directory, "scripts/swift-mk-build.sh", "#!/usr/bin/env bash\nexit 0\n")
 
-  let result = runHelper(
-    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
-  #expect(result.status != 0)
-  #expect(server.requests().count == 1)
+    let result = await runHelper(
+      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+    #expect(result.status != 0)
+    #expect(server.requests().count == 1)
 
-  // The point of the task: a failed fetch must not remove what was there.
-  #expect(readMakeFile(directory, "swift.mk") == "# warm swift.mk\n")
-  #expect(readMakeFile(directory, "Package.swift") == "// warm\n")
+    // The point of the task: a failed fetch must not remove what was there.
+    #expect(readMakeFile(directory, "swift.mk") == "# warm swift.mk\n")
+    #expect(readMakeFile(directory, "Package.swift") == "// warm\n")
+  }
 }
 
 @Test
-func helperRejectsIncompleteSnapshotAndPreservesWarmTree() throws {
+func helperRejectsIncompleteSnapshotAndPreservesWarmTree() async throws {
   // The server answers 200 with a real tarball that extracts cleanly, but the
   // tarball is missing Package.swift. This is the case the staged-verification
   // design exists for: a fetch that succeeds at the transport level must
   // still be rejected, and rejected before anything under .make is touched.
   var incompleteFiles = engineFiles()
   incompleteFiles.removeValue(forKey: "Package.swift")
-  let server = try FetchServer(files: incompleteFiles)
-  defer { server.shutdown() }
+  try await FetchServer.withServer(files: incompleteFiles) { server in
+    let directory = try temporaryConsumer()
+    try writeMakeFile(directory, "swift.mk", "# warm swift.mk\n")
+    try writeMakeFile(directory, "Package.swift", "// warm\n")
+    try writeMakeFile(directory, "scripts/swift-mk-build.sh", "#!/usr/bin/env bash\nexit 0\n")
 
-  let directory = try temporaryConsumer()
-  try writeMakeFile(directory, "swift.mk", "# warm swift.mk\n")
-  try writeMakeFile(directory, "Package.swift", "// warm\n")
-  try writeMakeFile(directory, "scripts/swift-mk-build.sh", "#!/usr/bin/env bash\nexit 0\n")
+    let result = await runHelper(
+      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+    #expect(result.status != 0)
+    #expect(server.requests().count == 1)
 
-  let result = runHelper(
-    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
-  #expect(result.status != 0)
-  #expect(server.requests().count == 1)
-
-  #expect(readMakeFile(directory, "swift.mk") == "# warm swift.mk\n")
-  #expect(readMakeFile(directory, "Package.swift") == "// warm\n")
-}
-
-@Test
-func helperSwapFailureLeavesWarmTreeIntactForLaterSkipFetch() throws {
-  let server = try FetchServer(files: engineFiles())
-  defer { server.shutdown() }
-
-  let directory = try temporaryConsumer()
-  try writeMakeFile(directory, "swift.mk", "# warm swift.mk\n")
-  try writeMakeFile(directory, "Package.swift", "// warm\n")
-  try writeMakeFile(directory, "scripts/swift-mk-build.sh", "#!/usr/bin/env bash\nexit 0\n")
-  // A file outside the three assets assets_complete checks, so a partial swap
-  // that happened to keep only those three would still be caught here.
-  try writeMakeFile(directory, "scripts/swift-mk-fetch-one.sh", "#!/usr/bin/env bash\nexit 0\n")
-
-  // Deny write access to the consumer root itself, so the helper cannot
-  // create the staging directory it needs before it may touch .make. This is
-  // a real, unmocked failure (EACCES), not an injected one.
-  try FileManager.default.setAttributes(
-    [.posixPermissions: 0o555], ofItemAtPath: directory)
-  defer {
-    try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory)
+    #expect(readMakeFile(directory, "swift.mk") == "# warm swift.mk\n")
+    #expect(readMakeFile(directory, "Package.swift") == "// warm\n")
   }
-
-  let result = runHelper(
-    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
-  #expect(result.status != 0)
-
-  #expect(readMakeFile(directory, "swift.mk") == "# warm swift.mk\n")
-  #expect(readMakeFile(directory, "Package.swift") == "// warm\n")
-  #expect(readMakeFile(directory, "scripts/swift-mk-fetch-one.sh") != nil)
-
-  // Restore write access and prove the untouched warm tree is still complete:
-  // the earlier failure never left .make half swapped.
-  try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory)
-  let skipFetchResult = runHelper(
-    directory: directory,
-    environment: [
-      "SWIFT_MK_CODELOAD_BASE": server.codeloadBase, "SWIFT_MK_SKIP_FETCH": "1",
-    ])
-  #expect(skipFetchResult.status == 0, "skip-fetch failed: \(skipFetchResult.stderr)")
 }
 
 @Test
-func helperFailsWhenPreservingAGeneratedFileCannotBeCopied() throws {
+func helperSwapFailureLeavesWarmTreeIntactForLaterSkipFetch() async throws {
+  try await FetchServer.withServer(files: engineFiles()) { server in
+    let directory = try temporaryConsumer()
+    try writeMakeFile(directory, "swift.mk", "# warm swift.mk\n")
+    try writeMakeFile(directory, "Package.swift", "// warm\n")
+    try writeMakeFile(directory, "scripts/swift-mk-build.sh", "#!/usr/bin/env bash\nexit 0\n")
+    // A file outside the three assets assets_complete checks, so a partial swap
+    // that happened to keep only those three would still be caught here.
+    try writeMakeFile(directory, "scripts/swift-mk-fetch-one.sh", "#!/usr/bin/env bash\nexit 0\n")
+
+    // Deny write access to the consumer root itself, so the helper cannot
+    // create the staging directory it needs before it may touch .make. This is
+    // a real, unmocked failure (EACCES), not an injected one.
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o555], ofItemAtPath: directory)
+    defer {
+      try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory)
+    }
+
+    let result = await runHelper(
+      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+    #expect(result.status != 0)
+
+    #expect(readMakeFile(directory, "swift.mk") == "# warm swift.mk\n")
+    #expect(readMakeFile(directory, "Package.swift") == "// warm\n")
+    #expect(readMakeFile(directory, "scripts/swift-mk-fetch-one.sh") != nil)
+
+    // Restore write access and prove the untouched warm tree is still complete:
+    // the earlier failure never left .make half swapped.
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory)
+    let skipFetchResult = await runHelper(
+      directory: directory,
+      environment: [
+        "SWIFT_MK_CODELOAD_BASE": server.codeloadBase, "SWIFT_MK_SKIP_FETCH": "1",
+      ])
+    #expect(skipFetchResult.status == 0, "skip-fetch failed: \(skipFetchResult.stderr)")
+  }
+}
+
+@Test
+func helperFailsWhenPreservingAGeneratedFileCannotBeCopied() async throws {
   // `if provision; then` puts everything provision calls in bash's -e ignore
   // list, so a step inside install_from_stage that fails without an explicit
   // check would be silently ignored rather than aborting. Forwarding a
   // preserved runtime file that cannot be read is exactly such a step: it
   // must fail loudly instead of quietly dropping the file from the new .make.
-  let server = try FetchServer(files: engineFiles())
-  defer { server.shutdown() }
+  try await FetchServer.withServer(files: engineFiles()) { server in
+    let directory = try temporaryConsumer()
+    try writeMakeFile(directory, "swift.mk", "# warm swift.mk\n")
+    try writeMakeFile(directory, "Package.swift", "// warm\n")
+    try writeMakeFile(directory, "scripts/swift-mk-build.sh", "#!/usr/bin/env bash\nexit 0\n")
+    try writeMakeFile(directory, "build.lock", "warm lock\n")
+    let lockPath = makePath(directory, "build.lock")
+    try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: lockPath)
+    defer {
+      try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: lockPath)
+    }
 
-  let directory = try temporaryConsumer()
-  try writeMakeFile(directory, "swift.mk", "# warm swift.mk\n")
-  try writeMakeFile(directory, "Package.swift", "// warm\n")
-  try writeMakeFile(directory, "scripts/swift-mk-build.sh", "#!/usr/bin/env bash\nexit 0\n")
-  try writeMakeFile(directory, "build.lock", "warm lock\n")
-  let lockPath = makePath(directory, "build.lock")
-  try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: lockPath)
-  defer {
-    try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: lockPath)
+    let result = await runHelper(
+      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+    #expect(result.status != 0)
+
+    // The install must abort rather than silently swap in a tree that dropped
+    // build.lock; the original warm tree, unreadable file included, survives.
+    #expect(readMakeFile(directory, "swift.mk") == "# warm swift.mk\n")
+    #expect(readMakeFile(directory, "Package.swift") == "// warm\n")
   }
-
-  let result = runHelper(
-    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
-  #expect(result.status != 0)
-
-  // The install must abort rather than silently swap in a tree that dropped
-  // build.lock; the original warm tree, unreadable file included, survives.
-  #expect(readMakeFile(directory, "swift.mk") == "# warm swift.mk\n")
-  #expect(readMakeFile(directory, "Package.swift") == "// warm\n")
 }
 
 @Test
-func helperSkipFetchRejectsARequiredAssetThatIsActuallyADirectory() throws {
+func helperSkipFetchRejectsARequiredAssetThatIsActuallyADirectory() async throws {
   // assets_complete's old check, `-s` alone, is true for a non-empty
   // directory as well as a regular file, so a required asset path that is
   // actually a directory would have been accepted as complete.
@@ -265,7 +228,7 @@ func helperSkipFetchRejectsARequiredAssetThatIsActuallyADirectory() throws {
   try writeMakeFile(directory, "Package.swift", "// warm\n")
   try writeMakeFile(directory, "scripts/swift-mk-build.sh/placeholder", "not a script\n")
 
-  let result = runHelper(
+  let result = await runHelper(
     directory: directory,
     environment: ["SWIFT_MK_CODELOAD_BASE": "http://127.0.0.1:9", "SWIFT_MK_SKIP_FETCH": "1"])
   #expect(result.status != 0)
@@ -290,6 +253,12 @@ func writeMarker(_ directory: String, ref: String, etag: String, timestamp: Int)
     directory, ".swift-mk-snapshot-ref", "ref=\(ref)\netag=\(etag)\ntimestamp=\(timestamp)\n")
 }
 
+/// Write a marker for `main` dated `age` seconds in the past.
+func writeMarker(_ directory: String, etag: String, age: Int) throws {
+  let timestamp = Int(Date().timeIntervalSince1970) - age
+  try writeMarker(directory, ref: "main", etag: etag, timestamp: timestamp)
+}
+
 /// Populates .make with a complete engine tree so only the validation decision
 /// is under test.
 func warmSnapshot(_ directory: String) throws {
@@ -299,30 +268,36 @@ func warmSnapshot(_ directory: String) throws {
 }
 
 @Test
-func helperRecordsMarkerWithEtagOnColdProvision() throws {
-  let server = try FetchServer(files: engineFiles())
-  defer { server.shutdown() }
-  let directory = try temporaryConsumer()
+func helperRecordsMarkerWithEtagOnColdProvision() async throws {
+  try await FetchServer.withServer(files: engineFiles()) { server in
+    let directory = try temporaryConsumer()
 
-  let result = runHelper(
-    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
-  #expect(result.status == 0, "\(result.stderr)")
+    let result = await runHelper(
+      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+    #expect(result.status == 0, "\(result.stderr)")
 
-  let marker = readMarker(directory)
-  #expect(marker["ref"] == "main")
-  #expect(marker["etag"]?.isEmpty == false)
-  #expect(Int(marker["timestamp"] ?? "") != nil)
+    let marker = readMarker(directory)
+    #expect(marker["ref"] == "main")
+    #expect(marker["etag"]?.isEmpty == false)
+    #expect(Int(marker["timestamp"] ?? "") != nil)
+  }
 }
 
 @Test
-func helperTouchesNothingWhenUpstreamReturnsNotModified() throws {
-  let server = try FetchServer(files: engineFiles())
-  defer { server.shutdown() }
+func helperTouchesNothingWhenUpstreamReturnsNotModified() async throws {
+  try await FetchServer.withServer(files: engineFiles()) { server in
+    try await expectNoRewriteOnNotModified(server)
+  }
+}
+
+/// The body of `helperTouchesNothingWhenUpstreamReturnsNotModified`, held apart so the
+/// test reads as one scoped server rather than one deeply nested block.
+private func expectNoRewriteOnNotModified(_ server: FetchServer) async throws {
   let directory = try temporaryConsumer()
 
-  #expect(
-    runHelper(directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
-      .status == 0)
+  let first = await runHelper(
+    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+  #expect(first.status == 0, "\(first.stderr)")
 
   let path = makePath(directory, "swift.mk")
   let markerPath = makePath(directory, ".swift-mk-snapshot-ref")
@@ -340,9 +315,9 @@ func helperTouchesNothingWhenUpstreamReturnsNotModified() throws {
     try FileManager.default.attributesOfItem(atPath: markerPath)[.modificationDate] as? Date
   // Sleep past the filesystem timestamp granularity so a re-extract, or a
   // marker rewrite, would be detectable.
-  Thread.sleep(forTimeInterval: 1.1)
+  try await Task.sleep(for: .milliseconds(pastTimestampGranularityMilliseconds))
 
-  let second = runHelper(
+  let second = await runHelper(
     directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
   #expect(second.status == 0, "\(second.stderr)")
 
@@ -358,52 +333,51 @@ func helperTouchesNothingWhenUpstreamReturnsNotModified() throws {
     "a 304 touched the marker's modification time instead of leaving it untouched")
 
   let requests = server.requests()
-  #expect(requests.count == 2)
-  #expect(requests[1].status == 304)
+  #expect(requests.count == coldThenValidateRequestCount)
+  #expect(requests[1].status == notModifiedStatus)
   #expect(requests[1].bytes == 0)
 }
 
 @Test
-func helperUnfreezesAMarkerThatHoldsOnlyARefName() throws {
-  let server = try FetchServer(files: engineFiles())
-  defer { server.shutdown() }
-  let directory = try temporaryConsumer()
-  try warmSnapshot(directory)
-  // The format the current engine writes: a bare ref name, no ETag.
-  try writeMakeFile(directory, ".swift-mk-snapshot-ref", "main\n")
+func helperUnfreezesAMarkerThatHoldsOnlyARefName() async throws {
+  try await FetchServer.withServer(files: engineFiles()) { server in
+    let directory = try temporaryConsumer()
+    try warmSnapshot(directory)
+    // The format the current engine writes: a bare ref name, no ETag.
+    try writeMakeFile(directory, ".swift-mk-snapshot-ref", "main\n")
 
-  let result = runHelper(
-    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
-  #expect(result.status == 0, "\(result.stderr)")
+    let result = await runHelper(
+      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+    #expect(result.status == 0, "\(result.stderr)")
 
-  #expect(server.requests().count == 1)
-  #expect(server.requests()[0].status == 200, "a bare-ref marker must force a real fetch")
-  #expect(readMarker(directory)["etag"]?.isEmpty == false)
+    #expect(server.requests().count == 1)
+    #expect(server.requests()[0].status == 200, "a bare-ref marker must force a real fetch")
+    #expect(readMarker(directory)["etag"]?.isEmpty == false)
+  }
 }
 
 @Test
-func helperServesSnapshotWhenUpstreamStallsAndMarkerIsRecent() throws {
-  let server = try FetchServer(files: engineFiles())
-  defer { server.shutdown() }
-  let directory = try temporaryConsumer()
-  try warmSnapshot(directory)
-  try writeMarker(
-    directory, ref: "main", etag: "\"cached\"", timestamp: Int(Date().timeIntervalSince1970) - 600)
-  server.stall(5)
+func helperServesSnapshotWhenUpstreamStallsAndMarkerIsRecent() async throws {
+  try await FetchServer.withServer(files: engineFiles()) { server in
+    let directory = try temporaryConsumer()
+    try warmSnapshot(directory)
+    try writeMarker(directory, etag: "\"cached\"", age: recentMarkerAge)
+    server.stall(5)
 
-  let result = runHelper(
-    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
-  #expect(result.status == 0, "\(result.stderr)")
-  #expect(result.stderr.contains("serving the .make snapshot validated"))
-  // The probe's own curl output used to be discarded with 2>/dev/null, so a
-  // validation that failed on every run left no trace. The warning must now
-  // carry why validation failed, not just that it did.
-  #expect(result.stderr.contains("validation curl exit"))
-  #expect(readMakeFile(directory, "swift.mk") == "# swift.mk v1\n")
+    let result = await runHelper(
+      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+    #expect(result.status == 0, "\(result.stderr)")
+    #expect(result.stderr.contains("serving the .make snapshot validated"))
+    // The probe's own curl output used to be discarded with 2>/dev/null, so a
+    // validation that failed on every run left no trace. The warning must now
+    // carry why validation failed, not just that it did.
+    #expect(result.stderr.contains("validation curl exit"))
+    #expect(readMakeFile(directory, "swift.mk") == "# swift.mk v1\n")
+  }
 }
 
 @Test
-func helperFailsWhenUpstreamStallsAndMarkerIsStale() throws {
+func helperFailsWhenUpstreamStallsAndMarkerIsStale() async throws {
   // The validation request stalls past its own 3 second budget and times out,
   // but a stale marker forces a real provision attempt next, so the upstream
   // also has to genuinely fail that second request (a real 500, not just a
@@ -411,77 +385,74 @@ func helperFailsWhenUpstreamStallsAndMarkerIsStale() throws {
   // the forced provision would stall the same 5 seconds and then succeed,
   // since its budget is 60 seconds; see
   // helperForceProvisionsWhenValidationTimesOutAndMarkerIsStale for that case.
-  let server = try FetchServer(files: engineFiles())
-  defer { server.shutdown() }
-  let directory = try temporaryConsumer()
-  try warmSnapshot(directory)
-  try writeMarker(
-    directory, ref: "main", etag: "\"cached\"", timestamp: Int(Date().timeIntervalSince1970) - 7200)
-  server.stall(5)
-  server.forceStatus(500)
+  try await FetchServer.withServer(files: engineFiles()) { server in
+    let directory = try temporaryConsumer()
+    try warmSnapshot(directory)
+    try writeMarker(directory, etag: "\"cached\"", age: staleMarkerAge)
+    server.stall(5)
+    server.forceStatus(500)
 
-  let result = runHelper(
-    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
-  #expect(result.status != 0)
-  #expect(!result.stderr.contains("serving the .make snapshot validated"))
-  // A validation that fails on the stale fall-through path (no serve-from-disk
-  // eligible) must still be logged, not silently swallowed by 2>/dev/null,
-  // before the fall-through to a full provision attempt.
-  #expect(result.stderr.contains("validation curl exit"))
-  #expect(result.stderr.contains("falling through to a full provision"))
-  // Nothing may be destroyed even on the failing path.
-  #expect(readMakeFile(directory, "swift.mk") == "# swift.mk v1\n")
+    let result = await runHelper(
+      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+    #expect(result.status != 0)
+    #expect(!result.stderr.contains("serving the .make snapshot validated"))
+    // A validation that fails on the stale fall-through path (no serve-from-disk
+    // eligible) must still be logged, not silently swallowed by 2>/dev/null,
+    // before the fall-through to a full provision attempt.
+    #expect(result.stderr.contains("validation curl exit"))
+    #expect(result.stderr.contains("falling through to a full provision"))
+    // Nothing may be destroyed even on the failing path.
+    #expect(readMakeFile(directory, "swift.mk") == "# swift.mk v1\n")
+  }
 }
 
 @Test
-func helperForceProvisionsWhenValidationTimesOutAndMarkerIsStale() throws {
+func helperForceProvisionsWhenValidationTimesOutAndMarkerIsStale() async throws {
   // Regression guard: a validation timeout only proves the cheap 3 second
   // check did not finish, not that the network is down. A stale marker must
   // still force a real provision attempt with its own 60 second budget, and
   // that attempt can succeed even though validation did not.
   var updatedFiles = engineFiles()
   updatedFiles["swift.mk"] = "# swift.mk v2\n"
-  let server = try FetchServer(files: updatedFiles)
-  defer { server.shutdown() }
-  let directory = try temporaryConsumer()
-  try warmSnapshot(directory)
-  try writeMarker(
-    directory, ref: "main", etag: "\"cached\"", timestamp: Int(Date().timeIntervalSince1970) - 7200)
-  server.stall(5)
+  try await FetchServer.withServer(files: updatedFiles) { server in
+    let directory = try temporaryConsumer()
+    try warmSnapshot(directory)
+    try writeMarker(directory, etag: "\"cached\"", age: staleMarkerAge)
+    server.stall(5)
 
-  let result = runHelper(
-    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
-  #expect(result.status == 0, "\(result.stderr)")
-  #expect(!result.stderr.contains("serving the .make snapshot validated"))
-  // The forced provision reached the upstream and installed its current
-  // content, not the stale warm tree the marker described.
-  #expect(readMakeFile(directory, "swift.mk") == "# swift.mk v2\n")
+    let result = await runHelper(
+      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+    #expect(result.status == 0, "\(result.stderr)")
+    #expect(!result.stderr.contains("serving the .make snapshot validated"))
+    // The forced provision reached the upstream and installed its current
+    // content, not the stale warm tree the marker described.
+    #expect(readMakeFile(directory, "swift.mk") == "# swift.mk v2\n")
+  }
 }
 
 @Test
-func helperProvisionsUnconditionallyInCI() throws {
-  let server = try FetchServer(files: engineFiles())
-  defer { server.shutdown() }
-  let directory = try temporaryConsumer()
-  try warmSnapshot(directory)
-  try writeMarker(
-    directory, ref: "main", etag: "\"cached\"", timestamp: Int(Date().timeIntervalSince1970))
+func helperProvisionsUnconditionallyInCI() async throws {
+  try await FetchServer.withServer(files: engineFiles()) { server in
+    let directory = try temporaryConsumer()
+    try warmSnapshot(directory)
+    try writeMarker(directory, etag: "\"cached\"", age: freshMarkerAge)
 
-  let result = runHelper(
-    directory: directory,
-    environment: [
-      "SWIFT_MK_CODELOAD_BASE": server.codeloadBase,
-      "GITHUB_ACTIONS": "true",
-      "GITHUB_RUN_ID": "1",
-    ])
-  #expect(result.status == 0, "\(result.stderr)")
-  #expect(server.requests().count == 1)
-  #expect(server.requests()[0].ifNoneMatch.isEmpty, "CI sent a conditional request")
-  #expect(server.requests()[0].status == 200)
+    let result = await runHelper(
+      directory: directory,
+      environment: [
+        "SWIFT_MK_CODELOAD_BASE": server.codeloadBase,
+        "GITHUB_ACTIONS": "true",
+        "GITHUB_RUN_ID": "1",
+      ])
+    #expect(result.status == 0, "\(result.stderr)")
+    #expect(server.requests().count == 1)
+    #expect(server.requests()[0].ifNoneMatch.isEmpty, "CI sent a conditional request")
+    #expect(server.requests()[0].status == 200)
+  }
 }
 
 @Test
-func helperInstallsAndWarnsWhenUpstreamOmitsTheETagHeader() throws {
+func helperInstallsAndWarnsWhenUpstreamOmitsTheETagHeader() async throws {
   // Reversal: a hard failure here was judged worse than the defect it guarded
   // against. If codeload ever stops sending ETag on archives, refusing to
   // install would break every consumer at once, including a cold one left
@@ -490,21 +461,21 @@ func helperInstallsAndWarnsWhenUpstreamOmitsTheETagHeader() throws {
   // unconditionally, today's pre-Task-3 behavior), and a warning is printed
   // every time so the degradation stays visible rather than silent. Renamed
   // from helperFailsWhenUpstreamOmitsTheETagHeader to match the new contract.
-  let server = try FetchServer(files: engineFiles())
-  defer { server.shutdown() }
-  server.setETagEnabled(false)
-  let directory = try temporaryConsumer()
+  try await FetchServer.withServer(files: engineFiles()) { server in
+    server.setETagEnabled(false)
+    let directory = try temporaryConsumer()
 
-  let result = runHelper(
-    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
-  #expect(result.status == 0, "\(result.stderr)")
-  #expect(readMakeFile(directory, "swift.mk") == "# swift.mk v1\n")
-  #expect(readMarker(directory)["etag"] == nil)
-  #expect(result.stderr.contains("no ETag header"))
+    let result = await runHelper(
+      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+    #expect(result.status == 0, "\(result.stderr)")
+    #expect(readMakeFile(directory, "swift.mk") == "# swift.mk v1\n")
+    #expect(readMarker(directory)["etag"] == nil)
+    #expect(result.stderr.contains("no ETag header"))
+  }
 }
 
 @Test
-func helperValidatesWithAHeadRequestCarryingNoBody() throws {
+func helperValidatesWithAHeadRequestCarryingNoBody() async throws {
   // A GET-based probe would download and discard the full tarball on every
   // run whose upstream moved, doubling the transfer and making the 3 second
   // validation budget dishonest for anything but a tiny snapshot. A HEAD
@@ -513,55 +484,54 @@ func helperValidatesWithAHeadRequestCarryingNoBody() throws {
   // carries the real recorded etag, so the follow-up run's validation
   // genuinely matches and 304s, proving the HEAD request alone is enough
   // to confirm nothing changed.
-  let server = try FetchServer(files: engineFiles())
-  defer { server.shutdown() }
-  let directory = try temporaryConsumer()
+  try await FetchServer.withServer(files: engineFiles()) { server in
+    let directory = try temporaryConsumer()
 
-  #expect(
-    runHelper(directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
-      .status == 0)
+    #expect(
+      await runHelper(
+        directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase]
+      ).status == 0)
 
-  let result = runHelper(
-    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
-  #expect(result.status == 0, "\(result.stderr)")
+    let result = await runHelper(
+      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+    #expect(result.status == 0, "\(result.stderr)")
 
-  let requests = server.requests()
-  #expect(requests.count == 2)
-  #expect(requests[1].method == "HEAD")
-  #expect(requests[1].bytes == 0)
-  #expect(requests[1].status == 304)
+    let requests = server.requests()
+    #expect(requests.count == 2)
+    #expect(requests[1].method == "HEAD")
+    #expect(requests[1].bytes == 0)
+    #expect(requests[1].status == 304)
+  }
 }
 
 @Test
-func helperDoesNotReuseAnEtagRecordedForADifferentRef() throws {
+func helperDoesNotReuseAnEtagRecordedForADifferentRef() async throws {
   // A marker recorded while pinned to one ref must never validate against a
   // different ref: an unreachable new ref falling back to the old ref's
   // cached snapshot would be a wrong-content serve, not a safe reuse.
-  let server = try FetchServer(files: engineFiles())
-  defer { server.shutdown() }
-  let directory = try temporaryConsumer()
-  try warmSnapshot(directory)
-  try writeMarker(
-    directory, ref: "main", etag: "\"cached-for-main\"",
-    timestamp: Int(Date().timeIntervalSince1970) - 600)
+  try await FetchServer.withServer(files: engineFiles()) { server in
+    let directory = try temporaryConsumer()
+    try warmSnapshot(directory)
+    try writeMarker(directory, etag: "\"cached-for-main\"", age: recentMarkerAge)
 
-  let result = runHelper(
-    directory: directory,
-    environment: [
-      "SWIFT_MK_CODELOAD_BASE": server.codeloadBase,
-      "SWIFT_MK_API_REF": "release/2.0",
-    ])
-  #expect(result.status == 0, "\(result.stderr)")
+    let result = await runHelper(
+      directory: directory,
+      environment: [
+        "SWIFT_MK_CODELOAD_BASE": server.codeloadBase,
+        "SWIFT_MK_API_REF": "release/2.0",
+      ])
+    #expect(result.status == 0, "\(result.stderr)")
 
-  #expect(server.requests().count == 1)
-  #expect(
-    server.requests()[0].ifNoneMatch.isEmpty,
-    "a marker recorded for a different ref must not be sent as a conditional header")
-  #expect(server.requests()[0].path == "/agoodkind/swift-makefile/tar.gz/release/2.0")
+    #expect(server.requests().count == 1)
+    #expect(
+      server.requests()[0].ifNoneMatch.isEmpty,
+      "a marker recorded for a different ref must not be sent as a conditional header")
+    #expect(server.requests()[0].path == "/agoodkind/swift-makefile/tar.gz/release/2.0")
+  }
 }
 
 @Test
-func helperFailsInCIRatherThanServingFromDiskEvenWithARecentMarker() throws {
+func helperFailsInCIRatherThanServingFromDiskEvenWithARecentMarker() async throws {
   // Regression guard for the serve-from-disk gate's `! running_in_ci` check.
   // Today that check is never actually exercised by any test: known_etag is
   // already forced empty in CI by an earlier guard (the one that reads the
@@ -574,28 +544,27 @@ func helperFailsInCIRatherThanServingFromDiskEvenWithARecentMarker() throws {
   // helper never even attempts validation and goes straight to provision,
   // whose failure here proves CI took the hard-failure path, not a silent
   // reuse of the warm tree.
-  let server = try FetchServer(files: engineFiles())
-  defer { server.shutdown() }
-  let directory = try temporaryConsumer()
-  try warmSnapshot(directory)
-  try writeMarker(
-    directory, ref: "main", etag: "\"cached\"", timestamp: Int(Date().timeIntervalSince1970))
-  server.stall(5)
-  server.forceStatus(500)
+  try await FetchServer.withServer(files: engineFiles()) { server in
+    let directory = try temporaryConsumer()
+    try warmSnapshot(directory)
+    try writeMarker(directory, etag: "\"cached\"", age: freshMarkerAge)
+    server.stall(5)
+    server.forceStatus(500)
 
-  let result = runHelper(
-    directory: directory,
-    environment: [
-      "SWIFT_MK_CODELOAD_BASE": server.codeloadBase,
-      "GITHUB_ACTIONS": "true",
-      "GITHUB_RUN_ID": "1",
-    ])
-  #expect(result.status != 0)
-  #expect(!result.stderr.contains("serving the .make snapshot validated"))
+    let result = await runHelper(
+      directory: directory,
+      environment: [
+        "SWIFT_MK_CODELOAD_BASE": server.codeloadBase,
+        "GITHUB_ACTIONS": "true",
+        "GITHUB_RUN_ID": "1",
+      ])
+    #expect(result.status != 0)
+    #expect(!result.stderr.contains("serving the .make snapshot validated"))
+  }
 }
 
 @Test
-func helperFailsWhenStaleStagingDirectoryCannotBeCleared() throws {
+func helperFailsWhenStaleStagingDirectoryCannotBeCleared() async throws {
   // install_from_stage clears .make.next and .make.previous before staging a
   // new tree, with no status check on that rm. A stale, undeletable file
   // inside .make.next (marked immutable here with chflags uchg, a real,
@@ -608,33 +577,29 @@ func helperFailsWhenStaleStagingDirectoryCannotBeCleared() throws {
   // orphaned file rode along into the "verified" .make, which is exactly what
   // snapshot_clear_engine exists to prevent. install_from_stage must check
   // the initial rm and fail instead of continuing past it.
-  let server = try FetchServer(files: engineFiles())
-  defer { server.shutdown() }
-  let directory = try temporaryConsumer()
+  try await FetchServer.withServer(files: engineFiles()) { server in
+    let directory = try temporaryConsumer()
 
-  let staleNextDir = (directory as NSString).appendingPathComponent(".make.next")
-  try FileManager.default.createDirectory(atPath: staleNextDir, withIntermediateDirectories: true)
-  let stalePath = (staleNextDir as NSString).appendingPathComponent("orphaned-stale-file")
-  try "stale\n".write(toFile: stalePath, atomically: true, encoding: .utf8)
+    let staleNextDir = (directory as NSString).appendingPathComponent(".make.next")
+    try FileManager.default.createDirectory(atPath: staleNextDir, withIntermediateDirectories: true)
+    let stalePath = (staleNextDir as NSString).appendingPathComponent("orphaned-stale-file")
+    try "stale\n".write(toFile: stalePath, atomically: true, encoding: .utf8)
 
-  let setImmutable = Process()
-  setImmutable.executableURL = URL(fileURLWithPath: "/usr/bin/chflags")
-  setImmutable.arguments = ["uchg", stalePath]
-  try setImmutable.run()
-  setImmutable.waitUntilExit()
-  #expect(setImmutable.terminationStatus == 0, "could not mark the stale file immutable")
-  defer {
-    let clearImmutable = Process()
-    clearImmutable.executableURL = URL(fileURLWithPath: "/usr/bin/chflags")
-    clearImmutable.arguments = ["nouchg", stalePath]
-    try? clearImmutable.run()
-    clearImmutable.waitUntilExit()
+    let immutableStatus = await OffPoolWork.run {
+      BootstrapHelperRunner.chflagsStatus("uchg", stalePath)
+    }
+    #expect(immutableStatus == 0, "could not mark the stale file immutable")
+    defer {
+      // Synchronous on purpose: `defer` cannot await, and this is the last thing the
+      // test does, so the brief block cannot pile up behind other work.
+      _ = BootstrapHelperRunner.chflagsStatus("nouchg", stalePath)
+    }
+
+    let result = await runHelper(
+      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+    #expect(result.status != 0)
+    // The swap must never have happened: no .make with the orphaned file
+    // riding along inside it.
+    #expect(readMakeFile(directory, "swift.mk") == nil)
   }
-
-  let result = runHelper(
-    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
-  #expect(result.status != 0)
-  // The swap must never have happened: no .make with the orphaned file
-  // riding along inside it.
-  #expect(readMakeFile(directory, "swift.mk") == nil)
 }
