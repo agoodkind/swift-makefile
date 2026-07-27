@@ -260,6 +260,17 @@ enum TarballBuilder {
       process.arguments = [
         "tar", "-czf", archive.path, "-C", root.path, "swift-makefile-test",
       ]
+      // An explicit, minimal environment instead of the ambient default: this
+      // runs on every FetchServer init (once per test in this file), and
+      // reading ProcessInfo.processInfo.environment races any concurrently
+      // running suite's setenv/unsetenv the same way runHelper's read did
+      // before it was moved under TestGlobalLock.
+      process.environment = TestGlobalLock.withLock {
+        [
+          "PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin",
+          "HOME": ProcessInfo.processInfo.environment["HOME"] ?? "",
+        ]
+      }
       try process.run()
       process.waitUntilExit()
       guard process.terminationStatus == 0 else {

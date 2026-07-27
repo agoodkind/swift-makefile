@@ -142,10 +142,26 @@ install_from_stage() {
     local previous_dir="${MAKE_DIR}.previous"
     local cp_log
     local cp_status=0
+    local clear_log
+    local clear_status=0
     local preserved_path
     cp_log="$(dirname "${stage_dir}")/install-cp.log"
+    clear_log="$(dirname "${stage_dir}")/clear-stage.log"
 
-    rm -rf "${next_dir}" "${previous_dir}"
+    # If this rm fails partway (a locked or immutable file left over from a
+    # previous run), a stale next_dir would still exist. mkdir -p would then
+    # succeed against it unchanged, cp -R would add every new file alongside
+    # whatever survived, and both assets_complete checks below would still
+    # pass, since every required asset is present, swapping a .make carrying
+    # orphaned stale content into place with exit 0. Checking the status here
+    # is what stops that.
+    rm -rf "${next_dir}" "${previous_dir}" 2>"${clear_log}" || clear_status=$?
+    if [[ ${clear_status} -ne 0 ]]; then
+        printf 'error: could not clear stale staging directories %s and %s (rm exit %d): %s\n' \
+            "${next_dir}" "${previous_dir}" "${clear_status}" "$(stderr_sample "${clear_log}")" >&2
+        return 1
+    fi
+
     if ! mkdir -p "${next_dir}"; then
         printf 'error: could not create staging directory %s\n' "${next_dir}" >&2
         return 1
@@ -258,9 +274,20 @@ write_marker() {
 # for anything larger than a tiny snapshot; a HEAD carries no body either way,
 # on a 200 or a 304, so the budget stays honest and a moved upstream costs one
 # real transfer (the later provision fetch) instead of two.
+#
+# curl's stderr is written to log_path instead of discarded with 2>/dev/null:
+# that discard was a control-flow probe whose failure reason selects between
+# serving from disk and falling through to a full provision, and the reason
+# must survive so the caller can report it rather than leaving a probe that
+# fails on every run invisible. On failure this returns curl's own exit
+# status (not a generic 1), so the caller can report the real reason (a
+# timeout, a DNS failure, a refused connection) rather than one generic
+# message for every kind of failure.
 validate_upstream() {
     local known_etag="$1"
+    local log_path="$2"
     local status_code
+    local curl_status=0
     local -a header_args=()
     if [[ -n "${known_etag}" ]]; then
         header_args=(-H "If-None-Match: ${known_etag}")
@@ -269,13 +296,15 @@ validate_upstream() {
     # "${header_args[@]}": under bash 3.2 (still /bin/bash on stock macOS)
     # with `set -u`, expanding a zero-element array directly raises "unbound
     # variable". The `+` form only expands the array when it is non-empty.
-    if ! status_code=$(curl -sS --head \
+    status_code=$(curl -sS --head \
         --connect-timeout "${VALIDATION_CONNECT_TIMEOUT}" \
         --max-time "${VALIDATION_MAX_TIME}" \
         "${header_args[@]+"${header_args[@]}"}" \
         -o /dev/null -w '%{http_code}' \
-        "${SWIFT_MK_CODELOAD_BASE}/${SWIFT_MK_API_REPO}/tar.gz/${SWIFT_MK_API_REF}" 2>/dev/null); then
-        return 1
+        "${SWIFT_MK_CODELOAD_BASE}/${SWIFT_MK_API_REPO}/tar.gz/${SWIFT_MK_API_REF}" \
+        2>"${log_path}") || curl_status=$?
+    if [[ ${curl_status} -ne 0 ]]; then
+        return "${curl_status}"
     fi
     printf '%s' "${status_code}"
 }
@@ -309,13 +338,15 @@ format_age() {
 }
 
 serve_from_disk_with_warning() {
+    local validate_status="$1"
+    local log_path="$2"
     local recorded
     local etag_value
     local now
     recorded=$(read_marker_field "timestamp")
     etag_value=$(read_marker_field "etag" || printf 'unknown')
     now=$(current_epoch_seconds)
-    printf '%s\n' "swift-mk: upstream unreachable; serving the .make snapshot validated $(format_age $(( now - recorded ))) ago (etag ${etag_value}). Set SWIFT_MK_SKIP_FETCH=1 to silence, or check network access to ${SWIFT_MK_CODELOAD_BASE}" >&2
+    printf '%s\n' "swift-mk: upstream unreachable; serving the .make snapshot validated $(format_age $(( now - recorded ))) ago (etag ${etag_value}); validation curl exit ${validate_status}: $(stderr_sample "${log_path}"). Set SWIFT_MK_SKIP_FETCH=1 to silence, or check network access to ${SWIFT_MK_CODELOAD_BASE}" >&2
 }
 
 # running_in_ci matches the test Build.runsInlineGates already uses.
@@ -339,24 +370,26 @@ provision() {
             exit 1
         fi
 
-        # Checked before install_from_stage runs, not after, so a response
-        # with no ETag header leaves .make exactly as it was, the same
-        # invariant every other failure path here holds. Recording a marker
-        # with an empty etag would silently degrade every later run into an
-        # unconditional full download forever, with nothing printed to
-        # explain why validation never engages again; failing loudly here
-        # instead means the next run tries again rather than limping along.
         etag_value=$(awk 'tolower($1) == "etag:" { print $2 }' "${stage_root}/headers" | tr -d '\r' | tail -n 1)
-        if [[ -z "${etag_value}" ]]; then
-            printf 'error: upstream response for %s carried no ETag header; cannot safely record a validation marker\n' \
-                "${SWIFT_MK_API_REF}" >&2
-            exit 1
-        fi
 
         if ! install_from_stage "${stage_dir}"; then
             exit 1
         fi
-        write_marker "${etag_value}"
+
+        # A missing ETag does not fail the provision: refusing to install a
+        # verified, complete tree would be worse than the defect this guards
+        # against, since a cold consumer would be left with no engine at all
+        # if codeload ever stopped sending ETag on archives. The tree
+        # installs regardless; skipping the marker write means every later
+        # run has no known etag and downloads unconditionally, the same
+        # behavior this script had before conditional validation existed,
+        # with a loud warning every time so the degradation stays visible.
+        if [[ -z "${etag_value}" ]]; then
+            printf 'swift-mk: warning: upstream response for %s carried no ETag header; validation is disabled until it does, downloading unconditionally each run\n' \
+                "${SWIFT_MK_API_REF}" >&2
+        else
+            write_marker "${etag_value}"
+        fi
     )
 }
 
@@ -364,6 +397,8 @@ main() {
     local known_etag=""
     local status_code=""
     local stored_ref=""
+    local validate_status=0
+    local validation_log=""
 
     mkdir -p "${MAKE_DIR}"
 
@@ -396,11 +431,13 @@ main() {
     fi
 
     if [[ -n "${known_etag}" ]]; then
-        status_code=$(validate_upstream "${known_etag}" || printf '')
+        validation_log=$(mktemp "${TMPDIR:-/tmp}/swift-mk-validate.XXXXXXXX") || return 1
+        status_code=$(validate_upstream "${known_etag}" "${validation_log}") || validate_status=$?
         if [[ "${status_code}" == "304" ]]; then
             # Deliberately no marker write. The reuse window is a fixed hour
             # from the last real download, not a window a successful check can
             # slide forward, and a 304 must leave .make byte-for-byte alone.
+            rm -f "${validation_log}"
             return 0
         fi
     fi
@@ -414,8 +451,20 @@ main() {
     # check did not finish, not that the full fetch would also fail; only a
     # provision that itself fails is a real failure.
     if ! running_in_ci && [[ -n "${known_etag}" && -z "${status_code}" ]] && marker_is_recent; then
-        serve_from_disk_with_warning
+        serve_from_disk_with_warning "${validate_status}" "${validation_log}"
+        rm -f "${validation_log}"
         return 0
+    fi
+
+    # A probe that fails on every run must stay visible even on the stale
+    # fall-through path, where the failure only decides whether to log before
+    # a real provision attempt, not whether to serve from disk.
+    if [[ -n "${validation_log}" ]]; then
+        if [[ -z "${status_code}" ]]; then
+            printf 'swift-mk: validation curl exit %d: %s; falling through to a full provision\n' \
+                "${validate_status}" "$(stderr_sample "${validation_log}")" >&2
+        fi
+        rm -f "${validation_log}"
     fi
 
     # `if provision; then` puts provision, and everything it calls, in bash's

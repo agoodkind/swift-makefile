@@ -395,6 +395,10 @@ func helperServesSnapshotWhenUpstreamStallsAndMarkerIsRecent() throws {
     directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
   #expect(result.status == 0, "\(result.stderr)")
   #expect(result.stderr.contains("serving the .make snapshot validated"))
+  // The probe's own curl output used to be discarded with 2>/dev/null, so a
+  // validation that failed on every run left no trace. The warning must now
+  // carry why validation failed, not just that it did.
+  #expect(result.stderr.contains("validation curl exit"))
   #expect(readMakeFile(directory, "swift.mk") == "# swift.mk v1\n")
 }
 
@@ -420,6 +424,11 @@ func helperFailsWhenUpstreamStallsAndMarkerIsStale() throws {
     directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
   #expect(result.status != 0)
   #expect(!result.stderr.contains("serving the .make snapshot validated"))
+  // A validation that fails on the stale fall-through path (no serve-from-disk
+  // eligible) must still be logged, not silently swallowed by 2>/dev/null,
+  // before the fall-through to a full provision attempt.
+  #expect(result.stderr.contains("validation curl exit"))
+  #expect(result.stderr.contains("falling through to a full provision"))
   // Nothing may be destroyed even on the failing path.
   #expect(readMakeFile(directory, "swift.mk") == "# swift.mk v1\n")
 }
@@ -472,13 +481,15 @@ func helperProvisionsUnconditionallyInCI() throws {
 }
 
 @Test
-func helperFailsWhenUpstreamOmitsTheETagHeader() throws {
-  // Recording a marker with an empty etag would silently degrade every later
-  // run into an unconditional full download forever, with nothing ever
-  // printed to explain why validation never kicks in. The provision must fail
-  // loudly here instead, and leave .make exactly as it found it (empty, on a
-  // cold run), so the next run tries again rather than limping along with a
-  // marker that can never validate.
+func helperInstallsAndWarnsWhenUpstreamOmitsTheETagHeader() throws {
+  // Reversal: a hard failure here was judged worse than the defect it guarded
+  // against. If codeload ever stops sending ETag on archives, refusing to
+  // install would break every consumer at once, including a cold one left
+  // with no engine at all. Instead the verified tree installs, no marker is
+  // written (so every later run has no known etag and downloads
+  // unconditionally, today's pre-Task-3 behavior), and a warning is printed
+  // every time so the degradation stays visible rather than silent. Renamed
+  // from helperFailsWhenUpstreamOmitsTheETagHeader to match the new contract.
   let server = try FetchServer(files: engineFiles())
   defer { server.shutdown() }
   server.setETagEnabled(false)
@@ -486,9 +497,10 @@ func helperFailsWhenUpstreamOmitsTheETagHeader() throws {
 
   let result = runHelper(
     directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
-  #expect(result.status != 0)
-  #expect(readMakeFile(directory, "swift.mk") == nil)
+  #expect(result.status == 0, "\(result.stderr)")
+  #expect(readMakeFile(directory, "swift.mk") == "# swift.mk v1\n")
   #expect(readMarker(directory)["etag"] == nil)
+  #expect(result.stderr.contains("no ETag header"))
 }
 
 @Test
@@ -546,4 +558,83 @@ func helperDoesNotReuseAnEtagRecordedForADifferentRef() throws {
     server.requests()[0].ifNoneMatch.isEmpty,
     "a marker recorded for a different ref must not be sent as a conditional header")
   #expect(server.requests()[0].path == "/agoodkind/swift-makefile/tar.gz/release/2.0")
+}
+
+@Test
+func helperFailsInCIRatherThanServingFromDiskEvenWithARecentMarker() throws {
+  // Regression guard for the serve-from-disk gate's `! running_in_ci` check.
+  // Today that check is never actually exercised by any test: known_etag is
+  // already forced empty in CI by an earlier guard (the one that reads the
+  // marker at all), so the two CI checks are redundant, and a later refactor
+  // could silently drop the second one without any test noticing. This test
+  // builds exactly the marker helperServesSnapshotWhenUpstreamStallsAndMarkerIsRecent
+  // uses to earn a successful serve-from-disk off-CI (a recent timestamp, a
+  // stalling upstream), but in CI, and additionally forces the real fetch to
+  // fail (forceStatus(500)): since known_etag is empty in CI regardless, the
+  // helper never even attempts validation and goes straight to provision,
+  // whose failure here proves CI took the hard-failure path, not a silent
+  // reuse of the warm tree.
+  let server = try FetchServer(files: engineFiles())
+  defer { server.shutdown() }
+  let directory = try temporaryConsumer()
+  try warmSnapshot(directory)
+  try writeMarker(
+    directory, ref: "main", etag: "\"cached\"", timestamp: Int(Date().timeIntervalSince1970))
+  server.stall(5)
+  server.forceStatus(500)
+
+  let result = runHelper(
+    directory: directory,
+    environment: [
+      "SWIFT_MK_CODELOAD_BASE": server.codeloadBase,
+      "GITHUB_ACTIONS": "true",
+      "GITHUB_RUN_ID": "1",
+    ])
+  #expect(result.status != 0)
+  #expect(!result.stderr.contains("serving the .make snapshot validated"))
+}
+
+@Test
+func helperFailsWhenStaleStagingDirectoryCannotBeCleared() throws {
+  // install_from_stage clears .make.next and .make.previous before staging a
+  // new tree, with no status check on that rm. A stale, undeletable file
+  // inside .make.next (marked immutable here with chflags uchg, a real,
+  // unmocked removal failure rather than an injected one) still lets
+  // mkdir -p succeed against the existing directory and lets cp -R add every
+  // new file alongside it, since the directory itself stays writable; only
+  // the specific immutable path resists removal. Both assets_complete checks
+  // would then pass, since every required asset the fetch provides is
+  // present, and the swap would proceed with exit 0 even though a stale
+  // orphaned file rode along into the "verified" .make, which is exactly what
+  // snapshot_clear_engine exists to prevent. install_from_stage must check
+  // the initial rm and fail instead of continuing past it.
+  let server = try FetchServer(files: engineFiles())
+  defer { server.shutdown() }
+  let directory = try temporaryConsumer()
+
+  let staleNextDir = (directory as NSString).appendingPathComponent(".make.next")
+  try FileManager.default.createDirectory(atPath: staleNextDir, withIntermediateDirectories: true)
+  let stalePath = (staleNextDir as NSString).appendingPathComponent("orphaned-stale-file")
+  try "stale\n".write(toFile: stalePath, atomically: true, encoding: .utf8)
+
+  let setImmutable = Process()
+  setImmutable.executableURL = URL(fileURLWithPath: "/usr/bin/chflags")
+  setImmutable.arguments = ["uchg", stalePath]
+  try setImmutable.run()
+  setImmutable.waitUntilExit()
+  #expect(setImmutable.terminationStatus == 0, "could not mark the stale file immutable")
+  defer {
+    let clearImmutable = Process()
+    clearImmutable.executableURL = URL(fileURLWithPath: "/usr/bin/chflags")
+    clearImmutable.arguments = ["nouchg", stalePath]
+    try? clearImmutable.run()
+    clearImmutable.waitUntilExit()
+  }
+
+  let result = runHelper(
+    directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+  #expect(result.status != 0)
+  // The swap must never have happened: no .make with the orphaned file
+  // riding along inside it.
+  #expect(readMakeFile(directory, "swift.mk") == nil)
 }
