@@ -362,6 +362,16 @@ func helperServesSnapshotWhenUpstreamStallsAndMarkerIsRecent() async throws {
     let directory = try temporaryConsumer()
     try warmSnapshot(directory)
     try writeMarker(directory, etag: "\"cached\"", age: recentMarkerAge)
+    // The 304 path (helperTouchesNothingWhenUpstreamReturnsNotModified) locks
+    // its own no-write invariant with both content and modification time; the
+    // offline-reuse path is the second place a marker write must never happen,
+    // since a write here would slide the one-hour window forward on every
+    // offline run, turning bounded reuse into unbounded reuse with the whole
+    // suite still green.
+    let markerPath = makePath(directory, ".swift-mk-snapshot-ref")
+    let markerBefore = readMakeFile(directory, ".swift-mk-snapshot-ref")
+    let markerMtimeBefore =
+      try FileManager.default.attributesOfItem(atPath: markerPath)[.modificationDate] as? Date
     server.stall(5)
 
     let result = await runHelper(
@@ -373,6 +383,17 @@ func helperServesSnapshotWhenUpstreamStallsAndMarkerIsRecent() async throws {
     // carry why validation failed, not just that it did.
     #expect(result.stderr.contains("validation curl exit"))
     #expect(readMakeFile(directory, "swift.mk") == "# swift.mk v1\n")
+
+    let markerAfter = readMakeFile(directory, ".swift-mk-snapshot-ref")
+    #expect(
+      markerBefore == markerAfter,
+      "the offline-reuse path rewrote the marker instead of leaving it untouched")
+    let markerMtimeAfter =
+      try FileManager.default.attributesOfItem(atPath: markerPath)[.modificationDate] as? Date
+    #expect(
+      markerMtimeBefore == markerMtimeAfter,
+      "the offline-reuse path touched the marker's modification time instead of leaving it untouched"
+    )
   }
 }
 
@@ -410,8 +431,20 @@ func helperFailsWhenUpstreamStallsAndMarkerIsStale() async throws {
 func helperForceProvisionsWhenValidationTimesOutAndMarkerIsStale() async throws {
   // Regression guard: a validation timeout only proves the cheap 3 second
   // check did not finish, not that the network is down. A stale marker must
-  // still force a real provision attempt with its own 60 second budget, and
-  // that attempt can succeed even though validation did not.
+  // still force a real provision attempt with its own budget, and that
+  // attempt can succeed even though validation did not.
+  //
+  // server.stall(5) alone used to cover this: the validation HEAD request
+  // (a 3 second budget) timed out, and the forced provision GET, sharing the
+  // same dead 5 second pre-response delay, still finished inside the old 60
+  // second --max-time. Once the provision fetch also gained a progress-based
+  // abort (--speed-limit 1024 --speed-time 3), a dead 5 second stall before
+  // any byte arrives now aborts that GET too: 5 seconds of zero throughput
+  // trips the 3 second speed-time window well before the stall even ends.
+  // trickle keeps the stall on the HEAD (bodyless, so the dead delay still
+  // applies and validation still times out) while giving the GET a real,
+  // continuously-progressing body instead, which is what "slow but working"
+  // actually means now.
   var updatedFiles = engineFiles()
   updatedFiles["swift.mk"] = "# swift.mk v2\n"
   try await FetchServer.withServer(files: updatedFiles) { server in
@@ -419,6 +452,7 @@ func helperForceProvisionsWhenValidationTimesOutAndMarkerIsStale() async throws 
     try warmSnapshot(directory)
     try writeMarker(directory, etag: "\"cached\"", age: staleMarkerAge)
     server.stall(5)
+    server.trickle(bytesPerSecond: 2048)
 
     let result = await runHelper(
       directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
@@ -601,5 +635,119 @@ func helperFailsWhenStaleStagingDirectoryCannotBeCleared() async throws {
     // The swap must never have happened: no .make with the orphaned file
     // riding along inside it.
     #expect(readMakeFile(directory, "swift.mk") == nil)
+  }
+}
+
+/// Comfortably above the FETCH_MAX_TIME backstop (15s in the script), so a helper
+/// that fell back to the backstop instead of the progress-based abort would still
+/// fail this bound, while a genuine ~3 second abort passes with room to spare.
+let boundedStallWallClockCeilingSeconds = 10.0
+
+@Test
+func helperGivesUpWithinABoundedWallClockWhenUpstreamStalls() async throws {
+  // The point of the progress-based abort: a stalled upstream must not freeze a
+  // developer's `make` for anywhere near FETCH_MAX_TIME (now 15s, previously
+  // 60s). An exit-code-only assertion would pass just as well whether the
+  // helper gave up in 3 seconds or in 15, so this measures wall-clock time
+  // directly.
+  try await FetchServer.withServer(files: engineFiles()) { server in
+    // 5 seconds, matching the stall duration every other test in this file
+    // uses: well past FETCH_SPEED_TIME (3s), so the client-side abort is what
+    // this test measures. A much longer stall would not make the assertion
+    // any stronger (curl still gives up at the same ~3 second mark) and would
+    // only add dead time to this test's own teardown, since the server's
+    // Thread.sleep on its single event-loop thread keeps running for the
+    // full stall regardless of how quickly the client already disconnected.
+    server.stall(5)
+    let directory = try temporaryConsumer()
+
+    let start = Date()
+    let result = await runHelper(
+      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+    let elapsed = Date().timeIntervalSince(start)
+
+    #expect(result.status != 0)
+    #expect(
+      elapsed < boundedStallWallClockCeilingSeconds,
+      "the helper took \(elapsed)s to give up; the progress-based abort should catch a stall in a few seconds, not the FETCH_MAX_TIME backstop"
+    )
+  }
+}
+
+/// 2 KB/s, matching the rate team-lead calibrated on the go side. Comfortably
+/// above the script's 1024 B/s floor.
+let slowButProgressingBytesPerSecond = 2_048
+/// Long enough to cover several FETCH_SPEED_TIME (3s) windows, so the test
+/// proves sustained non-abort rather than a lucky single window.
+let slowButProgressingMinimumSeconds = 6.0
+/// Random, so gzip cannot shrink it away: the trickle rate needs a compressed
+/// body this large to sustain slowButProgressingMinimumSeconds of transfer.
+func randomHardToCompressContent(byteCount: Int) -> String {
+  var bytes = [UInt8](repeating: 0, count: byteCount)
+  for index in bytes.indices {
+    bytes[index] = UInt8.random(in: UInt8.min...UInt8.max)
+  }
+  return Data(bytes).base64EncodedString()
+}
+
+@Test
+func helperCompletesASlowButProgressingTransfer() async throws {
+  // The companion to the bounded-stall test above: a transfer that never stops
+  // making progress, even below a comfortable margin, must not be aborted.
+  // Without this, a later tightening of FETCH_SPEED_LIMIT or FETCH_SPEED_TIME
+  // could silently start failing a working, merely slow, network, and nothing
+  // would catch it.
+  // Sized to serve roughly 9 seconds at slowButProgressingBytesPerSecond: long
+  // enough to clear slowButProgressingMinimumSeconds (6s, several
+  // FETCH_SPEED_TIME windows) with room to spare, short enough to stay well
+  // under the script's 15 second FETCH_MAX_TIME backstop.
+  var files = engineFiles()
+  files["swift.mk"] = randomHardToCompressContent(byteCount: 17_000)
+  try await FetchServer.withServer(files: files) { server in
+    server.trickle(bytesPerSecond: slowButProgressingBytesPerSecond)
+    let directory = try temporaryConsumer()
+
+    let start = Date()
+    let result = await runHelper(
+      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+    let elapsed = Date().timeIntervalSince(start)
+
+    #expect(result.status == 0, "\(result.stderr)")
+    #expect(
+      elapsed >= slowButProgressingMinimumSeconds,
+      "the transfer finished in \(elapsed)s, too fast to have exercised sustained trickling; the fixture needs to be larger relative to the trickle rate"
+    )
+    #expect(readMakeFile(directory, "swift.mk")?.isEmpty == false)
+  }
+}
+
+@Test
+func helperReportsRealReasonWhenValidationTempFileCannotBeCreated() async throws {
+  // On the go side, a silent local mktemp failure in the validation path
+  // routed to the offline-reuse branch, so a full or unwritable TMPDIR read as
+  // "upstream unreachable" and served stale assets for an hour with nothing
+  // naming the real cause. This script's equivalent failure is structurally
+  // not reuse-eligible (the return fires before the marker_is_recent check is
+  // ever reached), but it was silent, an opaque exit 1 with no message at all.
+  //
+  // SWIFT_MK_BOOTSTRAP_REEXEC=1 skips the helper's own re-exec-from-temp-copy
+  // step, which also calls mktemp against the same TMPDIR and would otherwise
+  // fail first, masking the specific failure this test targets.
+  try await FetchServer.withServer(files: engineFiles()) { server in
+    let directory = try temporaryConsumer()
+    try warmSnapshot(directory)
+    try writeMarker(directory, etag: "\"cached\"", age: recentMarkerAge)
+
+    let badTmpDir = (directory as NSString).appendingPathComponent("no-such-tmp")
+    let result = await runHelper(
+      directory: directory,
+      environment: [
+        "SWIFT_MK_CODELOAD_BASE": server.codeloadBase,
+        "SWIFT_MK_BOOTSTRAP_REEXEC": "1",
+        "TMPDIR": badTmpDir,
+      ])
+    #expect(result.status != 0)
+    #expect(!result.stderr.contains("serving the .make snapshot validated"))
+    #expect(result.stderr.contains("could not create a temporary file for validation"))
   }
 }

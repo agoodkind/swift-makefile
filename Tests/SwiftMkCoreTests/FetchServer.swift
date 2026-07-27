@@ -42,6 +42,7 @@ final class FetchState: @unchecked Sendable {
   private var records: [FetchRecord] = []
   private var forcedStatus: Int?
   private var etagEnabled = true
+  private var trickleBytesPerSecond: Int?
 
   /// Install an already-built archive. The build itself spawns `tar` and blocks
   /// waiting for it, so callers run it through `OffPoolWork` and hand the bytes here.
@@ -73,12 +74,19 @@ final class FetchState: @unchecked Sendable {
     etagEnabled = enabled
   }
 
+  func setTrickle(_ bytesPerSecond: Int?) {
+    lock.lock()
+    defer { lock.unlock() }
+    trickleBytesPerSecond = bytesPerSecond
+  }
+
   func snapshot() -> (
-    tarball: [UInt8], etag: String, stall: Double, forcedStatus: Int?, etagEnabled: Bool
+    tarball: [UInt8], etag: String, stall: Double, forcedStatus: Int?, etagEnabled: Bool,
+    trickleBytesPerSecond: Int?
   ) {
     lock.lock()
     defer { lock.unlock() }
-    return (tarball, etagValue, stallSeconds, forcedStatus, etagEnabled)
+    return (tarball, etagValue, stallSeconds, forcedStatus, etagEnabled, trickleBytesPerSecond)
   }
 
   func record(_ entry: FetchRecord) {
@@ -187,6 +195,20 @@ final class FetchServer: @unchecked Sendable {
     state.setETagEnabled(enabled)
   }
 
+  /// Pace every later body-carrying response at bytesPerSecond, delivered in small
+  /// chunks via the event loop's own scheduler rather than a dead pre-response
+  /// delay, so a test can drive a transfer that is slow but genuinely progressing.
+  /// Distinct from `stall`, which delays the whole response including one with no
+  /// body at all (a HEAD, a 304, a forced status): a trickle rate silences that
+  /// dead delay for exactly the responses it applies to (a real body), since a
+  /// request that will carry a body needs to start delivering it immediately to
+  /// avoid tripping a speed-limit-style abort, while a bodyless response still
+  /// experiences `stall` untouched, simulating a lightweight check upstream has
+  /// not answered at all. Pass nil to restore instant delivery.
+  func trickle(bytesPerSecond: Int?) {
+    state.setTrickle(bytesPerSecond)
+  }
+
   func requests() -> [FetchRecord] {
     state.requests()
   }
@@ -239,9 +261,6 @@ private final class FetchHandler: ChannelInboundHandler, @unchecked Sendable {
 
   private func respond(context: ChannelHandlerContext) {
     let current = state.snapshot()
-    if current.stall > 0 {
-      Thread.sleep(forTimeInterval: current.stall)
-    }
 
     let status: HTTPResponseStatus
     let contentBytes: [UInt8]
@@ -256,6 +275,17 @@ private final class FetchHandler: ChannelInboundHandler, @unchecked Sendable {
     // A HEAD response reports the same status and content length a GET would,
     // but never actually transmits a body, matching real codeload.github.com.
     let transmittedBytes = requestMethod == .HEAD ? [] : contentBytes
+
+    if let bytesPerSecond = current.trickleBytesPerSecond, !transmittedBytes.isEmpty {
+      sendTrickled(
+        status: status, etagEnabled: current.etagEnabled, etag: current.etag,
+        bytes: transmittedBytes, bytesPerSecond: bytesPerSecond, context: context)
+      return
+    }
+
+    if current.stall > 0 {
+      Thread.sleep(forTimeInterval: current.stall)
+    }
 
     var headers = HTTPHeaders()
     if current.etagEnabled {
@@ -276,6 +306,55 @@ private final class FetchHandler: ChannelInboundHandler, @unchecked Sendable {
       FetchRecord(
         path: requestPath, method: requestMethod.rawValue, ifNoneMatch: ifNoneMatch,
         status: Int(status.code), bytes: transmittedBytes.count))
+  }
+
+  /// Delivers `bytes` as small chunks paced at bytesPerSecond, ten chunks per
+  /// second, via the event loop's own `scheduleTask` rather than Thread.sleep, so
+  /// pacing a slow transfer never blocks the single-threaded event loop the way
+  /// `stall`'s sleep does. The head is flushed immediately, so the first byte of
+  /// progress is visible right away, exactly the property that distinguishes a
+  /// slow-but-progressing transfer from a dead stall.
+  private func sendTrickled(
+    status: HTTPResponseStatus, etagEnabled: Bool, etag: String, bytes: [UInt8],
+    bytesPerSecond: Int, context: ChannelHandlerContext
+  ) {
+    var headers = HTTPHeaders()
+    if etagEnabled {
+      headers.add(name: "ETag", value: etag)
+    }
+    headers.add(name: "Content-Length", value: String(bytes.count))
+    let head = HTTPResponseHead(version: .http1_1, status: status, headers: headers)
+    context.writeAndFlush(wrapOutboundOut(.head(head)), promise: nil)
+    writeNextTrickleChunk(bytes: bytes, offset: 0, bytesPerSecond: bytesPerSecond, status: status, context: context)
+  }
+
+  private func writeNextTrickleChunk(
+    bytes: [UInt8], offset: Int, bytesPerSecond: Int, status: HTTPResponseStatus,
+    context: ChannelHandlerContext
+  ) {
+    if offset >= bytes.count {
+      context.writeAndFlush(wrapOutboundOut(.end(nil)), promise: nil)
+      state.record(
+        FetchRecord(
+          path: requestPath, method: requestMethod.rawValue, ifNoneMatch: ifNoneMatch,
+          status: Int(status.code), bytes: bytes.count))
+      return
+    }
+    let chunkSize = max(1, bytesPerSecond / 10)
+    let end = min(offset + chunkSize, bytes.count)
+    var buffer = context.channel.allocator.buffer(capacity: end - offset)
+    buffer.writeBytes(bytes[offset..<end])
+    context.writeAndFlush(wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
+    // ChannelHandlerContext is not Sendable, but this closure only ever runs on
+    // the same event loop that scheduled it, the same guarantee that already
+    // makes FetchHandler itself @unchecked Sendable; nonisolated(unsafe) states
+    // that explicitly instead of leaving a real capture warning unaddressed.
+    nonisolated(unsafe) let scheduledContext = context
+    context.eventLoop.scheduleTask(in: .milliseconds(100)) {
+      self.writeNextTrickleChunk(
+        bytes: bytes, offset: end, bytesPerSecond: bytesPerSecond, status: status,
+        context: scheduledContext)
+    }
   }
 }
 
