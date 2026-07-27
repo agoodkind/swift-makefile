@@ -64,6 +64,12 @@ ifneq ($(strip $(MAKECMDGOALS)),help)
 SWIFT_MK_BASE_URL ?= https://raw.githubusercontent.com/agoodkind/swift-makefile/main
 SWIFT_MK_API_REPO ?= agoodkind/swift-makefile
 SWIFT_MK_API_REF ?= main
+# Internal override, in the same category as SWIFT_MK_API_REPO and
+# SWIFT_MK_API_REF: tests point it at a local server, consumers never set it.
+# Matches the override scripts/swift-mk-bootstrap.sh and
+# scripts/swift-mk-sync.sh's snapshot_extract already carry, so the cold
+# in-Makefile fetch path below is exercisable the same way.
+SWIFT_MK_CODELOAD_BASE ?= https://codeload.github.com
 
 # Print the trace header before any other work. The full trace logic lives once in
 # scripts/swift-mk-trace.sh (a consumer bootstrap.mk prints its own minimal header
@@ -161,25 +167,31 @@ SWIFT_MK_NOTICES_FILE := $(if $(wildcard $(SWIFT_MK_LOCAL_NOTICES)),$(SWIFT_MK_L
 # for the pinned ref (SWIFT_MK_API_REF) from GitHub and extracts it into .make with
 # tar --strip-components=1, so the archive's top-level directory is dropped and the
 # engine tree lands flat under .make. gh streams the tarball first, and a plain curl
-# of the public codeload archive is the fallback, so no auth is required. A marker
-# records the resolved ref for the idempotency check at the call site. Before the
-# extract it clears the prior snapshot's engine files (keeping the generated logs,
-# build lock, dev symlinks, and built binary), so a ref change or a migration from an
-# old per-file .make cannot leave an orphaned source the new snapshot no longer
-# defines. This runs before the swift-mk binary or any fetched script exists, so it
-# stays inline shell with no fetched-script dependency.
+# of the public codeload archive is the fallback, so no auth is required; only the
+# curl fallback's response headers are captured, since gh does not expose them the
+# same way, but this whole path runs at most once per consumer (the marker it
+# writes lands the helper, which owns every later parse). A marker records the ref,
+# the content ETag, and the extraction time, matching the format
+# scripts/swift-mk-bootstrap.sh and scripts/swift-mk-sync.sh's snapshot_extract both
+# write, so the idempotency check at the call site (SWIFT_MK_SNAPSHOT_CURRENT) can
+# key off the ETag rather than the ref name. Before the extract it clears the prior
+# snapshot's engine files (keeping the generated logs, build lock, dev symlinks, and
+# built binary), so a ref change or a migration from an old per-file .make cannot
+# leave an orphaned source the new snapshot no longer defines. This runs before the
+# swift-mk binary or any fetched script exists, so it stays inline shell with no
+# fetched-script dependency.
 define _swift_mk_snapshot_commands
 	tmp=$$(mktemp -d) || exit 1; \
 	ok=""; \
 	if command -v gh >/dev/null 2>&1 && gh api "repos/$(SWIFT_MK_API_REPO)/tarball/$(SWIFT_MK_API_REF)" > "$$tmp/snapshot.tar.gz" 2>"$$tmp/err" && [ -s "$$tmp/snapshot.tar.gz" ]; then \
 		ok=1; \
-	elif curl -fsSL --connect-timeout 5 --max-time 60 "https://codeload.github.com/$(SWIFT_MK_API_REPO)/tar.gz/$(SWIFT_MK_API_REF)" -o "$$tmp/snapshot.tar.gz" 2>"$$tmp/err" && [ -s "$$tmp/snapshot.tar.gz" ]; then \
+	elif curl -fsSL --connect-timeout 5 --max-time 60 -D "$$tmp/headers" "$(SWIFT_MK_CODELOAD_BASE)/$(SWIFT_MK_API_REPO)/tar.gz/$(SWIFT_MK_API_REF)" -o "$$tmp/snapshot.tar.gz" 2>"$$tmp/err" && [ -s "$$tmp/snapshot.tar.gz" ]; then \
 		ok=1; \
 	fi; \
 	if [ -z "$$ok" ]; then cat "$$tmp/err" >&2 2>/dev/null || true; rm -rf "$$tmp"; exit 1; fi; \
 	find .make -mindepth 1 -maxdepth 1 ! -name logs ! -name build.lock ! -name swift-mk ! -name swift-mk.key ! -name swift-mk-build ! -name dev ! -name .swift-mk-snapshot-ref ! -name swift.mk ! -name '*.log' -exec rm -rf {} + 2>>"$$tmp/err" || true; \
 	if ! tar -xz --strip-components=1 -C .make -f "$$tmp/snapshot.tar.gz" 2>>"$$tmp/err"; then cat "$$tmp/err" >&2 2>/dev/null || true; rm -rf "$$tmp"; exit 1; fi; \
-	printf '%s\n' "$(SWIFT_MK_API_REF)" > .make/.swift-mk-snapshot-ref; \
+	printf 'ref=%s\netag=%s\ntimestamp=%s\n' "$(SWIFT_MK_API_REF)" "$$(awk 'tolower($$1) == "etag:" { print $$2 }' "$$tmp/headers" 2>/dev/null | tr -d '\r' | tail -n 1)" "$$(date +%s)" > .make/.swift-mk-snapshot-ref; \
 	rm -rf "$$tmp"
 endef
 
@@ -205,20 +217,34 @@ endef
 # engine tree extracts into .make and becomes the flat SwiftPM package the build
 # compiles (.make/Package.swift, .make/Sources, .make/scripts, .make/swiftcheck),
 # so a source added to the engine is present with no manifest to maintain, and the
-# selected modules (SWIFT_MK_MODULES) arrive in the same snapshot. The extract is
-# idempotent: the marker records the resolved ref, and a later run whose marker
-# matches the pinned ref with a present .make/Package.swift skips the re-extract, so
-# file mtimes stay stable and the tool-binary staleness guard does not force a
-# rebuild. When a re-extract does run, it first clears the prior snapshot's engine
-# files while preserving .make/logs, .make/build.lock, and the built binary, so an
-# orphaned source cannot survive a ref change. Dev-dir mode is excluded here, because
-# SWIFT_MK_HELPER_DIR then resolves to the checkout rather than .make/scripts and the
-# build reads the checkout directly.
-SWIFT_MK_SNAPSHOT_CURRENT := $(shell if [ -f .make/Package.swift ] && [ -f .make/.swift-mk-snapshot-ref ] && [ "$$(cat .make/.swift-mk-snapshot-ref 2>/dev/null)" = "$(SWIFT_MK_API_REF)" ]; then printf 1; fi)
+# selected modules (SWIFT_MK_MODULES) arrive in the same snapshot. Dev-dir mode is
+# excluded here, because SWIFT_MK_HELPER_DIR then resolves to the checkout rather
+# than .make/scripts and the build reads the checkout directly.
+#
+# The engine snapshot is current only when the marker carries the ETag the
+# helper recorded and the extracted package is present. The previous check
+# compared the marker to SWIFT_MK_API_REF, which for a branch pin is always
+# equal, so a consumer never re-fetched and stayed frozen on its first commit.
+# A marker holding only a bare ref name (what this same block used to write)
+# has no etag= line, so grep fails and the consumer is treated as not current,
+# forcing exactly one real re-extract to land the helper below.
+SWIFT_MK_SNAPSHOT_HELPER := .make/scripts/swift-mk-bootstrap.sh
+SWIFT_MK_SNAPSHOT_CURRENT := $(shell if [ -f .make/Package.swift ] && grep -q '^etag=..*' .make/.swift-mk-snapshot-ref 2>/dev/null; then printf 1; fi)
 ifeq ($(SWIFT_MK_HELPER_DIR),$(SWIFT_MK_FETCHED_SCRIPT_DIR))
 ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
 SWIFT_MK_SNAPSHOT := $(call swift-mk-require-one,.make/Package.swift)
+else ifneq ($(wildcard $(SWIFT_MK_SNAPSHOT_HELPER)),)
+# The helper owns validation, reuse, and failure once it has landed once. It is
+# itself part of the fetched engine tree, so its policy reaches every consumer
+# on its next parse with no consumer-side change. Passed explicitly rather than
+# relying on `export`, since the export statements for these variables are
+# textually later in this file and would not yet be in effect for this
+# immediate $(shell) call.
+SWIFT_MK_SNAPSHOT := $(if $(filter ok,$(shell SWIFT_MK_API_REPO="$(SWIFT_MK_API_REPO)" SWIFT_MK_API_REF="$(SWIFT_MK_API_REF)" SWIFT_MK_MODULES="$(SWIFT_MK_MODULES)" bash "$(SWIFT_MK_SNAPSHOT_HELPER)" >&2 && printf ok)),,$(error swift-makefile failed to provision the engine snapshot))
 else ifneq ($(strip $(SWIFT_MK_SNAPSHOT_CURRENT)),1)
+# Cold path for a consumer whose .make predates the helper (or whose marker is
+# still the old bare-ref format). It extracts once, which lands the helper
+# among the fetched files, so every later parse takes the branch above instead.
 SWIFT_MK_SNAPSHOT := $(call swift_mk_snapshot)
 endif
 endif
