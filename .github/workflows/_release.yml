@@ -304,6 +304,7 @@ jobs:
           RELEASE_TRACK: ${{ inputs.release-track }}
           RELEASE_TAG: ${{ needs.source.outputs.release_tag }}
           SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
+          SWIFT_MK_DEV_DIR: .swift-makefile
         run: make release-meta SWIFT_MK_BIN="${SWIFT_MK_BIN}"
       - name: Normalize release metadata
         id: normalize
