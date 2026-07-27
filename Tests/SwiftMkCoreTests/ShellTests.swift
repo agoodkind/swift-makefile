@@ -67,6 +67,15 @@ extension EnvironmentSerialized {
 
     @Test
     static func runWithOverridesInheritsLiveTraceEnvironment() {
+      // TestGlobalLock as well as the `.serialized` parent: the parent only orders this
+      // suite against its siblings, and the gate harnesses that also write the
+      // environment are top-level suites the lock is what excludes.
+      TestGlobalLock.withLock {
+        expectOverridesInheritLiveTraceEnvironment()
+      }
+    }
+
+    private static func expectOverridesInheritLiveTraceEnvironment() {
       let saved = savedTraceEnvironment()
       _ = ProcessInfo.processInfo.environment
       setenv("TRACEPARENT", "00-11111111111111111111111111111111-2222222222222222-01", 1)

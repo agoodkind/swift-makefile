@@ -104,6 +104,12 @@ extension EnvironmentSerialized {
 
     @Test
     static func logDirectoryJoinsSwiftMkRootAcrossPackageSubdir() throws {
+      try TestGlobalLock.withLock {
+        try expectLogDirectoryJoinsSwiftMkRoot()
+      }
+    }
+
+    private static func expectLogDirectoryJoinsSwiftMkRoot() throws {
       // A make -C swiftcheck process still writes the run sentinel under the checkout
       // root when SWIFT_MK_ROOT is set, so a shared TRACEPARENT does not print a
       // second header from a different .make/logs tree.
@@ -140,7 +146,17 @@ extension EnvironmentSerialized {
       #expect(Logging.traceparentPathForTesting == logs.appendingPathComponent(".traceparent").path)
     }
 
+    /// Serialize against `TestGlobalLock` as well as the `.serialized` parent suite.
+    /// The parent only orders this suite against its own siblings, while the harnesses
+    /// that take the lock are top-level suites, so without this a gate harness can hold
+    /// `SWIFT_MK_ROOT` pointed at its own checkout while these tests read it.
     private static func withTemporaryLogDirectory(_ run: (String) throws -> Void) throws {
+      try TestGlobalLock.withLock {
+        try withTemporaryLogDirectoryLocked(run)
+      }
+    }
+
+    private static func withTemporaryLogDirectoryLocked(_ run: (String) throws -> Void) throws {
       let fileManager = FileManager.default
       let originalEnvironment = savedEnvironment()
       let directory = fileManager.temporaryDirectory.appendingPathComponent(
