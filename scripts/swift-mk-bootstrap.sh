@@ -24,7 +24,21 @@ SWIFT_MK_DEV_DIR="${SWIFT_MK_DEV_DIR:-}"
 SWIFT_MK_MODULES="${SWIFT_MK_MODULES:-}"
 
 MAKE_DIR=".make"
-FETCH_MAX_TIME=60
+# A backstop, not the thing that decides: FETCH_SPEED_LIMIT/FETCH_SPEED_TIME
+# below abort a stalled transfer in a few seconds regardless of this value.
+# 60 was inherited from the old snapshot fetch in swift.mk with no derivation;
+# a real codeload download measures 2.06-2.4 seconds on a good link, so 15 is
+# about 6x that with headroom for a slow or roaming link, catching only a
+# transfer that keeps progressing but pathologically slowly.
+FETCH_MAX_TIME=15
+FETCH_CONNECT_TIMEOUT=2
+# Abort when throughput stays under this floor for FETCH_SPEED_TIME seconds,
+# rather than waiting for FETCH_MAX_TIME to elapse. Measured: a server that
+# accepts and then stalls, or accepts and never sends headers, aborts in 3.0s
+# with these flags versus 30.0s+ without; a transfer progressing at 2 KB/s
+# (above the 1 KB/s floor) completes normally and is never aborted.
+FETCH_SPEED_LIMIT=1024
+FETCH_SPEED_TIME=3
 MARKER_PATH="${MAKE_DIR}/.swift-mk-snapshot-ref"
 VALIDATION_CONNECT_TIMEOUT=2
 VALIDATION_MAX_TIME=3
@@ -91,7 +105,14 @@ stage_fetch_and_verify() {
     local curl_status=0
     local tar_status=0
 
-    status_code=$(curl -sS --connect-timeout 5 --max-time "${FETCH_MAX_TIME}" \
+    # --speed-limit/--speed-time abort on stalled throughput rather than
+    # waiting for --max-time to elapse: curl aborts once the transfer
+    # averages under FETCH_SPEED_LIMIT bytes/sec for FETCH_SPEED_TIME seconds.
+    # --max-time stays as the backstop for a transfer that keeps progressing
+    # but pathologically slowly.
+    status_code=$(curl -sS --connect-timeout "${FETCH_CONNECT_TIMEOUT}" \
+        --speed-limit "${FETCH_SPEED_LIMIT}" --speed-time "${FETCH_SPEED_TIME}" \
+        --max-time "${FETCH_MAX_TIME}" \
         -D "${stage_root}/headers" \
         -o "${stage_root}/snapshot.tar.gz" -w '%{http_code}' \
         "${url}" 2>"${curl_log}") || curl_status=$?
@@ -431,7 +452,17 @@ main() {
     fi
 
     if [[ -n "${known_etag}" ]]; then
-        validation_log=$(mktemp "${TMPDIR:-/tmp}/swift-mk-validate.XXXXXXXX") || return 1
+        # A local mktemp failure (a full or unwritable TMPDIR) is not
+        # reuse-eligible: the network was never consulted, so "upstream
+        # unreachable, serving the stale snapshot" would be the wrong story,
+        # and this return fires before the marker_is_recent check below ever
+        # runs, so it cannot reach the reuse branch. It must not be silent,
+        # though, or a purely local, immediately fixable problem would read
+        # as an opaque failure with no cause named.
+        if ! validation_log=$(mktemp "${TMPDIR:-/tmp}/swift-mk-validate.XXXXXXXX"); then
+            printf 'error: could not create a temporary file for validation (mktemp failed); check TMPDIR access\n' >&2
+            return 1
+        fi
         status_code=$(validate_upstream "${known_etag}" "${validation_log}") || validate_status=$?
         if [[ "${status_code}" == "304" ]]; then
             # Deliberately no marker write. The reuse window is a fixed hour
