@@ -121,3 +121,71 @@ func swiftMkUnfreezesABareRefMarkerAndRewritesIt() async throws {
       "the forced fetch must have landed the helper, which the old .make predates")
   }
 }
+
+/// Reads a path relative to `directory` directly, rather than under `.make/`
+/// like `readMakeFile`: the mise target (.config/mise/conf.d/swift-mk.toml)
+/// lands at the consumer root, not inside .make.
+func readConsumerFile(_ directory: String, _ relative: String) -> String? {
+  let path = (directory as NSString).appendingPathComponent(relative)
+  return try? String(contentsOfFile: path, encoding: .utf8)
+}
+
+/// The renamed targets install_renamed_configs writes, as (source, target)
+/// pairs relative to .make, plus the mise target held apart since it lands
+/// outside .make entirely.
+let renamedConfigMapping = [
+  (".swiftlint.yml", "swiftlint.yml"),
+  (".swift-format", "swift-format.json"),
+  (".periphery.yml", "periphery.yml"),
+  ("osv-scanner.toml", "osv-scanner.toml"),
+]
+let miseTargetRelativePath = ".config/mise/conf.d/swift-mk.toml"
+
+@Test
+func warmParseTakesConfigsFromTheSnapshotWithNoNetwork() async throws {
+  // Content matching alone would not distinguish "copied from the snapshot
+  // already on disk" from "some fetch mechanism ran again and happened to
+  // produce the same bytes," so this asserts the request count too. Deleting
+  // the renamed targets after the cold run and before the warm one is what
+  // makes the test meaningful rather than vacuous: the cold run's own
+  // install_from_stage already creates them, so without deleting them first, a
+  // warm run that did nothing at all would still leave this test green. This
+  // simulates the actual motivating case: a consumer whose marker already
+  // validates (Task 4's fix landed for them) but who never had this task's
+  // copy step run, because they have not re-provisioned since. The warm run
+  // must recreate every target via the 304 path's own copy call, at zero
+  // additional network cost beyond the one validation request.
+  try await FetchServer.withServer(files: engineFiles()) { server in
+    let directory = try temporaryConsumer()
+
+    let cold = await runHelper(
+      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+    #expect(cold.status == 0, "\(cold.stderr)")
+    #expect(readMakeFile(directory, ".swiftlint.yml") == "# swiftlint v1\n")
+
+    for (_, target) in renamedConfigMapping {
+      try? FileManager.default.removeItem(atPath: makePath(directory, target))
+    }
+    let miseTargetPath = (directory as NSString).appendingPathComponent(miseTargetRelativePath)
+    try? FileManager.default.removeItem(atPath: miseTargetPath)
+
+    let warm = await runHelper(
+      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+    #expect(warm.status == 0, "\(warm.stderr)")
+
+    #expect(
+      server.requests().count == coldThenValidateRequestCount,
+      "a warm parse must cost no additional network request beyond the one validation check")
+
+    for (source, target) in renamedConfigMapping {
+      let sourceBody = readMakeFile(directory, source)
+      let targetBody = readMakeFile(directory, target)
+      #expect(
+        sourceBody == targetBody,
+        "\(target) should be a copy of \(source), got \(String(describing: targetBody))")
+    }
+    #expect(
+      readMakeFile(directory, "mise.toml") == readConsumerFile(directory, miseTargetRelativePath),
+      "the mise target should be a copy of mise.toml")
+  }
+}

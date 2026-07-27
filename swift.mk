@@ -252,16 +252,18 @@ endif
 SWIFT_MK_MODULES ?=
 
 # Each selected module must sit at .make/$(m) so the `-include .make/$(m)` below
-# resolves it. The snapshot extracts the modules in fetched mode, but it does not run
-# in dev-dir mode, so fetch each one explicitly the same way the shared configs are
-# fetched: swift-mk-fetch-path copies from the checkout under SWIFT_MK_DEV_DIR and
-# downloads otherwise. The module list is the consumer's own small selection, not the
-# whole engine source tree, so fetching it per file is not the manifest footgun the
-# snapshot removed.
+# resolves it. The snapshot already extracts every module under its own name in
+# fetched mode (it is part of the engine tree, no rename needed), so a warm
+# parse finds it on disk and performs no fetch; fetch-one is a fallback for
+# dev-dir mode (where no snapshot extract runs) and for a module a snapshot
+# genuinely lacks: swift-mk-fetch-path copies from the checkout under
+# SWIFT_MK_DEV_DIR and downloads otherwise. The module list is the consumer's
+# own small selection, not the whole engine source tree, so fetching whichever
+# one is actually missing is not the manifest footgun the snapshot removed.
 ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
 SWIFT_MK_FETCHED_MODULES := $(foreach m,$(SWIFT_MK_MODULES),$(call swift-mk-require-one,.make/$(m)))
 else
-SWIFT_MK_FETCHED_MODULES := $(foreach m,$(SWIFT_MK_MODULES),$(call swift-mk-fetch-path,$(m),.make/$(m)))
+SWIFT_MK_FETCHED_MODULES := $(foreach m,$(SWIFT_MK_MODULES),$(if $(wildcard .make/$(m)),,$(call swift-mk-fetch-path,$(m),.make/$(m))))
 endif
 
 SWIFT_MK_SWIFTLINT_CONFIG ?= .make/swiftlint.yml
@@ -308,19 +310,25 @@ SWIFT_MK_MISE_CONFIG ?= .config/mise/conf.d/swift-mk.toml
 # identity itself.
 XCODE_TEMPLATE_DIR ?= $(HOME)/Library/Developer/Xcode/UserData
 
+# The snapshot carries these configs, and the helper copies them into their
+# renamed targets (install_renamed_configs), so a warm parse performs no
+# per-file fetch. The $(if $(wildcard ...)) guard is what takes the fetch off
+# that path: fetch-path still runs for dev-dir mode, where no snapshot extract
+# ever happens, and as the fallback for a snapshot that genuinely lacks one of
+# these files, the same two cases swift-mk-fetch-path already existed for.
 ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
 SWIFT_MK_FETCHED_SWIFTLINT := $(call swift-mk-require-one,$(SWIFT_MK_SWIFTLINT_CONFIG))
 SWIFT_MK_FETCHED_SWIFT_FORMAT := $(call swift-mk-require-one,$(SWIFT_MK_SWIFT_FORMAT_CONFIG))
 SWIFT_MK_FETCHED_PERIPHERY := $(call swift-mk-require-one,$(SWIFT_MK_PERIPHERY_CONFIG))
 else
-SWIFT_MK_FETCHED_SWIFTLINT := $(call swift-mk-fetch-path,.swiftlint.yml,$(SWIFT_MK_SWIFTLINT_CONFIG))
-SWIFT_MK_FETCHED_SWIFT_FORMAT := $(call swift-mk-fetch-path,.swift-format,$(SWIFT_MK_SWIFT_FORMAT_CONFIG))
-SWIFT_MK_FETCHED_PERIPHERY := $(call swift-mk-fetch-path,.periphery.yml,$(SWIFT_MK_PERIPHERY_CONFIG))
+SWIFT_MK_FETCHED_SWIFTLINT := $(if $(wildcard $(SWIFT_MK_SWIFTLINT_CONFIG)),,$(call swift-mk-fetch-path,.swiftlint.yml,$(SWIFT_MK_SWIFTLINT_CONFIG)))
+SWIFT_MK_FETCHED_SWIFT_FORMAT := $(if $(wildcard $(SWIFT_MK_SWIFT_FORMAT_CONFIG)),,$(call swift-mk-fetch-path,.swift-format,$(SWIFT_MK_SWIFT_FORMAT_CONFIG)))
+SWIFT_MK_FETCHED_PERIPHERY := $(if $(wildcard $(SWIFT_MK_PERIPHERY_CONFIG)),,$(call swift-mk-fetch-path,.periphery.yml,$(SWIFT_MK_PERIPHERY_CONFIG)))
 endif
 ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
 SWIFT_MK_FETCHED_OSV := $(call swift-mk-require-one,$(SWIFT_MK_OSV_CONFIG))
 else
-SWIFT_MK_FETCHED_OSV := $(call swift-mk-fetch-path,osv-scanner.toml,$(SWIFT_MK_OSV_CONFIG))
+SWIFT_MK_FETCHED_OSV := $(if $(wildcard $(SWIFT_MK_OSV_CONFIG)),,$(call swift-mk-fetch-path,osv-scanner.toml,$(SWIFT_MK_OSV_CONFIG)))
 endif
 
 # swift.mk owns the shared mise config outright: it is fetched here, not by the

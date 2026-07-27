@@ -144,6 +144,50 @@ stage_fetch_and_verify() {
     return 0
 }
 
+# The snapshot already carries the engine's own config dotfiles, so the renamed
+# targets swift.mk expects (its shared SwiftLint, swift-format, Periphery, OSV,
+# and mise configs) are local copies rather than five to eight network fetches
+# on every parse. Called after every successful install, and again on the 304
+# and offline-reuse paths in main, which never call install_from_stage at all;
+# without that second call site, a consumer whose marker already validates
+# would never re-provision and so would never get the renamed targets created
+# in the first place. A source the snapshot genuinely lacks is skipped here, so
+# swift.mk's own wildcard guard falls through to its network fetch for that one
+# file only.
+#
+# Best-effort, like the chmod step in install_from_stage: none of these targets
+# are in required_assets, and swift.mk's own $(if $(wildcard ...)) guard around
+# each fetch already falls back to a real network fetch for whichever one is
+# still missing, so a copy failure here is worth a loud message but not worth
+# rolling back an otherwise-good install over. Every pair is still attempted
+# even after an earlier one fails, and the failure is never silent.
+install_renamed_configs() {
+    local pair
+    local source_name
+    local target_path
+    for pair in \
+        ".swiftlint.yml:${MAKE_DIR}/swiftlint.yml" \
+        ".swift-format:${MAKE_DIR}/swift-format.json" \
+        ".periphery.yml:${MAKE_DIR}/periphery.yml" \
+        "osv-scanner.toml:${MAKE_DIR}/osv-scanner.toml" \
+        "mise.toml:.config/mise/conf.d/swift-mk.toml"; do
+        source_name="${pair%%:*}"
+        target_path="${pair#*:}"
+        if [[ ! -s "${MAKE_DIR}/${source_name}" ]]; then
+            continue
+        fi
+        if ! mkdir -p "$(dirname "${target_path}")"; then
+            printf 'warning: could not create %s for the renamed config copy; swift.mk will fetch %s over the network instead\n' \
+                "$(dirname "${target_path}")" "${target_path}" >&2
+            continue
+        fi
+        if ! cp "${MAKE_DIR}/${source_name}" "${target_path}"; then
+            printf 'warning: could not copy %s to %s; swift.mk will fetch it over the network instead\n' \
+                "${MAKE_DIR}/${source_name}" "${target_path}" >&2
+        fi
+    done
+}
+
 # install_from_stage assembles the verified staged tree next to .make,
 # bringing forward the generated runtime files a build depends on (the same
 # set snapshot_clear_engine preserves in scripts/swift-mk-sync.sh), then swaps
@@ -248,6 +292,8 @@ install_from_stage() {
         fi
         return 1
     fi
+
+    install_renamed_configs
 
     rm -rf "${previous_dir}"
     return 0
@@ -468,6 +514,10 @@ main() {
             # Deliberately no marker write. The reuse window is a fixed hour
             # from the last real download, not a window a successful check can
             # slide forward, and a 304 must leave .make byte-for-byte alone.
+            # install_renamed_configs still runs: a consumer whose marker
+            # already validates but who has not re-provisioned since this task
+            # landed would otherwise never get the renamed targets created.
+            install_renamed_configs
             rm -f "${validation_log}"
             return 0
         fi
@@ -483,6 +533,7 @@ main() {
     # provision that itself fails is a real failure.
     if ! running_in_ci && [[ -n "${known_etag}" && -z "${status_code}" ]] && marker_is_recent; then
         serve_from_disk_with_warning "${validate_status}" "${validation_log}"
+        install_renamed_configs
         rm -f "${validation_log}"
         return 0
     fi
