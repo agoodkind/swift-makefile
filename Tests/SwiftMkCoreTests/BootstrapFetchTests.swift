@@ -155,8 +155,9 @@ func helperSwapFailureLeavesWarmTreeIntactForLaterSkipFetch() async throws {
     try writeMakeFile(directory, "swift.mk", "# warm swift.mk\n")
     try writeMakeFile(directory, "Package.swift", "// warm\n")
     try writeMakeFile(directory, "scripts/swift-mk-build.sh", "#!/usr/bin/env bash\nexit 0\n")
-    // A file outside the three assets assets_complete checks, so a partial swap
-    // that happened to keep only those three would still be caught here.
+    try writeMakeFile(directory, "scripts/swift-mk-bootstrap.sh", "#!/usr/bin/env bash\nexit 0\n")
+    // A file outside the assets assets_complete checks, so a partial swap that
+    // happened to keep only those would still be caught here.
     try writeMakeFile(directory, "scripts/swift-mk-fetch-one.sh", "#!/usr/bin/env bash\nexit 0\n")
 
     // Deny write access to the consumer root itself, so the helper cannot
@@ -259,9 +260,22 @@ func writeMarker(_ directory: String, etag: String, age: Int) throws {
   try writeMarker(directory, ref: "main", etag: etag, timestamp: timestamp)
 }
 
-/// Populates .make with a complete engine tree so only the validation decision
-/// is under test.
+/// Populates .make with a complete engine tree, scripts/swift-mk-bootstrap.sh
+/// included since required_assets now covers the helper's own successor, so
+/// only the validation decision is under test.
 func warmSnapshot(_ directory: String) throws {
+  for (name, body) in engineFiles() {
+    try writeMakeFile(directory, name, body)
+  }
+}
+
+/// The migration case: every asset the pre-helper engine wrote, but not
+/// scripts/swift-mk-bootstrap.sh itself, since a consumer whose .make predates
+/// this task's helper never had it. Driving swift.mk directly (not the
+/// standalone helper script) branches on this file's presence under
+/// .make/scripts, so a test of that branch needs it genuinely absent, not just
+/// a marker in the old format.
+func warmSnapshotPredatingHelper(_ directory: String) throws {
   for (name, body) in engineFiles() where name != "scripts/swift-mk-bootstrap.sh" {
     try writeMakeFile(directory, name, body)
   }
@@ -280,6 +294,34 @@ func helperRecordsMarkerWithEtagOnColdProvision() async throws {
     #expect(marker["ref"] == "main")
     #expect(marker["etag"]?.isEmpty == false)
     #expect(Int(marker["timestamp"] ?? "") != nil)
+  }
+}
+
+@Test
+func helperInstallsANewlyPublishedSuccessorOnAContentChange() async throws {
+  // required_assets omits scripts/swift-mk-bootstrap.sh itself; this proves
+  // whether a full re-provision (triggered by upstream content actually
+  // changing, so the tarball ETag no longer matches) still lands a newer
+  // helper script over the one bootstrap.mk is about to run next.
+  try await FetchServer.withServer(files: engineFiles()) { server in
+    let directory = try temporaryConsumer()
+
+    let cold = await runHelper(
+      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+    #expect(cold.status == 0, "\(cold.stderr)")
+
+    var updatedFiles = engineFiles()
+    updatedFiles["scripts/swift-mk-bootstrap.sh"] =
+      "#!/usr/bin/env bash\nprintf 'updated helper\\n'\nexit 0\n"
+    await server.setFiles(updatedFiles)
+
+    let warm = await runHelper(
+      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+    #expect(warm.status == 0, "\(warm.stderr)")
+    #expect(
+      readMakeFile(directory, "scripts/swift-mk-bootstrap.sh")
+        == updatedFiles["scripts/swift-mk-bootstrap.sh"],
+      "the consumer must run whatever the helper installed, including a newer helper itself")
   }
 }
 

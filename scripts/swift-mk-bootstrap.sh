@@ -68,6 +68,11 @@ required_assets() {
     printf '%s\n' "swift.mk"
     printf '%s\n' "Package.swift"
     printf '%s\n' "scripts/swift-mk-build.sh"
+    # This script's own successor. Without it, assets_complete can read true on a
+    # tree whose helper is missing or stale, so a warm consumer with a matching
+    # etag never re-provisions and keeps running whatever helper it already has,
+    # even after a newer one ships upstream.
+    printf '%s\n' "scripts/swift-mk-bootstrap.sh"
     local module_name
     for module_name in ${SWIFT_MK_MODULES}; do
         printf '%s\n' "${module_name}"

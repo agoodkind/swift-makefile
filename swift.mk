@@ -164,35 +164,56 @@ SWIFT_MK_LOCAL_NOTICES := $(if $(strip $(SWIFT_MK_DEV_DIR)),$(SWIFT_MK_DEV_DIR)/
 SWIFT_MK_NOTICES_FILE := $(if $(wildcard $(SWIFT_MK_LOCAL_NOTICES)),$(SWIFT_MK_LOCAL_NOTICES),$(CURDIR)/.make/notices.txt)
 
 # Fetch the whole engine as one snapshot. The consumer path downloads the archive
-# for the pinned ref (SWIFT_MK_API_REF) from GitHub and extracts it into .make with
-# tar --strip-components=1, so the archive's top-level directory is dropped and the
-# engine tree lands flat under .make. gh streams the tarball first, and a plain curl
-# of the public codeload archive is the fallback, so no auth is required; only the
-# curl fallback's response headers are captured, since gh does not expose them the
-# same way, but this whole path runs at most once per consumer (the marker it
+# for the pinned ref (SWIFT_MK_API_REF) from GitHub and extracts it into a stage
+# directory with tar --strip-components=1, so the archive's top-level directory is
+# dropped and the engine tree lands flat. gh streams the tarball first, and a plain
+# curl of the public codeload archive is the fallback, so no auth is required; only
+# the curl fallback's response headers are captured, since gh does not expose them
+# the same way, but this whole path runs at most once per consumer (the marker it
 # writes lands the helper, which owns every later parse). A marker records the ref,
 # the content ETag, and the extraction time, matching the format
 # scripts/swift-mk-bootstrap.sh and scripts/swift-mk-sync.sh's snapshot_extract both
 # write, so the idempotency check at the call site (SWIFT_MK_SNAPSHOT_CURRENT) can
-# key off the ETag rather than the ref name. Before the extract it clears the prior
-# snapshot's engine files (keeping the generated logs, build lock, dev symlinks, and
-# built binary), so a ref change or a migration from an old per-file .make cannot
-# leave an orphaned source the new snapshot no longer defines. This runs before the
-# swift-mk binary or any fetched script exists, so it stays inline shell with no
+# key off the ETag rather than the ref name.
+#
+# This is the one path a consumer whose committed bootstrap.mk predates the helper
+# still runs, so it stages into .make.next and swaps rather than clearing .make
+# before the fetch completes, the same non-destructive shape
+# scripts/swift-mk-bootstrap.sh's install_from_stage uses: nothing under .make is
+# removed until the new tree is fetched, extracted, and verified complete. A
+# fetch that fails, an incomplete tarball, or a mid-copy failure all leave .make
+# exactly as it was, rather than an offline or degraded consumer losing an
+# already-working tree over a fetch it could not complete. Generated runtime
+# files (logs, the build lock, the dev symlink, the built binary) carry forward
+# the same way install_from_stage preserves them. This runs before the swift-mk
+# binary or any fetched script exists, so it stays inline shell with no
 # fetched-script dependency.
 define _swift_mk_snapshot_commands
-	tmp=$$(mktemp -d) || exit 1; \
+	stage_root=$$(mktemp -d) || exit 1; \
+	stage_dir="$$stage_root/tree"; \
 	ok=""; \
-	if command -v gh >/dev/null 2>&1 && gh api "repos/$(SWIFT_MK_API_REPO)/tarball/$(SWIFT_MK_API_REF)" > "$$tmp/snapshot.tar.gz" 2>"$$tmp/err" && [ -s "$$tmp/snapshot.tar.gz" ]; then \
+	if command -v gh >/dev/null 2>&1 && gh api "repos/$(SWIFT_MK_API_REPO)/tarball/$(SWIFT_MK_API_REF)" > "$$stage_root/snapshot.tar.gz" 2>"$$stage_root/err" && [ -s "$$stage_root/snapshot.tar.gz" ]; then \
 		ok=1; \
-	elif curl -fsSL --connect-timeout 5 --max-time 60 -D "$$tmp/headers" "$(SWIFT_MK_CODELOAD_BASE)/$(SWIFT_MK_API_REPO)/tar.gz/$(SWIFT_MK_API_REF)" -o "$$tmp/snapshot.tar.gz" 2>"$$tmp/err" && [ -s "$$tmp/snapshot.tar.gz" ]; then \
+	elif curl -fsSL --connect-timeout 5 --max-time 60 -D "$$stage_root/headers" "$(SWIFT_MK_CODELOAD_BASE)/$(SWIFT_MK_API_REPO)/tar.gz/$(SWIFT_MK_API_REF)" -o "$$stage_root/snapshot.tar.gz" 2>"$$stage_root/err" && [ -s "$$stage_root/snapshot.tar.gz" ]; then \
 		ok=1; \
 	fi; \
-	if [ -z "$$ok" ]; then cat "$$tmp/err" >&2 2>/dev/null || true; rm -rf "$$tmp"; exit 1; fi; \
-	find .make -mindepth 1 -maxdepth 1 ! -name logs ! -name build.lock ! -name swift-mk ! -name swift-mk.key ! -name swift-mk-build ! -name dev ! -name .swift-mk-snapshot-ref ! -name swift.mk ! -name '*.log' -exec rm -rf {} + 2>>"$$tmp/err" || true; \
-	if ! tar -xz --strip-components=1 -C .make -f "$$tmp/snapshot.tar.gz" 2>>"$$tmp/err"; then cat "$$tmp/err" >&2 2>/dev/null || true; rm -rf "$$tmp"; exit 1; fi; \
-	printf 'ref=%s\netag=%s\ntimestamp=%s\n' "$(SWIFT_MK_API_REF)" "$$(awk 'tolower($$1) == "etag:" { print $$2 }' "$$tmp/headers" 2>/dev/null | tr -d '\r' | tail -n 1)" "$$(date +%s)" > .make/.swift-mk-snapshot-ref; \
-	rm -rf "$$tmp"
+	if [ -z "$$ok" ]; then cat "$$stage_root/err" >&2 2>/dev/null || true; rm -rf "$$stage_root"; exit 1; fi; \
+	mkdir -p "$$stage_dir" || { rm -rf "$$stage_root"; exit 1; }; \
+	if ! tar -xz --strip-components=1 -C "$$stage_dir" -f "$$stage_root/snapshot.tar.gz" 2>>"$$stage_root/err"; then cat "$$stage_root/err" >&2 2>/dev/null || true; rm -rf "$$stage_root"; exit 1; fi; \
+	if [ ! -f "$$stage_dir/Package.swift" ] || [ ! -f "$$stage_dir/swift.mk" ] || [ ! -f "$$stage_dir/scripts/swift-mk-build.sh" ]; then \
+		printf "%s\n" "error: fetched snapshot is missing a required asset" >&2; rm -rf "$$stage_root"; exit 1; \
+	fi; \
+	printf 'ref=%s\netag=%s\ntimestamp=%s\n' "$(SWIFT_MK_API_REF)" "$$(awk 'tolower($$1) == "etag:" { print $$2 }' "$$stage_root/headers" 2>/dev/null | tr -d '\r' | tail -n 1)" "$$(date +%s)" > "$$stage_dir/.swift-mk-snapshot-ref"; \
+	rm -rf .make.next .make.previous 2>>"$$stage_root/err" || { cat "$$stage_root/err" >&2 2>/dev/null || true; rm -rf "$$stage_root"; exit 1; }; \
+	mkdir -p .make.next || { rm -rf "$$stage_root"; exit 1; }; \
+	if [ -d .make ]; then \
+		find .make -mindepth 1 -maxdepth 1 \( -name logs -o -name build.lock -o -name swift-mk -o -name swift-mk.key -o -name swift-mk-build -o -name dev -o -name '*.log' \) -exec cp -R {} .make.next/ \; ; \
+	fi; \
+	if ! cp -R "$$stage_dir/." .make.next/ 2>>"$$stage_root/err"; then cat "$$stage_root/err" >&2 2>/dev/null || true; rm -rf .make.next "$$stage_root"; exit 1; fi; \
+	rm -rf "$$stage_root"; \
+	if [ -d .make ]; then mv .make .make.previous || exit 1; fi; \
+	if ! mv .make.next .make; then if [ -d .make.previous ]; then mv .make.previous .make; fi; exit 1; fi; \
+	rm -rf .make.previous
 endef
 
 # The fetch runs inside a parse-time $(shell), whose stdout make captures for the

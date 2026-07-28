@@ -84,15 +84,16 @@ func isolatedSwiftMkCopy(in directory: String) throws -> String {
 @Test
 func swiftMkUnfreezesABareRefMarkerAndRewritesIt() async throws {
   // The migration case that matters: a consumer's .make predates the helper
-  // (warmSnapshot excludes scripts/swift-mk-bootstrap.sh, matching every
-  // existing consumer today) and its marker holds the bare ref name the old
-  // engine wrote. The old comparison (marker content == SWIFT_MK_API_REF) read
-  // "main" as current forever, so a branch-pinned consumer never re-fetched
-  // past its first commit. This drives the real swift.mk, not a stand-in, so
-  // it proves the fix in the actual Makefile logic under test.
+  // (warmSnapshotPredatingHelper excludes scripts/swift-mk-bootstrap.sh,
+  // matching every existing consumer today) and its marker holds the bare ref
+  // name the old engine wrote. The old comparison (marker content ==
+  // SWIFT_MK_API_REF) read "main" as current forever, so a branch-pinned
+  // consumer never re-fetched past its first commit. This drives the real
+  // swift.mk, not a stand-in, so it proves the fix in the actual Makefile
+  // logic under test.
   try await FetchServer.withServer(files: engineFiles()) { server in
     let directory = try temporaryConsumer()
-    try warmSnapshot(directory)
+    try warmSnapshotPredatingHelper(directory)
     try writeMakeFile(directory, ".swift-mk-snapshot-ref", "main\n")
 
     let isolatedSwiftMk = try isolatedSwiftMkCopy(in: directory)
@@ -119,6 +120,43 @@ func swiftMkUnfreezesABareRefMarkerAndRewritesIt() async throws {
     #expect(
       readMakeFile(directory, "scripts/swift-mk-bootstrap.sh") != nil,
       "the forced fetch must have landed the helper, which the old .make predates")
+  }
+}
+
+@Test
+func swiftMkOldPathPreservesTheWarmTreeWhenUpstreamFails() async throws {
+  // The path a consumer whose committed bootstrap.mk predates the helper still
+  // runs (SWIFT_MK_SNAPSHOT_HELPER absent, SWIFT_MK_SNAPSHOT_CURRENT not 1) used
+  // to clear .make before fetching, so a failed fetch left that consumer with
+  // an engine tree it had just destroyed. It must now stage into .make.next and
+  // swap, the same non-destructive shape the helper's own install_from_stage
+  // uses, so a failed fetch here leaves the warm tree exactly as it was.
+  try await FetchServer.withServer(files: engineFiles()) { server in
+    server.forceStatus(500)
+    let directory = try temporaryConsumer()
+    try warmSnapshotPredatingHelper(directory)
+    // A bare ref marker, the old format: SWIFT_MK_SNAPSHOT_CURRENT reads false
+    // from it, so swift.mk takes the old inline path instead of treating the
+    // warm tree as already current and skipping the fetch entirely.
+    try writeMakeFile(directory, ".swift-mk-snapshot-ref", "main\n")
+
+    let isolatedSwiftMk = try isolatedSwiftMkCopy(in: directory)
+    let result = Shell.run(
+      "make",
+      [
+        "--no-print-directory", "-C", directory,
+        "-f", isolatedSwiftMk,
+        "clean",
+        "SWIFT_MK_CODELOAD_BASE=\(server.codeloadBase)",
+        "SWIFT_MK_API_REPO=agoodkind/swift-makefile",
+        "SWIFT_MK_API_REF=main",
+      ],
+      environment: ["PATH": pathWithoutGh])
+    #expect(result.status != 0, "a failed upstream fetch must fail the parse, not silently continue")
+
+    for (name, body) in engineFiles() where name != "scripts/swift-mk-bootstrap.sh" {
+      #expect(readMakeFile(directory, name) == body, "\(name) must survive a failed re-provision")
+    }
   }
 }
 
