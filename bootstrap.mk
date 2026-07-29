@@ -169,7 +169,49 @@ endif
 # include below: without it, swift.mk's own snapshot check would run this same
 # helper a second time and cost a second network round trip on an
 # already-warm parse.
-$(if $(filter ok,$(shell SWIFT_MK_API_REPO="$(SWIFT_MK_API_REPO)" SWIFT_MK_API_REF="$(SWIFT_MK_API_REF)" SWIFT_MK_MODULES="$(SWIFT_MK_MODULES)" bash "$(SWIFT_MK_BOOTSTRAP)" >&2 && printf ok)),,$(error swift-makefile failed to provision the engine snapshot))
+#
+# Every SWIFT_MK_* variable THE HELPER READS is forwarded explicitly. That is
+# the six below, which is the complete set the helper references.
+#
+# SWIFT_MK_BASE_URL is deliberately not among them: the helper never reads it.
+# It belongs to swift.mk's own per-file fetch path. Forwarding a variable the
+# helper ignores would suggest it has an effect there.
+#
+# Make only auto-exports variables that came from the process environment, so a
+# consumer who sets one on the make command line, or with a plain assignment in
+# their own Makefile before this include, sets the Make variable without
+# exporting it. This file then acts on the value while the helper, which owns
+# every asset install, never sees it, and the two halves disagree about what the
+# user asked for.
+#
+# That split produced three distinct bugs in the go-makefile peer, so forward
+# the whole set rather than adding names one at a time as each is found:
+#
+#   SWIFT_MK_DEV_DIR       this file takes its dev branch while the helper
+#                          downloads upstream over the developer's own checkout,
+#                          so they build and lint against main believing they
+#                          are testing local edits
+#   SWIFT_MK_SKIP_FETCH    this file honors it while the helper fetches anyway,
+#                          so an air-gapped or pre-vendored build fails at parse
+#                          time, the exact case the flag exists to serve
+#   SWIFT_MK_CODELOAD_BASE the redirect is silently ineffective and the helper
+#                          reaches real codeload while appearing redirected, so
+#                          a test written that way passes against production
+#   SWIFT_MK_API_REPO      the helper falls back to its own defaults and fetches
+#   SWIFT_MK_API_REF       the wrong repository or ref's assets
+#
+# Adding a SWIFT_MK_* variable that the helper reads means adding it here too.
+$(if $(filter ok,$(shell SWIFT_MK_API_REPO="$(SWIFT_MK_API_REPO)" SWIFT_MK_API_REF="$(SWIFT_MK_API_REF)" SWIFT_MK_MODULES="$(SWIFT_MK_MODULES)" SWIFT_MK_CODELOAD_BASE="$(SWIFT_MK_CODELOAD_BASE)" SWIFT_MK_DEV_DIR="$(SWIFT_MK_DEV_DIR)" SWIFT_MK_SKIP_FETCH="$(SWIFT_MK_SKIP_FETCH)" bash "$(SWIFT_MK_BOOTSTRAP)" >&2 && printf ok)),,$(error swift-makefile failed to provision the engine snapshot))
+# Only in fetched mode. The helper returns immediately in dev-dir mode without
+# provisioning anything, because there the checkout is the source of truth and no
+# snapshot extract runs, so forcing skip-fetch here would leave swift.mk with no
+# way to populate the selected modules or the renamed configs: its
+# swift-mk-fetch-path fallback, which copies them out of SWIFT_MK_DEV_DIR, is
+# reachable only when skip-fetch is not 1. A dev-dir consumer would get swift.mk
+# and nothing else, which breaks the documented way to test an engine change in a
+# consumer before pushing it.
+ifeq ($(strip $(SWIFT_MK_DEV_DIR)),)
 override SWIFT_MK_SKIP_FETCH := 1
+endif
 
 -include $(SWIFT_MK)

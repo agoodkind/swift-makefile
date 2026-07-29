@@ -15,9 +15,19 @@ import Testing
 
 enum HelpFastPathTests {}
 
+/// The exact `.make` contents a fast-path `make help` is allowed to produce.
+///
+/// This stays an exact set rather than a subset check, so a `help` that starts
+/// fetching modules, configs, or the engine snapshot still fails here.
+///
+/// `scripts/swift-mk-bootstrap.sh` is present because obtaining that helper is
+/// now the only thing the consumer-committed `bootstrap.mk` does before the
+/// include. The helper itself provisions nothing on this path: in dev-dir mode
+/// its `main` returns immediately, and `help` never reaches the wider fetch.
 private let standaloneHelpFiles = Set([
   "logs/.run",
   "logs/.traceparent",
+  "scripts/swift-mk-bootstrap.sh",
   "swift.mk",
 ])
 
