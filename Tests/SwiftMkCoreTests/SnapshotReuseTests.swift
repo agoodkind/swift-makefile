@@ -25,6 +25,38 @@ enum SnapshotReuseTests {}
 /// curl fallback deterministically regardless of the host's own tool install.
 let pathWithoutGh = "/usr/bin:/bin"
 
+/// Environment for a test that spawns its own `make`.
+///
+/// Clearing `SWIFT_MK_DEV_DIR` through the environment is not enough on its own.
+/// This repository's own Makefile passes `SWIFT_MK_DEV_DIR='$(CURDIR)'` to its
+/// sub-makes as a command-line variable, and make forwards command-line
+/// variables to every descendant through `MAKEFLAGS`, where they outrank the
+/// environment. Under `make test` the `swift test` process therefore inherits
+/// `MAKEFLAGS` carrying that assignment, and the `make` a test spawns runs in
+/// dev-dir mode no matter what this dictionary says.
+///
+/// That is invisible under a plain `swift test`, which has no `MAKEFLAGS` to
+/// inherit, so a test can pass one way and fail the other for a reason that has
+/// nothing to do with the behavior under test: in dev-dir mode the helper
+/// returns before fetching, so the request count reads 0 and no marker is ever
+/// written.
+///
+/// `MFLAGS` is cleared alongside it because make sets both.
+func makeEnvironmentWithoutInheritedMakeState(_ overrides: [String: String] = [:])
+  -> [String: String]
+{
+  var environment = [
+    "PATH": pathWithoutGh,
+    "MAKEFLAGS": "",
+    "MFLAGS": "",
+    "SWIFT_MK_DEV_DIR": "",
+  ]
+  for (key, value) in overrides {
+    environment[key] = value
+  }
+  return environment
+}
+
 @Test
 func snapshotExtractWritesTheThreeFieldMarker() async throws {
   try await FetchServer.withServer(files: engineFiles()) { server in
@@ -107,7 +139,7 @@ func swiftMkUnfreezesABareRefMarkerAndRewritesIt() async throws {
         "SWIFT_MK_API_REPO=agoodkind/swift-makefile",
         "SWIFT_MK_API_REF=main",
       ],
-      environment: ["PATH": pathWithoutGh])
+      environment: makeEnvironmentWithoutInheritedMakeState())
     #expect(result.status == 0, "\(result.stderr)")
 
     #expect(
@@ -151,7 +183,7 @@ func swiftMkOldPathPreservesTheWarmTreeWhenUpstreamFails() async throws {
         "SWIFT_MK_API_REPO=agoodkind/swift-makefile",
         "SWIFT_MK_API_REF=main",
       ],
-      environment: ["PATH": pathWithoutGh])
+      environment: makeEnvironmentWithoutInheritedMakeState())
     #expect(result.status != 0, "a failed upstream fetch must fail the parse, not silently continue")
 
     for (name, body) in engineFiles() where name != "scripts/swift-mk-bootstrap.sh" {
