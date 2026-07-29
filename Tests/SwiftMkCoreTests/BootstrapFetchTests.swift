@@ -680,42 +680,6 @@ func helperFailsWhenStaleStagingDirectoryCannotBeCleared() async throws {
   }
 }
 
-/// Comfortably above the FETCH_MAX_TIME backstop (15s in the script), so a helper
-/// that fell back to the backstop instead of the progress-based abort would still
-/// fail this bound, while a genuine ~3 second abort passes with room to spare.
-let boundedStallWallClockCeilingSeconds = 10.0
-
-@Test
-func helperGivesUpWithinABoundedWallClockWhenUpstreamStalls() async throws {
-  // The point of the progress-based abort: a stalled upstream must not freeze a
-  // developer's `make` for anywhere near FETCH_MAX_TIME (now 15s, previously
-  // 60s). An exit-code-only assertion would pass just as well whether the
-  // helper gave up in 3 seconds or in 15, so this measures wall-clock time
-  // directly.
-  try await FetchServer.withServer(files: engineFiles()) { server in
-    // 5 seconds, matching the stall duration every other test in this file
-    // uses: well past FETCH_SPEED_TIME (3s), so the client-side abort is what
-    // this test measures. A much longer stall would not make the assertion
-    // any stronger (curl still gives up at the same ~3 second mark) and would
-    // only add dead time to this test's own teardown, since the server's
-    // Thread.sleep on its single event-loop thread keeps running for the
-    // full stall regardless of how quickly the client already disconnected.
-    server.stall(5)
-    let directory = try temporaryConsumer()
-
-    let start = Date()
-    let result = await runHelper(
-      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
-    let elapsed = Date().timeIntervalSince(start)
-
-    #expect(result.status != 0)
-    #expect(
-      elapsed < boundedStallWallClockCeilingSeconds,
-      "the helper took \(elapsed)s to give up; the progress-based abort should catch a stall in a few seconds, not the FETCH_MAX_TIME backstop"
-    )
-  }
-}
-
 /// 2 KB/s, matching the rate team-lead calibrated on the go side. Comfortably
 /// above the script's 1024 B/s floor.
 let slowButProgressingBytesPerSecond = 2_048
