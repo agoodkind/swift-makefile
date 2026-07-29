@@ -78,54 +78,62 @@ extension EnvironmentSerialized {
     private static let traceID = "cccccccccccccccccccccccccccccccc"
     private static let spanID = "dddddddddddddddd"
 
+    /// Run `body` with the correlation environment saved, cleared, and restored, while
+    /// holding `TestGlobalLock`. The `.serialized` parent only orders this suite against
+    /// its own siblings; the gate harnesses that also write the environment are
+    /// top-level suites, and the lock is what keeps them out.
+    private static func withIsolatedEnvironment(_ body: () -> Void) {
+      TestGlobalLock.withLock {
+        let saved = save()
+        defer { restore(saved) }
+        clear()
+        body()
+      }
+    }
+
     @Test
     static func fromEnvironmentAdoptsTraceparent() {
-      let saved = save()
-      defer { restore(saved) }
-      clear()
-      setenv("TRACEPARENT", "00-\(traceID)-\(spanID)-01", 1)
+      withIsolatedEnvironment {
+        setenv("TRACEPARENT", "00-\(traceID)-\(spanID)-01", 1)
 
-      let correlation = Correlation.fromEnvironment()
+        let correlation = Correlation.fromEnvironment()
 
-      #expect(correlation?.traceID == traceID)
-      #expect(correlation?.spanID == spanID)
+        #expect(correlation?.traceID == traceID)
+        #expect(correlation?.spanID == spanID)
+      }
     }
 
     @Test
     static func fromEnvironmentAdoptsCanonicalIDPairWithoutTraceparent() {
-      let saved = save()
-      defer { restore(saved) }
-      clear()
-      setenv("TRACE_ID", traceID, 1)
-      setenv("SPAN_ID", spanID, 1)
+      withIsolatedEnvironment {
+        setenv("TRACE_ID", traceID, 1)
+        setenv("SPAN_ID", spanID, 1)
 
-      let correlation = Correlation.fromEnvironment()
+        let correlation = Correlation.fromEnvironment()
 
-      #expect(correlation?.traceID == traceID)
-      #expect(correlation?.spanID == spanID)
+        #expect(correlation?.traceID == traceID)
+        #expect(correlation?.spanID == spanID)
+      }
     }
 
     @Test
     static func fromEnvironmentAdoptsSwiftMkAliasPairAsLastResort() {
-      let saved = save()
-      defer { restore(saved) }
-      clear()
-      setenv("SWIFT_MK_TRACE_ID", traceID, 1)
-      setenv("SWIFT_MK_SPAN_ID", spanID, 1)
+      withIsolatedEnvironment {
+        setenv("SWIFT_MK_TRACE_ID", traceID, 1)
+        setenv("SWIFT_MK_SPAN_ID", spanID, 1)
 
-      let correlation = Correlation.fromEnvironment()
+        let correlation = Correlation.fromEnvironment()
 
-      #expect(correlation?.traceID == traceID)
-      #expect(correlation?.spanID == spanID)
+        #expect(correlation?.traceID == traceID)
+        #expect(correlation?.spanID == spanID)
+      }
     }
 
     @Test
     static func fromEnvironmentReturnsNilWhenNothingIsSet() {
-      let saved = save()
-      defer { restore(saved) }
-      clear()
-
-      #expect(Correlation.fromEnvironment() == nil)
+      withIsolatedEnvironment {
+        #expect(Correlation.fromEnvironment() == nil)
+      }
     }
 
     private static func save() -> [String: String?] {

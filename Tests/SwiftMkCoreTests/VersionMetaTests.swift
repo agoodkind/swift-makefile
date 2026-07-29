@@ -351,20 +351,25 @@ extension EnvironmentSerialized {
 
     @Test
     static func whitespaceOnlyEnvironmentVersionIsNotPassedThrough() throws {
-      // A whitespace-only MARKETING_VERSION in the environment is blank, not an
-      // explicit version, so resolution must stamp a real value rather than
-      // forward the spaces.
-      let saved = Environment.snapshot(versionKeys)
-      defer { saved.restore() }
-      for key in versionKeys {
-        unsetenv(key)
-      }
-      setenv("MARKETING_VERSION", "   ", 1)
+      // TestGlobalLock as well as the `.serialized` parent: the parent only orders this
+      // suite against its siblings, and the gate harnesses that also write the
+      // environment are top-level suites the lock is what excludes.
+      try TestGlobalLock.withLock {
+        // A whitespace-only MARKETING_VERSION in the environment is blank, not an
+        // explicit version, so resolution must stamp a real value rather than
+        // forward the spaces.
+        let saved = Environment.snapshot(versionKeys)
+        defer { saved.restore() }
+        for key in versionKeys {
+          unsetenv(key)
+        }
+        setenv("MARKETING_VERSION", "   ", 1)
 
-      let settings = try VersionMeta.injectionSettings(forMissing: ["MARKETING_VERSION"])
-      let marketing = settings["MARKETING_VERSION"] ?? ""
-      #expect(!marketing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-      #expect(marketing != "   ")
+        let settings = try VersionMeta.injectionSettings(forMissing: ["MARKETING_VERSION"])
+        let marketing = settings["MARKETING_VERSION"] ?? ""
+        #expect(!marketing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        #expect(marketing != "   ")
+      }
     }
   }
 }
