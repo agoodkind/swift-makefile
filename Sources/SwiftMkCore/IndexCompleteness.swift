@@ -211,34 +211,138 @@ public enum IndexCompleteness {
     let workspace = try XCWorkspace(path: Path(workspacePath))
     let parent = (workspacePath as NSString).deletingLastPathComponent
     var paths: [String] = []
-    collectFileRefs(workspace.data.children, parent: parent, into: &paths)
+    try collectFileRefs(
+      workspace.data.children,
+      parent: parent,
+      containerParent: parent,
+      synchronizedParent: parent,
+      into: &paths)
     return paths.filter { $0.hasSuffix(".xcodeproj") }
   }
 
   private static func collectFileRefs(
     _ elements: [XCWorkspaceDataElement],
     parent: String,
+    containerParent: String,
+    synchronizedParent: String,
     into paths: inout [String]
-  ) {
+  ) throws {
     for element in elements {
       switch element {
       case .file(let ref):
-        paths.append(resolve(ref.location, parent: parent))
+        paths.append(
+          resolve(
+            ref.location,
+            groupParent: parent,
+            containerParent: containerParent))
       case .group(let group):
-        collectFileRefs(group.children, parent: parent, into: &paths)
+        let childSynchronizedParent = resolve(
+          group.location,
+          groupParent: synchronizedParent,
+          containerParent: containerParent)
+        try collectFileRefs(
+          group.children,
+          parent: parent,
+          containerParent: containerParent,
+          synchronizedParent: childSynchronizedParent,
+          into: &paths)
+      #if canImport(XcodeProj, _version: 9.15.0)
+        case .fileSystemSynchronizedGroup(let group):
+          let directory = resolve(
+            group.location,
+            groupParent: synchronizedParent,
+            containerParent: containerParent)
+          var synchronizedPaths: [String] = []
+          try collectSynchronizedProjects(in: directory, into: &synchronizedPaths)
+          try collectFileRefs(
+            group.children,
+            parent: directory,
+            containerParent: containerParent,
+            synchronizedParent: directory,
+            into: &synchronizedPaths)
+          var seen: Set<String> = []
+          for path in synchronizedPaths where seen.insert(path).inserted {
+            paths.append(path)
+          }
+      #endif
+      }
+    }
+  }
+
+  private static func collectSynchronizedProjects(
+    in directory: String,
+    into paths: inout [String]
+  ) throws {
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: directory, isDirectory: &isDirectory),
+      isDirectory.boolValue
+    else {
+      throw WorkspaceProjectPathError.unreadableSynchronizedDirectory(directory)
+    }
+
+    var enumerationError: Error?
+    let root = URL(fileURLWithPath: directory, isDirectory: true)
+    guard
+      let enumerator = FileManager.default.enumerator(
+        at: root,
+        includingPropertiesForKeys: nil,
+        options: [],
+        errorHandler: { _, error in
+          enumerationError = error
+          return false
+        })
+    else {
+      throw WorkspaceProjectPathError.unreadableSynchronizedDirectory(directory)
+    }
+
+    while let item = enumerator.nextObject() as? URL {
+      guard item.pathExtension == "xcodeproj" else {
+        continue
+      }
+      paths.append(
+        synchronizedProjectPath(item, directory: directory, level: enumerator.level))
+      enumerator.skipDescendants()
+    }
+    if let enumerationError {
+      throw WorkspaceProjectPathError.enumerationFailed(directory, enumerationError)
+    }
+  }
+
+  private static func synchronizedProjectPath(
+    _ item: URL,
+    directory: String,
+    level: Int
+  ) -> String {
+    let relativePath = item.pathComponents.suffix(level).joined(separator: "/")
+    return (directory as NSString).appendingPathComponent(relativePath)
+  }
+
+  private enum WorkspaceProjectPathError: Error, CustomStringConvertible {
+    case enumerationFailed(String, Error)
+    case unreadableSynchronizedDirectory(String)
+
+    var description: String {
+      switch self {
+      case let .enumerationFailed(path, error):
+        return "could not enumerate file system synchronized group at \(path): \(error)"
+      case let .unreadableSynchronizedDirectory(path):
+        return "could not enumerate file system synchronized group at \(path)"
       }
     }
   }
 
   private static func resolve(
     _ location: XCWorkspaceDataElementLocationType,
-    parent: String
+    groupParent: String,
+    containerParent: String
   ) -> String {
     switch location {
     case .absolute(let path):
       return path
-    default:
-      return (parent as NSString).appendingPathComponent(location.path)
+    case .container(let path):
+      return (containerParent as NSString).appendingPathComponent(path)
+    case .developer(let path), .group(let path), .current(let path), .other(_, let path):
+      return (groupParent as NSString).appendingPathComponent(path)
     }
   }
 

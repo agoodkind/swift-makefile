@@ -82,3 +82,112 @@ func indexCompletenessTargetWithNoSourcesIsOutOfScope() {
   #expect(
     !IndexCompleteness.targetIsInScope(targetFiles: [], indexed: ["/proj/A/One.swift"]))
 }
+
+#if canImport(XcodeProj, _version: 9.15.0)
+  @Test
+  func indexCompletenessFindsProjectsInFileSystemSynchronizedWorkspaceGroup() throws {
+    try withTemporaryWorkspaceFixture(synchronizedDirectoryExists: true) { fixture in
+      let paths = try IndexCompleteness.xcodeProjectPaths(inWorkspace: fixture.workspace.path)
+
+      #expect(
+        Set(paths) == [
+          fixture.normalProject.path,
+          fixture.synchronizedProject.path,
+          fixture.explicitProject.path,
+          fixture.containerProject.path,
+        ])
+      #expect(paths.count == 4)
+    }
+  }
+
+  @Test
+  func indexCompletenessReportsMissingFileSystemSynchronizedWorkspaceDirectory() throws {
+    try withTemporaryWorkspaceFixture(synchronizedDirectoryExists: false) { fixture in
+      let result = Result {
+        try IndexCompleteness.xcodeProjectPaths(inWorkspace: fixture.workspace.path)
+      }
+      guard case .failure(let error) = result else {
+        Issue.record("expected synchronized directory enumeration to fail")
+        return
+      }
+      #expect(String(describing: error).contains(fixture.synchronizedDirectory.path))
+    }
+  }
+
+  private struct WorkspaceFixture {
+    let workspace: URL
+    let normalProject: URL
+    let synchronizedDirectory: URL
+    let synchronizedProject: URL
+    let explicitProject: URL
+    let containerProject: URL
+  }
+
+  private func withTemporaryWorkspaceFixture(
+    synchronizedDirectoryExists: Bool,
+    _ body: (WorkspaceFixture) throws -> Void
+  ) throws {
+    let fileManager = FileManager.default
+    let root = fileManager.temporaryDirectory.appendingPathComponent(
+      "swift-mk-workspace-\(UUID().uuidString)", isDirectory: true)
+    try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+    defer {
+      do {
+        try fileManager.removeItem(at: root)
+      } catch {
+        Output.warning("cleanup failed: \(error.localizedDescription)")
+      }
+    }
+
+    let workspace = root.appendingPathComponent("Fixture.xcworkspace", isDirectory: true)
+    let normalProject = root.appendingPathComponent("Normal.xcodeproj", isDirectory: true)
+    let sharedPackages = root.appendingPathComponent("SharedPackages", isDirectory: true)
+    let synchronizedDirectory = sharedPackages.appendingPathComponent(
+      "Infrastructure", isDirectory: true)
+    let synchronizedProject = synchronizedDirectory.appendingPathComponent(
+      "Nested.xcodeproj", isDirectory: true)
+    let explicitProject = synchronizedDirectory.appendingPathComponent(
+      "Explicit.xcodeproj", isDirectory: true)
+    let containerProject = root.appendingPathComponent("Container.xcodeproj", isDirectory: true)
+    try fileManager.createDirectory(at: workspace, withIntermediateDirectories: true)
+    try fileManager.createDirectory(at: normalProject, withIntermediateDirectories: true)
+    if synchronizedDirectoryExists {
+      try fileManager.createDirectory(at: synchronizedProject, withIntermediateDirectories: true)
+      try fileManager.createDirectory(at: explicitProject, withIntermediateDirectories: true)
+      try fileManager.createDirectory(at: containerProject, withIntermediateDirectories: true)
+      try fileManager.createDirectory(
+        at: synchronizedProject.appendingPathComponent("Ignored.xcodeproj", isDirectory: true),
+        withIntermediateDirectories: true)
+    }
+
+    let workspaceData =
+      """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <Workspace version = "1.0">
+        <FileRef location = "group:Normal.xcodeproj">
+        </FileRef>
+        <Group location = "group:SharedPackages">
+          <FileSystemSynchronizedGroup location = "group:Infrastructure">
+            <FileRef location = "group:Explicit.xcodeproj">
+            </FileRef>
+            <FileRef location = "container:Container.xcodeproj">
+            </FileRef>
+          </FileSystemSynchronizedGroup>
+        </Group>
+      </Workspace>
+      """
+    try workspaceData.write(
+      to: workspace.appendingPathComponent("contents.xcworkspacedata"),
+      atomically: true,
+      encoding: .utf8)
+
+    try body(
+      WorkspaceFixture(
+        workspace: workspace,
+        normalProject: normalProject,
+        synchronizedDirectory: synchronizedDirectory,
+        synchronizedProject: synchronizedProject,
+        explicitProject: explicitProject,
+        containerProject: containerProject))
+  }
+#endif
