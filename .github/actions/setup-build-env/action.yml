@@ -374,7 +374,13 @@ runs:
         tuist version
 
     - name: Install XcodeGen
-      if: ${{ env.SWIFT_MK_POOL != '1' && (inputs.install-xcodegen == 'true' || (inputs.install-xcodegen == 'auto' && hashFiles('project.yml') != '')) }}
+      # Runs on the pool too, for the same reason the lint tools below do: the
+      # golden image ships Xcode but not XcodeGen. Skipping it there failed
+      # every self-hosted run of an xcodegen consumer with
+      # `env: xcodegen: No such file or directory` at the generate step, and
+      # the job only passed on the github-hosted retry. The command -v check
+      # makes this a fast skip once an image preinstalls it.
+      if: ${{ inputs.install-xcodegen == 'true' || (inputs.install-xcodegen == 'auto' && hashFiles('project.yml') != '') }}
       shell: bash
       run: |
         set -euo pipefail
