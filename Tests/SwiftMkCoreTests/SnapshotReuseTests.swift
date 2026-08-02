@@ -72,19 +72,21 @@ func snapshotExtractWritesTheThreeFieldMarker() async throws {
     // cd explicitly rather than setting PWD: snapshot_extract resolves .make
     // relative to the working directory, and exporting PWD does not change it.
     let command = #"cd "${WORK_DIR}"; source "${SCRIPT_PATH}"; snapshot_extract"#
-    let result = Shell.run(
-      "/bin/bash",
-      ["-c", command],
-      environment: [
-        "PATH": pathWithoutGh,
-        "SCRIPT_PATH": script,
-        "WORK_DIR": directory,
-        "SWIFT_MK_CODELOAD_BASE": server.codeloadBase,
-        "SWIFT_MK_API_REPO": engineRepository,
-        "SWIFT_MK_API_REF": engineRef,
-        "SWIFT_MK_DEV_DIR": "",
-      ]
-    )
+    // Off the cooperative pool: Shell.run blocks waiting on the subprocess, and
+    // a blocked cooperative thread is the shape that deadlocked this suite
+    // before (see OffPoolWork).
+    let environment = [
+      "PATH": pathWithoutGh,
+      "SCRIPT_PATH": script,
+      "WORK_DIR": directory,
+      "SWIFT_MK_CODELOAD_BASE": server.codeloadBase,
+      "SWIFT_MK_API_REPO": engineRepository,
+      "SWIFT_MK_API_REF": engineRef,
+      "SWIFT_MK_DEV_DIR": "",
+    ]
+    let result = await OffPoolWork.run {
+      Shell.run("/bin/bash", ["-c", command], environment: environment)
+    }
     #expect(result.status == 0, "\(result.stderr)")
 
     let marker = readMarker(directory)
@@ -137,17 +139,20 @@ func swiftMkUnfreezesABareRefMarkerAndRewritesIt() async throws {
     try writeMakeFile(directory, ".swift-mk-snapshot-ref", "main\n")
 
     let isolatedSwiftMk = try isolatedSwiftMkCopy(in: directory)
-    let result = Shell.run(
-      "make",
-      [
-        "--no-print-directory", "-C", directory,
-        "-f", isolatedSwiftMk,
-        "clean",
-        "SWIFT_MK_CODELOAD_BASE=\(server.codeloadBase)",
-        "SWIFT_MK_API_REPO=agoodkind/swift-makefile",
-        "SWIFT_MK_API_REF=main",
-      ],
-      environment: makeEnvironmentWithoutInheritedMakeState())
+    let makeEnvironment = makeEnvironmentWithoutInheritedMakeState()
+    let result = await OffPoolWork.run {
+      Shell.run(
+        "make",
+        [
+          "--no-print-directory", "-C", directory,
+          "-f", isolatedSwiftMk,
+          "clean",
+          "SWIFT_MK_CODELOAD_BASE=\(server.codeloadBase)",
+          "SWIFT_MK_API_REPO=agoodkind/swift-makefile",
+          "SWIFT_MK_API_REF=main",
+        ],
+        environment: makeEnvironment)
+    }
     #expect(result.status == 0, "\(result.stderr)")
 
     #expect(
@@ -181,17 +186,20 @@ func swiftMkOldPathPreservesTheWarmTreeWhenUpstreamFails() async throws {
     try writeMakeFile(directory, ".swift-mk-snapshot-ref", "main\n")
 
     let isolatedSwiftMk = try isolatedSwiftMkCopy(in: directory)
-    let result = Shell.run(
-      "make",
-      [
-        "--no-print-directory", "-C", directory,
-        "-f", isolatedSwiftMk,
-        "clean",
-        "SWIFT_MK_CODELOAD_BASE=\(server.codeloadBase)",
-        "SWIFT_MK_API_REPO=agoodkind/swift-makefile",
-        "SWIFT_MK_API_REF=main",
-      ],
-      environment: makeEnvironmentWithoutInheritedMakeState())
+    let makeEnvironment = makeEnvironmentWithoutInheritedMakeState()
+    let result = await OffPoolWork.run {
+      Shell.run(
+        "make",
+        [
+          "--no-print-directory", "-C", directory,
+          "-f", isolatedSwiftMk,
+          "clean",
+          "SWIFT_MK_CODELOAD_BASE=\(server.codeloadBase)",
+          "SWIFT_MK_API_REPO=agoodkind/swift-makefile",
+          "SWIFT_MK_API_REF=main",
+        ],
+        environment: makeEnvironment)
+    }
     #expect(
       result.status != 0, "a failed upstream fetch must fail the parse, not silently continue")
 
@@ -228,18 +236,14 @@ let miseTargetRelativePath = ".config/mise/conf.d/swift-mk.toml"
 
 @Test
 func warmParseTakesConfigsFromTheSnapshotWithNoNetwork() async throws {
-  // Content matching alone would not distinguish "copied from the snapshot
-  // already on disk" from "some fetch mechanism ran again and happened to
-  // produce the same bytes," so this asserts the request count too. Deleting
-  // the renamed targets after the cold run and before the warm one is what
-  // makes the test meaningful rather than vacuous: the cold run's own
-  // install_from_stage already creates them, so without deleting them first, a
-  // warm run that did nothing at all would still leave this test green. This
-  // simulates the actual motivating case: a consumer whose marker already
-  // validates (Task 4's fix landed for them) but who never had this task's
-  // copy step run, because they have not re-provisioned since. The warm run
-  // must recreate every target via the 304 path's own copy call, at zero
-  // additional network cost beyond the one validation request.
+  // The cold provision creates every renamed target from the snapshot, so a
+  // warm parse has nothing left to do: it costs exactly one validation request
+  // and rewrites nothing. The 304 path deliberately calls no copy step, since a
+  // tree whose marker carries an etag was installed by a provision that already
+  // created the targets, and a 304 must leave .make byte-for-byte alone. The
+  // content match plus the request count is what distinguishes "copied from the
+  // snapshot at provision time" from "fetched again per file", which is the
+  // behavior this task removed.
   try await FetchServer.withServer(files: engineFiles()) { server in
     let directory = try temporaryConsumer()
 
@@ -249,12 +253,6 @@ func warmParseTakesConfigsFromTheSnapshotWithNoNetwork() async throws {
     )
     #expect(cold.status == 0, "\(cold.stderr)")
     #expect(readMakeFile(directory, ".swiftlint.yml") == "# swiftlint v1\n")
-
-    for (_, target) in renamedConfigMapping {
-      removeIfPresent(makePath(directory, target))
-    }
-    let miseTargetPath = (directory as NSString).appendingPathComponent(miseTargetRelativePath)
-    removeIfPresent(miseTargetPath)
 
     let warm = await runHelper(
       directory: directory,

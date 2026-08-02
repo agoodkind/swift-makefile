@@ -44,6 +44,116 @@ VALIDATION_CONNECT_TIMEOUT=2
 VALIDATION_MAX_TIME=3
 REUSE_WINDOW_SECONDS=3600
 
+# LOCK_DIR serializes concurrent parses of one consumer directory. It is a
+# directory because mkdir is the atomic create-if-absent primitive available
+# everywhere this runs.
+#
+# It lives OUTSIDE .make, in the temporary directory, keyed by a digest of the
+# consumer's absolute path. Inside .make it would break the rule that a 304
+# writes nothing: creating and removing the lock changes .make's own directory
+# mtime on every run, including runs that touch no asset.
+#
+# Keying by path digest keeps it per-consumer, which is what matters, and a
+# lock that does not survive a reboot is correct anyway: no parse survives one
+# either.
+swift_mk_lock_dir() {
+    local consumer_path
+    local digest
+    consumer_path=$(pwd -P)
+    if command -v shasum >/dev/null 2>&1; then
+        digest=$(printf '%s' "${consumer_path}" | shasum | cut -d' ' -f1)
+    elif command -v sha1sum >/dev/null 2>&1; then
+        digest=$(printf '%s' "${consumer_path}" | sha1sum | cut -d' ' -f1)
+    else
+        # No digest tool. Fall back to a sanitized path, which is longer but
+        # just as unique, rather than dropping the lock entirely.
+        digest=$(printf '%s' "${consumer_path}" | tr -c 'A-Za-z0-9' '-')
+    fi
+    printf '%s/swift-mk-lock-%s' "${TMPDIR:-/tmp}" "${digest}"
+}
+LOCK_DIR=$(swift_mk_lock_dir)
+# LOCK_WAIT_SECONDS bounds how long a second parse waits for the first. A real
+# provision measures a few seconds, so this is generous, and a wait that
+# reaches it means something is wrong rather than merely slow.
+LOCK_WAIT_SECONDS=30
+
+# acquire_lock serializes everything that reads the marker or writes under
+# .make, for the whole lifetime of this process.
+#
+# Without it two parses in the same directory race. Each stages its own archive
+# and swaps, so .make.next and .make.previous collide and .make can end up a
+# mix of two trees, recorded as whichever marker write finished last. Every
+# later run then validates that mixed tree against one archive's ETag, receives
+# 304, and keeps it indefinitely. Both parses exit 0, so nothing reports it.
+#
+# mkdir is the primitive because it is atomic on every filesystem this runs on
+# and needs no flock, which macOS does not ship. The holder's pid goes in the
+# directory so a lock left by a killed process can be reclaimed rather than
+# blocking every future parse: the reclaim races, but only via rename, so
+# exactly one contender wins.
+acquire_lock() {
+    local waited=0
+    local holder=""
+    local mkdir_error=""
+    while true; do
+        # Separate "the lock is held" from "the lock cannot be created here".
+        # Only the first is contention worth waiting out. The second is a local
+        # setup problem, such as an unwritable or missing TMPDIR, and waiting
+        # the full timeout for it reports a conflict that does not exist while
+        # hiding the real cause.
+        if mkdir_error=$(mkdir "${LOCK_DIR}" 2>&1); then
+            # A lock whose pid was never recorded can never be recognized as
+            # stale, so every later parse would wait out the full timeout and
+            # fail. Treat a failed write as a failed acquisition and hand the
+            # lock straight back.
+            if ! printf '%s\n' "$$" >"${LOCK_DIR}/pid" 2>/dev/null; then
+                rmdir "${LOCK_DIR}" 2>/dev/null || rm -rf "${LOCK_DIR}"
+                printf 'error: could not record the lock holder in %s: a local setup problem, not a lock conflict\n' \
+                    "${LOCK_DIR}" >&2
+                return 1
+            fi
+            return 0
+        fi
+        if [[ ! -d "${LOCK_DIR}" ]]; then
+            printf 'error: could not create the lock directory %s: %s. This is a local setup problem, not another build holding the lock.\n' \
+                "${LOCK_DIR}" "${mkdir_error}" >&2
+            return 1
+        fi
+
+        holder=$(cat "${LOCK_DIR}/pid" 2>/dev/null || printf '')
+        if [[ -n "${holder}" ]] && ! kill -0 "${holder}" 2>/dev/null; then
+            # The recorded holder is gone, so nobody will ever release this
+            # lock. Claim it by RENAMING it aside rather than removing it in
+            # place. Two parses can read the same dead pid, and with rm both
+            # would delete: the first would drop the stale lock and win it, and
+            # the second would then delete the first's LIVE lock and enter the
+            # critical section alongside it. rename is atomic, so exactly one
+            # contender moves that directory and the loser's rename fails
+            # against a name that is already gone.
+            if mv "${LOCK_DIR}" "${LOCK_DIR}.stale.$$" 2>/dev/null; then
+                rm -rf "${LOCK_DIR}.stale.$$"
+                continue
+            fi
+            # Someone else reclaimed it first. Fall through to the wait rather
+            # than spinning: a reclaim that keeps failing, against an immutable
+            # lock say, would otherwise loop forever without advancing the
+            # timeout.
+        fi
+
+        if (( waited >= LOCK_WAIT_SECONDS )); then
+            printf 'error: another swift-makefile parse has held %s for %ss. If no other build is running, remove that directory.\n' \
+                "${LOCK_DIR}" "${LOCK_WAIT_SECONDS}" >&2
+            return 1
+        fi
+        sleep 1
+        waited=$(( waited + 1 ))
+    done
+}
+
+release_lock() {
+    rm -rf "${LOCK_DIR}"
+}
+
 # Re-execute from a temp copy so replacing this file mid-run is safe. The guard
 # variable stops the copy from re-executing itself.
 reexec_from_temp_copy() {
@@ -452,6 +562,9 @@ running_in_ci() {
 # in a subshell instead, so its EXIT trap only ever fires once, on that
 # subshell's own exit, and the temp directory is removed exactly then.
 provision() {
+    local stage_root
+    local stage_dir
+    local etag_value
     (
         stage_root=$(mktemp -d "${TMPDIR:-/tmp}/swift-mk-stage.XXXXXXXX") || exit 1
         trap 'rm -rf "${stage_root}"' EXIT
@@ -492,6 +605,16 @@ main() {
     local validation_log=""
 
     mkdir -p "${MAKE_DIR}"
+
+    # Everything past this point either reads the marker or writes under
+    # .make, so it is all inside the lock. Two parses in one directory would
+    # otherwise collide on .make.next and .make.previous and could swap in a
+    # tree that is half one archive and half another, recorded as whichever
+    # marker write finished last.
+    if ! acquire_lock; then
+        return 1
+    fi
+    trap release_lock EXIT
 
     if [[ -n "${SWIFT_MK_DEV_DIR}" ]]; then
         return 0
@@ -535,13 +658,13 @@ main() {
         fi
         status_code=$(validate_upstream "${known_etag}" "${validation_log}") || validate_status=$?
         if [[ "${status_code}" == "304" ]]; then
-            # Deliberately no marker write. The reuse window is a fixed hour
-            # from the last real download, not a window a successful check can
-            # slide forward, and a 304 must leave .make byte-for-byte alone.
-            # install_renamed_configs still runs: a consumer whose marker
-            # already validates but who has not re-provisioned since this task
-            # landed would otherwise never get the renamed targets created.
-            install_renamed_configs
+            # Deliberately no write of ANY kind, marker included. The reuse
+            # window is a fixed hour from the last real download, not a window
+            # a successful check can slide forward, and a 304 must leave .make
+            # byte-for-byte alone, mtimes included. The renamed configs are not
+            # copied here either: any consumer whose marker carries an etag got
+            # that etag from a provision, and every provision installs the
+            # renamed configs, so a validated tree already has them.
             rm -f "${validation_log}"
             return 0
         fi
@@ -556,8 +679,10 @@ main() {
     # check did not finish, not that the full fetch would also fail; only a
     # provision that itself fails is a real failure.
     if ! running_in_ci && [[ -n "${known_etag}" && -z "${status_code}" ]] && marker_is_recent; then
+        # Serving from disk writes nothing under .make, for the same reason the
+        # 304 branch writes nothing: the tree being reused already carries the
+        # renamed configs from the provision that recorded its etag.
         serve_from_disk_with_warning "${validate_status}" "${validation_log}"
-        install_renamed_configs
         rm -f "${validation_log}"
         return 0
     fi

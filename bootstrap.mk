@@ -201,7 +201,9 @@ endif
 #   SWIFT_MK_API_REF       the wrong repository or ref's assets
 #
 # Adding a SWIFT_MK_* variable that the helper reads means adding it here too.
-$(if $(filter ok,$(shell SWIFT_MK_API_REPO="$(SWIFT_MK_API_REPO)" SWIFT_MK_API_REF="$(SWIFT_MK_API_REF)" SWIFT_MK_MODULES="$(SWIFT_MK_MODULES)" SWIFT_MK_CODELOAD_BASE="$(SWIFT_MK_CODELOAD_BASE)" SWIFT_MK_DEV_DIR="$(SWIFT_MK_DEV_DIR)" SWIFT_MK_SKIP_FETCH="$(SWIFT_MK_SKIP_FETCH)" bash "$(SWIFT_MK_BOOTSTRAP)" >&2 && printf ok)),,$(error swift-makefile failed to provision the engine snapshot))
+# GITHUB_ACTIONS and GITHUB_RUN_ID ride along so the CI rule holds even when a
+# caller passes them as make variables rather than through the environment.
+$(if $(filter ok,$(shell SWIFT_MK_API_REPO="$(SWIFT_MK_API_REPO)" SWIFT_MK_API_REF="$(SWIFT_MK_API_REF)" SWIFT_MK_MODULES="$(SWIFT_MK_MODULES)" SWIFT_MK_CODELOAD_BASE="$(SWIFT_MK_CODELOAD_BASE)" SWIFT_MK_DEV_DIR="$(SWIFT_MK_DEV_DIR)" SWIFT_MK_SKIP_FETCH="$(SWIFT_MK_SKIP_FETCH)" GITHUB_ACTIONS="$(GITHUB_ACTIONS)" GITHUB_RUN_ID="$(GITHUB_RUN_ID)" bash "$(SWIFT_MK_BOOTSTRAP)" >&2 && printf ok)),,$(error swift-makefile failed to provision the engine snapshot))
 # Only in fetched mode. The helper returns immediately in dev-dir mode without
 # provisioning anything, because there the checkout is the source of truth and no
 # snapshot extract runs, so forcing skip-fetch here would leave swift.mk with no

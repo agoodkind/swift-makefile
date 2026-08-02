@@ -93,14 +93,49 @@ enum BootstrapHelperRunner {
         status: -1
       )
     }
+    // Drain both pipes concurrently. A pipe's kernel buffer is bounded (about
+    // 64 KB), so reading stdout to end of file before touching stderr deadlocks
+    // when the helper fills stderr first: the helper blocks in write() while
+    // this thread blocks in read() on a stream that cannot reach end of file
+    // until the helper exits. A dedicated thread for stderr keeps both moving.
+    let stderrBox = DrainBox()
+    let stderrThread = Thread {
+      stderrBox.store(errPipe.fileHandleForReading.readDataToEndOfFile())
+    }
+    stderrThread.start()
     let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-    let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+    let errData = stderrBox.waitForData()
     process.waitUntilExit()
     return Result(
       stdout: Output.decodeCapturedUTF8(outData),
       stderr: Output.decodeCapturedUTF8(errData),
       status: process.terminationStatus
     )
+  }
+
+  /// Hands one drained pipe's bytes from its reader thread back to the caller.
+  /// A condition-signalled box rather than a bare variable, so the caller
+  /// blocks until the reader has genuinely finished instead of racing it.
+  private final class DrainBox: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var data: Data?
+
+    func store(_ drained: Data) {
+      condition.lock()
+      data = drained
+      condition.signal()
+      condition.unlock()
+    }
+
+    func waitForData() -> Data {
+      condition.lock()
+      while data == nil {
+        condition.wait()
+      }
+      let drained = data ?? Data()
+      condition.unlock()
+      return drained
+    }
   }
 
   /// Run `chflags` on `path` and return its exit status, or a non-zero stand-in when it

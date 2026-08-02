@@ -260,8 +260,12 @@ else ifneq ($(wildcard $(SWIFT_MK_SNAPSHOT_HELPER)),)
 # on its next parse with no consumer-side change. Passed explicitly rather than
 # relying on `export`, since the export statements for these variables are
 # textually later in this file and would not yet be in effect for this
-# immediate $(shell) call.
-SWIFT_MK_SNAPSHOT := $(if $(filter ok,$(shell SWIFT_MK_API_REPO="$(SWIFT_MK_API_REPO)" SWIFT_MK_API_REF="$(SWIFT_MK_API_REF)" SWIFT_MK_MODULES="$(SWIFT_MK_MODULES)" bash "$(SWIFT_MK_SNAPSHOT_HELPER)" >&2 && printf ok)),,$(error swift-makefile failed to provision the engine snapshot))
+# immediate $(shell) call. Every variable the helper reads is forwarded: Make
+# only auto-exports environment-origin variables, so a value set on the make
+# command line reaches this file but not a $(shell) child, and the helper would
+# silently fall back to its own default. GITHUB_ACTIONS and GITHUB_RUN_ID ride
+# along so the CI rule holds even when a caller passes them as make variables.
+SWIFT_MK_SNAPSHOT := $(if $(filter ok,$(shell SWIFT_MK_API_REPO="$(SWIFT_MK_API_REPO)" SWIFT_MK_API_REF="$(SWIFT_MK_API_REF)" SWIFT_MK_MODULES="$(SWIFT_MK_MODULES)" SWIFT_MK_CODELOAD_BASE="$(SWIFT_MK_CODELOAD_BASE)" SWIFT_MK_DEV_DIR="$(SWIFT_MK_DEV_DIR)" SWIFT_MK_SKIP_FETCH="$(SWIFT_MK_SKIP_FETCH)" GITHUB_ACTIONS="$(GITHUB_ACTIONS)" GITHUB_RUN_ID="$(GITHUB_RUN_ID)" bash "$(SWIFT_MK_SNAPSHOT_HELPER)" >&2 && printf ok)),,$(error swift-makefile failed to provision the engine snapshot))
 else ifneq ($(strip $(SWIFT_MK_SNAPSHOT_CURRENT)),1)
 # Cold path for a consumer whose .make predates the helper (or whose marker is
 # still the old bare-ref format). It extracts once, which lands the helper
