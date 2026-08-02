@@ -304,6 +304,7 @@ jobs:
           RELEASE_TRACK: ${{ inputs.release-track }}
           RELEASE_TAG: ${{ needs.source.outputs.release_tag }}
           SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
+          SWIFT_MK_DEV_DIR: .swift-makefile
         run: make release-meta SWIFT_MK_BIN="${SWIFT_MK_BIN}"
       - name: Normalize release metadata
         id: normalize
@@ -690,13 +691,13 @@ jobs:
 
       - name: Attest provenance
         if: ${{ (inputs.ephemeral || inputs.attest) && steps.artifacts.outputs.list != '' }}
-        uses: actions/attest@v4.2.0
+        uses: actions/attest@v4.2.1
         with:
           subject-path: ${{ steps.artifacts.outputs.list }}
 
       - name: Attest SBOM
         if: ${{ (inputs.ephemeral || inputs.attest) && inputs.sbom-subject-path != '' && steps.artifacts.outputs.list != '' }}
-        uses: actions/attest@v4.2.0
+        uses: actions/attest@v4.2.1
         with:
           subject-path: ${{ steps.artifacts.outputs.list }}
           sbom-path: ${{ inputs.dist-dir }}/sbom-${{ needs.meta.outputs.tag }}.spdx.json

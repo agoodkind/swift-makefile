@@ -1,10 +1,13 @@
 #!/usr/bin/env ruby
 
+require "fileutils"
+require "open3"
+require "tmpdir"
 require "yaml"
 
 workflow_path = ARGV.fetch(0)
 workflow = YAML.load_file(workflow_path)
-repository_root = File.dirname(File.dirname(File.dirname(workflow_path)))
+repository_root = File.expand_path(File.dirname(File.dirname(File.dirname(workflow_path))))
 triggers = workflow["on"]
 if triggers.nil?
     triggers = workflow.fetch(true)
@@ -18,6 +21,78 @@ end
 
 def find_step(steps, name)
     steps.find { |step| step["name"] == name }
+end
+
+def write_executable(path, contents)
+    File.write(path, contents)
+    File.chmod(0o755, path)
+end
+
+def verify_local_metadata_engine(repository_root, metadata_step)
+    Dir.mktmpdir("swift-makefile-release-meta-") do |directory|
+        engine_path = File.join(directory, ".swift-makefile")
+        File.symlink(repository_root, engine_path)
+        FileUtils.cp(File.join(repository_root, "bootstrap.mk"), directory)
+        File.write(
+            File.join(directory, "Makefile"),
+            "SWIFT_MK_MODULES := swift-release.mk\ninclude bootstrap.mk\n",
+        )
+
+        tools_path = File.join(directory, "tools")
+        FileUtils.mkdir_p(tools_path)
+        network_log = File.join(directory, "network.log")
+        network_tool = <<~'SCRIPT'
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            printf '%s\n' "$0" >> "${NETWORK_LOG}"
+            exit 127
+        SCRIPT
+        write_executable(File.join(tools_path, "gh"), network_tool)
+        write_executable(File.join(tools_path, "curl"), network_tool)
+
+        swift_mk_path = File.join(directory, "swift-mk")
+        swift_mk = <<~'SCRIPT'
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            if [[ "${1:-}" != "version-meta" ]]; then
+                printf 'unexpected swift-mk command: %s\n' "$*" >&2
+                exit 2
+            fi
+
+            printf 'release_tag=test-prerelease\n'
+            printf 'release_track=prerelease\n'
+            printf 'artifact_version=test-prerelease\n'
+            printf 'build_version=123\n'
+            printf 'marketing_version=1.2.3\n'
+        SCRIPT
+        write_executable(swift_mk_path, swift_mk)
+
+        output_path = File.join(directory, "output")
+        environment = {
+            "GITHUB_OUTPUT" => output_path,
+            "NETWORK_LOG" => network_log,
+            "PATH" => "#{tools_path}:#{ENV.fetch("PATH")}",
+            "RELEASE_TRACK" => "prerelease",
+            "SWIFT_MK_BIN" => swift_mk_path,
+        }
+        local_engine = metadata_step.fetch("env", {})["SWIFT_MK_DEV_DIR"]
+        environment["SWIFT_MK_DEV_DIR"] = local_engine unless local_engine.nil?
+
+        _, stderr, status = Open3.capture3(
+            environment,
+            "make",
+            "release-meta",
+            chdir: directory,
+        )
+        abort "release workflow contract: metadata bootstrap failed:\n#{stderr}" unless status.success?
+        abort "release workflow contract: metadata bootstrap used a network fetch" if File.exist?(network_log)
+
+        output = File.read(output_path)
+        abort "release workflow contract: metadata bootstrap did not execute release-meta" unless
+          output.include?("release_track=prerelease")
+    end
 end
 
 expected_outputs = [
@@ -56,6 +131,8 @@ require_value(meta_engine_checkout.fetch("uses"), "actions/checkout@v7", "metada
 require_value(meta_engine_checkout.dig("with", "repository"), "${{ job.workflow_repository }}", "metadata engine repository")
 require_value(meta_engine_checkout.dig("with", "ref"), "${{ job.workflow_sha }}", "metadata engine revision")
 require_value(meta_engine_checkout.dig("with", "path"), ".swift-makefile", "metadata engine path")
+metadata_step = find_step(meta_job.fetch("steps"), "Compute release metadata")
+verify_local_metadata_engine(repository_root, metadata_step)
 workflow_source = File.read(workflow_path)
 abort "release workflow contract: unsupported expression replace is present" if workflow_source.include?("replace(")
 metadata_normalization = find_step(meta_job.fetch("steps"), "Normalize release metadata")

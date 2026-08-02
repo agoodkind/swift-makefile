@@ -39,7 +39,7 @@ let package = Package(
     .package(
       url: "https://github.com/ileitch/swift-index-store",
       revision: "ed1f232d33b8e03956af0f4206fbd30171a43138"),
-    .package(url: "https://github.com/tuist/XcodeProj.git", from: "9.13.0"),
+    .package(url: "https://github.com/tuist/XcodeProj.git", "9.13.0"..<"9.16.0"),
     .package(url: "https://github.com/kylef/PathKit.git", from: "1.0.0"),
     // Already in the graph through grpc-swift and pinned in Package.resolved.
     // Declared here so the test target can run a local HTTP server, which is
