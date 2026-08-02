@@ -215,8 +215,12 @@ install_from_stage() {
     local clear_log
     local clear_status=0
     local preserved_path
+    local preserve_list
+    local preserve_log
     cp_log="$(dirname "${stage_dir}")/install-cp.log"
     clear_log="$(dirname "${stage_dir}")/clear-stage.log"
+    preserve_list="$(dirname "${stage_dir}")/preserve.list"
+    preserve_log="$(dirname "${stage_dir}")/preserve.log"
 
     # If this rm fails partway (a locked or immutable file left over from a
     # previous run), a stale next_dir would still exist. mkdir -p would then
@@ -238,6 +242,24 @@ install_from_stage() {
     fi
 
     if [[ -d "${MAKE_DIR}" ]]; then
+        # The enumeration is captured and its exit status checked BEFORE the loop
+        # rather than being read straight from a process substitution. A process
+        # substitution's exit status is invisible to the reading loop: if find
+        # fails, the loop simply sees no input, every preserved file is silently
+        # skipped, and the swap below then replaces .make without them. That
+        # loses the live build.lock while a build holds it, so the running build
+        # keeps the old inode while the next build creates and locks a new one
+        # and the per-worktree lock stops serializing anything.
+        if ! find "${MAKE_DIR}" -mindepth 1 -maxdepth 1 \
+            \( -name logs -o -name build.lock -o -name swift-mk -o -name swift-mk.key \
+               -o -name swift-mk-build -o -name dev -o -name .swift-mk-snapshot-ref \
+               -o -name swift.mk -o -name '*.log' \) -print0 \
+            > "${preserve_list}" 2>"${preserve_log}"; then
+            printf 'error: could not enumerate the runtime files to preserve (find failed): %s\n' \
+                "$(stderr_sample "${preserve_log}")" >&2
+            rm -rf "${next_dir}"
+            return 1
+        fi
         while IFS= read -r -d '' preserved_path; do
             if ! cp -R "${preserved_path}" "${next_dir}/"; then
                 printf 'error: could not preserve %s while staging the engine tree\n' \
@@ -245,10 +267,7 @@ install_from_stage() {
                 rm -rf "${next_dir}"
                 return 1
             fi
-        done < <(find "${MAKE_DIR}" -mindepth 1 -maxdepth 1 \
-            \( -name logs -o -name build.lock -o -name swift-mk -o -name swift-mk.key \
-               -o -name swift-mk-build -o -name dev -o -name .swift-mk-snapshot-ref \
-               -o -name swift.mk -o -name '*.log' \) -print0)
+        done < "${preserve_list}"
     fi
 
     cp -R "${stage_dir}/." "${next_dir}/" 2>"${cp_log}" || cp_status=$?

@@ -127,6 +127,16 @@ public final class ProcessCommandRunner: CommandRunner {
   // bypass the signature checks. Bare tool names resolve under /usr/bin (where
   // the macOS system tools live); an absolute or relative path is honored as-is.
   private static let systemToolDirectory = "/usr/bin"
+  // Every spawned tool starts here rather than inheriting the caller's working
+  // directory. A child that inherits it keeps that directory for its whole life,
+  // so a directory removed while the child runs makes the child's shell startup
+  // fail with "getcwd: cannot access parent directories" on stderr. In production
+  // the inherited directory is the consumer repository root and is not removed
+  // mid-run, so this is defensive rather than a fix for an observed production
+  // failure; it is kept because the test bundle does remove such directories and
+  // every tool spawned here receives absolute paths, so nothing depends on where
+  // it starts.
+  private static let stableWorkingDirectory = "/"
 
   public init() {
     UpdateDiagnostics.debug("update command runner initialized")
@@ -147,6 +157,7 @@ public final class ProcessCommandRunner: CommandRunner {
     let process = Process()
     process.executableURL = Self.executableURL(for: tool)
     process.arguments = args
+    process.currentDirectoryURL = URL(fileURLWithPath: Self.stableWorkingDirectory)
     let stdout = Pipe()
     let stderr = Pipe()
     process.standardOutput = stdout

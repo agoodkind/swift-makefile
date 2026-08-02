@@ -50,7 +50,7 @@ func fetchServerArchiveExtractsWithSystemTar() async throws {
     let workDirectory = manager.temporaryDirectory.appendingPathComponent(
       "fetch-extract-" + UUID().uuidString, isDirectory: true)
     try manager.createDirectory(at: workDirectory, withIntermediateDirectories: true)
-    defer { try? manager.removeItem(at: workDirectory) }
+    defer { removeIfPresent(workDirectory.path) }
 
     let archive = workDirectory.appendingPathComponent("snapshot.tar.gz")
     let url = try #require(

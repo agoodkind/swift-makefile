@@ -18,6 +18,22 @@ import NIOPosix
 
 @testable import SwiftMkCore
 
+/// Removes a path a test no longer needs, tolerating its absence.
+///
+/// A removal that fails for any other reason is surfaced rather than dropped: a
+/// cleanup that silently failed would leave the next assertion reading a stale
+/// file and reporting a confusing mismatch instead of the real cause.
+func removeIfPresent(_ path: String) {
+  guard FileManager.default.fileExists(atPath: path) else {
+    return
+  }
+  do {
+    try FileManager.default.removeItem(atPath: path)
+  } catch {
+    Output.warning("test: could not remove \(path): \(error)")
+  }
+}
+
 // MARK: - FetchRecord
 
 /// One served request, so a test can assert how many times the helper reached
@@ -28,6 +44,31 @@ struct FetchRecord: Sendable {
   let ifNoneMatch: String
   let status: Int
   let bytes: Int
+}
+
+/// Chunks per second the trickle path emits, and the matching gap between them.
+/// Ten a second is fine-grained enough that curl sees steady progress well inside
+/// its own speed-time window, which is the property the slow-transfer test needs.
+private let trickleChunksPerSecond = 10
+private let trickleChunkIntervalMilliseconds: Int64 = 100
+
+/// The server binds loopback on an ephemeral port, so nothing it serves is reachable
+/// off the machine and concurrent tests never contend for a fixed port.
+private let loopbackHost = "127.0.0.1"
+private let listenBacklog: Int32 = 16
+
+// MARK: - FetchStateSnapshot
+
+/// One consistent read of the server state, taken under the lock so the handler
+/// sees a single coherent view rather than fields that could change between
+/// individual reads.
+struct FetchStateSnapshot: Sendable {
+  let tarball: [UInt8]
+  let etag: String
+  let stall: Double
+  let forcedStatus: Int?
+  let etagEnabled: Bool
+  let trickleBytesPerSecond: Int?
 }
 
 // MARK: - FetchState
@@ -80,13 +121,17 @@ final class FetchState: @unchecked Sendable {
     trickleBytesPerSecond = bytesPerSecond
   }
 
-  func snapshot() -> (
-    tarball: [UInt8], etag: String, stall: Double, forcedStatus: Int?, etagEnabled: Bool,
-    trickleBytesPerSecond: Int?
-  ) {
+  func snapshot() -> FetchStateSnapshot {
     lock.lock()
     defer { lock.unlock() }
-    return (tarball, etagValue, stallSeconds, forcedStatus, etagEnabled, trickleBytesPerSecond)
+    return FetchStateSnapshot(
+      tarball: tarball,
+      etag: etagValue,
+      stall: stallSeconds,
+      forcedStatus: forcedStatus,
+      etagEnabled: etagEnabled,
+      trickleBytesPerSecond: trickleBytesPerSecond
+    )
   }
 
   func record(_ entry: FetchRecord) {
@@ -112,7 +157,7 @@ final class FetchServer: @unchecked Sendable {
 
   /// The base URL to pass as `SWIFT_MK_CODELOAD_BASE`.
   var codeloadBase: String {
-    "http://127.0.0.1:\(channel.localAddress?.port ?? 0)"
+    "http://\(loopbackHost):\(channel.localAddress?.port ?? 0)"
   }
 
   /// Every wait here suspends rather than blocking. Swift Testing runs test bodies on
@@ -123,23 +168,29 @@ final class FetchServer: @unchecked Sendable {
     let handlerState = FetchState()
     state = handlerState
     await Self.installArchive(files, into: handlerState)
-    let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-    self.group = group
+    let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+    group = eventLoopGroup
     do {
-      channel = try await ServerBootstrap(group: group)
-        .serverChannelOption(ChannelOptions.backlog, value: 16)
+      channel = try await ServerBootstrap(group: eventLoopGroup)
+        .serverChannelOption(ChannelOptions.backlog, value: listenBacklog)
         .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
-        .childChannelInitializer { channel in
-          channel.pipeline.configureHTTPServerPipeline().flatMap {
-            channel.pipeline.addHandler(FetchHandler(state: handlerState))
+        .childChannelInitializer { childChannel in
+          childChannel.pipeline.configureHTTPServerPipeline().flatMap {
+            childChannel.pipeline.addHandler(FetchHandler(state: handlerState))
           }
         }
-        .bind(host: "127.0.0.1", port: 0)
+        .bind(host: loopbackHost, port: 0)
         .get()
     } catch {
       // The group owns a thread and traps if it is deinited without a shutdown, so a
-      // failed bind has to release it before the error leaves this initializer.
-      try? await group.shutdownGracefully()
+      // failed bind has to release it before the error leaves this initializer. The
+      // bind failure is the one worth propagating, so a shutdown failure on top of it
+      // is reported rather than thrown and never replaces the original cause.
+      do {
+        try await eventLoopGroup.shutdownGracefully()
+      } catch {
+        Output.warning("FetchServer: releasing the group after a failed bind failed: \(error)")
+      }
       throw error
     }
   }
@@ -222,8 +273,19 @@ final class FetchServer: @unchecked Sendable {
   /// longer be scheduled, and nothing can ever signal the semaphore. The async form
   /// suspends instead, so the thread is free and the completion always gets one.
   func shutdown() async {
-    try? await channel.close().get()
-    try? await group.shutdownGracefully()
+    // Both failures are reported rather than dropped. A close that fails still
+    // has to be followed by the group shutdown, or the group's thread leaks and
+    // deinit traps, so neither is allowed to abort the other.
+    do {
+      try await channel.close().get()
+    } catch {
+      Output.warning("FetchServer: closing the listener failed: \(error)")
+    }
+    do {
+      try await group.shutdownGracefully()
+    } catch {
+      Output.warning("FetchServer: releasing the event-loop group failed: \(error)")
+    }
   }
 }
 
@@ -276,10 +338,20 @@ private final class FetchHandler: ChannelInboundHandler, @unchecked Sendable {
     // but never actually transmits a body, matching real codeload.github.com.
     let transmittedBytes = requestMethod == .HEAD ? [] : contentBytes
 
+    let head = responseHead(
+      status: status,
+      etagEnabled: current.etagEnabled,
+      etag: current.etag,
+      contentLength: contentBytes.count
+    )
+
     if let bytesPerSecond = current.trickleBytesPerSecond, !transmittedBytes.isEmpty {
       sendTrickled(
-        status: status, etagEnabled: current.etagEnabled, etag: current.etag,
-        bytes: transmittedBytes, bytesPerSecond: bytesPerSecond, context: context)
+        head: head,
+        bytes: transmittedBytes,
+        bytesPerSecond: bytesPerSecond,
+        context: context
+      )
       return
     }
 
@@ -287,13 +359,6 @@ private final class FetchHandler: ChannelInboundHandler, @unchecked Sendable {
       Thread.sleep(forTimeInterval: current.stall)
     }
 
-    var headers = HTTPHeaders()
-    if current.etagEnabled {
-      headers.add(name: "ETag", value: current.etag)
-    }
-    headers.add(name: "Content-Length", value: String(contentBytes.count))
-
-    let head = HTTPResponseHead(version: .http1_1, status: status, headers: headers)
     context.write(wrapOutboundOut(.head(head)), promise: nil)
     if !transmittedBytes.isEmpty {
       var buffer = context.channel.allocator.buffer(capacity: transmittedBytes.count)
@@ -302,10 +367,35 @@ private final class FetchHandler: ChannelInboundHandler, @unchecked Sendable {
     }
     context.writeAndFlush(wrapOutboundOut(.end(nil)), promise: nil)
 
+    recordRequest(status: status, bytes: transmittedBytes.count)
+  }
+
+  /// The response head a GET and a HEAD both report, so the two paths cannot drift
+  /// in status, ETag, or declared length.
+  private func responseHead(
+    status: HTTPResponseStatus,
+    etagEnabled: Bool,
+    etag: String,
+    contentLength: Int
+  ) -> HTTPResponseHead {
+    var headers = HTTPHeaders()
+    if etagEnabled {
+      headers.add(name: "ETag", value: etag)
+    }
+    headers.add(name: "Content-Length", value: String(contentLength))
+    return HTTPResponseHead(version: .http1_1, status: status, headers: headers)
+  }
+
+  private func recordRequest(status: HTTPResponseStatus, bytes: Int) {
     state.record(
       FetchRecord(
-        path: requestPath, method: requestMethod.rawValue, ifNoneMatch: ifNoneMatch,
-        status: Int(status.code), bytes: transmittedBytes.count))
+        path: requestPath,
+        method: requestMethod.rawValue,
+        ifNoneMatch: ifNoneMatch,
+        status: Int(status.code),
+        bytes: bytes
+      )
+    )
   }
 
   /// Delivers `bytes` as small chunks paced at bytesPerSecond, ten chunks per
@@ -315,32 +405,34 @@ private final class FetchHandler: ChannelInboundHandler, @unchecked Sendable {
   /// progress is visible right away, exactly the property that distinguishes a
   /// slow-but-progressing transfer from a dead stall.
   private func sendTrickled(
-    status: HTTPResponseStatus, etagEnabled: Bool, etag: String, bytes: [UInt8],
-    bytesPerSecond: Int, context: ChannelHandlerContext
+    head: HTTPResponseHead,
+    bytes: [UInt8],
+    bytesPerSecond: Int,
+    context: ChannelHandlerContext
   ) {
-    var headers = HTTPHeaders()
-    if etagEnabled {
-      headers.add(name: "ETag", value: etag)
-    }
-    headers.add(name: "Content-Length", value: String(bytes.count))
-    let head = HTTPResponseHead(version: .http1_1, status: status, headers: headers)
     context.writeAndFlush(wrapOutboundOut(.head(head)), promise: nil)
-    writeNextTrickleChunk(bytes: bytes, offset: 0, bytesPerSecond: bytesPerSecond, status: status, context: context)
+    writeNextTrickleChunk(
+      bytes: bytes,
+      offset: 0,
+      bytesPerSecond: bytesPerSecond,
+      status: head.status,
+      context: context
+    )
   }
 
   private func writeNextTrickleChunk(
-    bytes: [UInt8], offset: Int, bytesPerSecond: Int, status: HTTPResponseStatus,
+    bytes: [UInt8],
+    offset: Int,
+    bytesPerSecond: Int,
+    status: HTTPResponseStatus,
     context: ChannelHandlerContext
   ) {
     if offset >= bytes.count {
       context.writeAndFlush(wrapOutboundOut(.end(nil)), promise: nil)
-      state.record(
-        FetchRecord(
-          path: requestPath, method: requestMethod.rawValue, ifNoneMatch: ifNoneMatch,
-          status: Int(status.code), bytes: bytes.count))
+      recordRequest(status: status, bytes: bytes.count)
       return
     }
-    let chunkSize = max(1, bytesPerSecond / 10)
+    let chunkSize = max(1, bytesPerSecond / trickleChunksPerSecond)
     let end = min(offset + chunkSize, bytes.count)
     var buffer = context.channel.allocator.buffer(capacity: end - offset)
     buffer.writeBytes(bytes[offset..<end])
@@ -350,10 +442,14 @@ private final class FetchHandler: ChannelInboundHandler, @unchecked Sendable {
     // makes FetchHandler itself @unchecked Sendable; nonisolated(unsafe) states
     // that explicitly instead of leaving a real capture warning unaddressed.
     nonisolated(unsafe) let scheduledContext = context
-    context.eventLoop.scheduleTask(in: .milliseconds(100)) {
+    context.eventLoop.scheduleTask(in: .milliseconds(trickleChunkIntervalMilliseconds)) {
       self.writeNextTrickleChunk(
-        bytes: bytes, offset: end, bytesPerSecond: bytesPerSecond, status: status,
-        context: scheduledContext)
+        bytes: bytes,
+        offset: end,
+        bytesPerSecond: bytesPerSecond,
+        status: status,
+        context: scheduledContext
+      )
     }
   }
 }
@@ -364,6 +460,12 @@ private final class FetchHandler: ChannelInboundHandler, @unchecked Sendable {
 /// rather than emitting the format by hand, so the bytes under test are
 /// produced by the same tool the helper extracts them with.
 enum TarballBuilder {
+  /// FNV-1a 64-bit parameters. Any stable content hash would do here; the ETag only
+  /// has to change when the file set changes and stay identical when it does not.
+  private static let fnvOffsetBasis: UInt64 = 0xcbf2_9ce4_8422_2325
+  private static let fnvPrime: UInt64 = 0x0000_0100_0000_01b3
+  private static let hexRadix = 16
+
   static func build(_ files: [String: String]) -> [UInt8] {
     let manager = FileManager.default
     let root = manager.temporaryDirectory.appendingPathComponent(
@@ -371,15 +473,18 @@ enum TarballBuilder {
     // One top-level directory, matching a GitHub source archive that
     // `tar --strip-components=1` flattens.
     let treeRoot = root.appendingPathComponent("swift-makefile-test", isDirectory: true)
-    defer { try? manager.removeItem(at: root) }
+    defer { removeIfPresent(root.path) }
 
     do {
       try manager.createDirectory(at: treeRoot, withIntermediateDirectories: true)
       for name in files.keys.sorted() {
+        guard let body = files[name] else {
+          continue
+        }
         let target = treeRoot.appendingPathComponent(name)
         try manager.createDirectory(
           at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try files[name]!.write(to: target, atomically: true, encoding: .utf8)
+        try body.write(to: target, atomically: true, encoding: .utf8)
       }
 
       let archive = root.appendingPathComponent("snapshot.tar.gz")
@@ -424,13 +529,14 @@ enum TarballBuilder {
   /// A digest of the served file set, used as the ETag. It changes when a name
   /// or a body changes, and not otherwise.
   static func fingerprint(_ files: [String: String]) -> String {
-    var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+    var hash = fnvOffsetBasis
     for name in files.keys.sorted() {
-      for byte in Array(name.utf8) + [0] + Array(files[name]!.utf8) + [0] {
+      let body = files[name] ?? ""
+      for byte in Array(name.utf8) + [0] + Array(body.utf8) + [0] {
         hash ^= UInt64(byte)
-        hash = hash &* 0x0000_0100_0000_01b3
+        hash = hash &* fnvPrime
       }
     }
-    return String(hash, radix: 16)
+    return String(hash, radix: hexRadix)
   }
 }

@@ -44,11 +44,10 @@ enum OffPoolWork {
   ) async throws -> Value {
     try await withCheckedThrowingContinuation { continuation in
       let worker = Thread {
-        do {
-          continuation.resume(returning: try body())
-        } catch {
-          continuation.resume(throwing: error)
-        }
+        // Result carries the success or the thrown error to the continuation in
+        // one step, so the error reaches the awaiting call site rather than being
+        // caught and dropped on this thread.
+        continuation.resume(with: Result { try body() })
       }
       worker.name = "swift-mk-tests.blocking"
       worker.start()

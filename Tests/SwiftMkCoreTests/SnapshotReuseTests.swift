@@ -25,6 +25,12 @@ enum SnapshotReuseTests {}
 /// curl fallback deterministically regardless of the host's own tool install.
 let pathWithoutGh = "/usr/bin:/bin"
 
+/// The repository and ref every test in this file points the engine at. The
+/// FetchServer answers any path, so these only have to match what the assertions
+/// expect the helper to have asked for.
+let engineRepository = "agoodkind/swift-makefile"
+let engineRef = "main"
+
 /// Environment for a test that spawns its own `make`.
 ///
 /// Clearing `SWIFT_MK_DEV_DIR` through the environment is not enough on its own.
@@ -67,16 +73,18 @@ func snapshotExtractWritesTheThreeFieldMarker() async throws {
     // relative to the working directory, and exporting PWD does not change it.
     let command = #"cd "${WORK_DIR}"; source "${SCRIPT_PATH}"; snapshot_extract"#
     let result = Shell.run(
-      "/bin/bash", ["-c", command],
+      "/bin/bash",
+      ["-c", command],
       environment: [
         "PATH": pathWithoutGh,
         "SCRIPT_PATH": script,
         "WORK_DIR": directory,
         "SWIFT_MK_CODELOAD_BASE": server.codeloadBase,
-        "SWIFT_MK_API_REPO": "agoodkind/swift-makefile",
-        "SWIFT_MK_API_REF": "main",
+        "SWIFT_MK_API_REPO": engineRepository,
+        "SWIFT_MK_API_REF": engineRef,
         "SWIFT_MK_DEV_DIR": "",
-      ])
+      ]
+    )
     #expect(result.status == 0, "\(result.stderr)")
 
     let marker = readMarker(directory)
@@ -184,7 +192,8 @@ func swiftMkOldPathPreservesTheWarmTreeWhenUpstreamFails() async throws {
         "SWIFT_MK_API_REF=main",
       ],
       environment: makeEnvironmentWithoutInheritedMakeState())
-    #expect(result.status != 0, "a failed upstream fetch must fail the parse, not silently continue")
+    #expect(
+      result.status != 0, "a failed upstream fetch must fail the parse, not silently continue")
 
     for (name, body) in engineFiles() where name != "scripts/swift-mk-bootstrap.sh" {
       #expect(readMakeFile(directory, name) == body, "\(name) must survive a failed re-provision")
@@ -197,7 +206,13 @@ func swiftMkOldPathPreservesTheWarmTreeWhenUpstreamFails() async throws {
 /// lands at the consumer root, not inside .make.
 func readConsumerFile(_ directory: String, _ relative: String) -> String? {
   let path = (directory as NSString).appendingPathComponent(relative)
-  return try? String(contentsOfFile: path, encoding: .utf8)
+  do {
+    return try String(contentsOfFile: path, encoding: .utf8)
+  } catch {
+    // Absent is a real answer here: several assertions check that a file the
+    // helper should not have written is missing.
+    return nil
+  }
 }
 
 /// The renamed targets install_renamed_configs writes, as (source, target)
@@ -229,18 +244,22 @@ func warmParseTakesConfigsFromTheSnapshotWithNoNetwork() async throws {
     let directory = try temporaryConsumer()
 
     let cold = await runHelper(
-      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+      directory: directory,
+      environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase]
+    )
     #expect(cold.status == 0, "\(cold.stderr)")
     #expect(readMakeFile(directory, ".swiftlint.yml") == "# swiftlint v1\n")
 
     for (_, target) in renamedConfigMapping {
-      try? FileManager.default.removeItem(atPath: makePath(directory, target))
+      removeIfPresent(makePath(directory, target))
     }
     let miseTargetPath = (directory as NSString).appendingPathComponent(miseTargetRelativePath)
-    try? FileManager.default.removeItem(atPath: miseTargetPath)
+    removeIfPresent(miseTargetPath)
 
     let warm = await runHelper(
-      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+      directory: directory,
+      environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase]
+    )
     #expect(warm.status == 0, "\(warm.stderr)")
 
     #expect(
@@ -279,10 +298,14 @@ func consumerWithBootstrap() throws -> String {
     contentsOfFile: BootstrapHelperRunner.repositoryRoot() + "/bootstrap.mk", encoding: .utf8)
   try bootstrap.write(
     toFile: (directory as NSString).appendingPathComponent("bootstrap.mk"),
-    atomically: true, encoding: .utf8)
+    atomically: true,
+    encoding: .utf8
+  )
   try "include bootstrap.mk\n".write(
     toFile: (directory as NSString).appendingPathComponent("Makefile"),
-    atomically: true, encoding: .utf8)
+    atomically: true,
+    encoding: .utf8
+  )
   return directory
 }
 
@@ -321,7 +344,13 @@ func runMakeHelp(
     let pipe = Pipe()
     process.standardOutput = pipe
     process.standardError = pipe
-    try? process.run()
+    do {
+      try process.run()
+    } catch {
+      // A spawn that never started has no exit status, so report the launch
+      // failure as the output rather than letting it read as a make failure.
+      return MakeResult(output: "test: could not launch make: \(error)", status: -1)
+    }
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
     return MakeResult(output: Output.decodeCapturedUTF8(data), status: process.terminationStatus)
@@ -348,14 +377,18 @@ func warmSnapshotHelperParseIssuesExactlyOneRequest() async throws {
     let directory = try consumerWithBootstrap()
 
     let cold = await runMakeHelp(
-      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase],
-      goals: ["clean"])
+      directory: directory,
+      environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase],
+      goals: ["clean"]
+    )
     #expect(cold.status == 0, "\(cold.output)")
     let coldCount = server.requests().count
 
     let warm = await runMakeHelp(
-      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase],
-      goals: ["clean"])
+      directory: directory,
+      environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase],
+      goals: ["clean"]
+    )
     #expect(warm.status == 0, "\(warm.output)")
 
     let warmRequests = Array(server.requests().dropFirst(coldCount))
@@ -375,15 +408,20 @@ func oldBootstrapWithNewSwiftMkStillProvisionsTheSnapshotHelper() async throws {
     contentsOfFile: BootstrapHelperRunner.repositoryRoot() + "/swift.mk", encoding: .utf8)
   try await FetchServer.withServer(files: files) { server in
     let directory = try temporaryConsumer()
-    let oldBootstrap = try String(
-      contentsOfFile: BootstrapHelperRunner.repositoryRoot()
-        + "/Tests/SwiftMkCoreTests/Fixtures/pre-helper-bootstrap.mk", encoding: .utf8)
+    let oldBootstrapPath =
+      BootstrapHelperRunner.repositoryRoot()
+      + "/Tests/SwiftMkCoreTests/Fixtures/pre-helper-bootstrap.mk"
+    let oldBootstrap = try String(contentsOfFile: oldBootstrapPath, encoding: .utf8)
     try oldBootstrap.write(
       toFile: (directory as NSString).appendingPathComponent("bootstrap.mk"),
-      atomically: true, encoding: .utf8)
+      atomically: true,
+      encoding: .utf8
+    )
     try "include bootstrap.mk\n".write(
       toFile: (directory as NSString).appendingPathComponent("Makefile"),
-      atomically: true, encoding: .utf8)
+      atomically: true,
+      encoding: .utf8
+    )
 
     // The old bootstrap.mk's single-file fetch has only two paths that need no
     // real network: SWIFT_MK_DEV_DIR, or a raw.githubusercontent.com curl that
@@ -393,9 +431,12 @@ func oldBootstrapWithNewSwiftMkStillProvisionsTheSnapshotHelper() async throws {
     // it parses: that still falls through to the fetched-snapshot path this test
     // means to exercise.
     let devDir = try temporaryConsumer()
-    try files["swift.mk"]!.write(
+    let engineSwiftMk = try #require(files["swift.mk"])
+    try engineSwiftMk.write(
       toFile: (devDir as NSString).appendingPathComponent("swift.mk"),
-      atomically: true, encoding: .utf8)
+      atomically: true,
+      encoding: .utf8
+    )
 
     // "clean" rather than "help": real swift.mk gates its own snapshot-fetch
     // logic behind `ifneq ($(MAKECMDGOALS),help)`, the same fast path
@@ -407,7 +448,8 @@ func oldBootstrapWithNewSwiftMkStillProvisionsTheSnapshotHelper() async throws {
         "SWIFT_MK_CODELOAD_BASE": server.codeloadBase,
         "SWIFT_MK_DEV_DIR": devDir,
       ],
-      goals: ["clean"])
+      goals: ["clean"]
+    )
     #expect(result.status == 0, "\(result.output)")
     #expect(readMakeFile(directory, "Package.swift") != nil)
     #expect(readMakeFile(directory, "scripts/swift-mk-build.sh") != nil)

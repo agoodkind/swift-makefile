@@ -15,68 +15,6 @@ import Testing
 
 enum BootstrapFetchTests {}
 
-/// The engine tree the test server serves. It carries every asset the helper
-/// must provision, so a cold run has a complete source.
-func engineFiles() -> [String: String] {
-  [
-    "swift.mk": "# swift.mk v1\n",
-    "Package.swift": "// swift-tools-version: 6.0\n",
-    "scripts/swift-mk-build.sh": "#!/usr/bin/env bash\nexit 0\n",
-    "scripts/swift-mk-fetch-one.sh": "#!/usr/bin/env bash\nexit 0\n",
-    "scripts/swift-mk-sync.sh": "#!/usr/bin/env bash\nexit 0\n",
-    "scripts/swift-mk-bootstrap.sh": "#!/usr/bin/env bash\nexit 0\n",
-    ".swiftlint.yml": "# swiftlint v1\n",
-    ".swift-format": "{}\n",
-    ".periphery.yml": "# periphery v1\n",
-    "osv-scanner.toml": "# osv v1\n",
-    "mise.toml": "# mise v1\n",
-  ]
-}
-
-func temporaryConsumer() throws -> String {
-  let path = NSTemporaryDirectory() + "swift-mk-consumer-" + UUID().uuidString
-  try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
-  return path
-}
-
-func makePath(_ directory: String, _ relative: String) -> String {
-  (directory as NSString).appendingPathComponent(".make/" + relative)
-}
-
-func writeMakeFile(_ directory: String, _ relative: String, _ body: String) throws {
-  let path = makePath(directory, relative)
-  try FileManager.default.createDirectory(
-    atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-  try body.write(toFile: path, atomically: true, encoding: .utf8)
-}
-
-func readMakeFile(_ directory: String, _ relative: String) -> String? {
-  try? String(contentsOfFile: makePath(directory, relative), encoding: .utf8)
-}
-
-/// Run the bootstrap helper. See `BootstrapHelperRunner` for why the wait happens on a
-/// thread of its own.
-func runHelper(
-  directory: String,
-  environment: [String: String]
-) async -> BootstrapHelperRunner.Result {
-  await BootstrapHelperRunner.run(directory: directory, environment: environment)
-}
-
-/// A marker just written, which the helper reads as current.
-let freshMarkerAge = 0
-/// A marker old enough to be worth validating, young enough to still serve from disk.
-let recentMarkerAge = 600
-/// A marker old enough that the helper must force a real provision.
-let staleMarkerAge = 7_200
-/// Longer than the filesystem's one-second timestamp granularity, so a rewrite that did
-/// happen is detectable.
-let pastTimestampGranularityMilliseconds = 1_100
-/// How many requests a cold provision followed by one validation makes.
-let coldThenValidateRequestCount = 2
-/// The status a matching conditional request gets back.
-let notModifiedStatus = 304
-
 @Test
 func helperColdProvisionWritesEveryAsset() async throws {
   try await FetchServer.withServer(files: engineFiles()) { server in
@@ -164,13 +102,13 @@ func helperSwapFailureLeavesWarmTreeIntactForLaterSkipFetch() async throws {
     // create the staging directory it needs before it may touch .make. This is
     // a real, unmocked failure (EACCES), not an injected one.
     try FileManager.default.setAttributes(
-      [.posixPermissions: 0o555], ofItemAtPath: directory)
-    defer {
-      try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory)
-    }
+      [.posixPermissions: readOnlyDirectoryMode], ofItemAtPath: directory)
+    defer { restorePermissions(writableDirectoryMode, atPath: directory) }
 
     let result = await runHelper(
-      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
+      directory: directory,
+      environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase]
+    )
     #expect(result.status != 0)
 
     #expect(readMakeFile(directory, "swift.mk") == "# warm swift.mk\n")
@@ -179,13 +117,70 @@ func helperSwapFailureLeavesWarmTreeIntactForLaterSkipFetch() async throws {
 
     // Restore write access and prove the untouched warm tree is still complete:
     // the earlier failure never left .make half swapped.
-    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: writableDirectoryMode], ofItemAtPath: directory)
     let skipFetchResult = await runHelper(
       directory: directory,
       environment: [
         "SWIFT_MK_CODELOAD_BASE": server.codeloadBase, "SWIFT_MK_SKIP_FETCH": "1",
       ])
     #expect(skipFetchResult.status == 0, "skip-fetch failed: \(skipFetchResult.stderr)")
+  }
+}
+
+@Test
+func helperFailsWhenTheRuntimeFilePreserveEnumerationFails() async throws {
+  // The enumeration that decides which runtime files survive the swap used to be
+  // read straight from a process substitution, whose exit status the reading loop
+  // cannot see. A failing `find` therefore yielded an empty list rather than an
+  // error, every preserved file was silently skipped, and the swap replaced .make
+  // without them while the run still exited 0. The file that matters most there
+  // is build.lock: losing it mid-build leaves the running build holding the old
+  // inode while the next build creates and locks a new one, so the per-worktree
+  // lock stops serializing anything.
+  //
+  // `find` is shadowed only for the preserve enumeration, which is the one call
+  // that passes -mindepth; every other use passes through to the real tool, so
+  // this drives the exact step under test rather than breaking the whole run.
+  try await FetchServer.withServer(files: engineFiles()) { server in
+    let directory = try temporaryConsumer()
+    try warmSnapshot(directory)
+    try writeMakeFile(directory, "build.lock", "live lock\n")
+
+    let fakeBin = (directory as NSString).appendingPathComponent("fakebin")
+    try FileManager.default.createDirectory(
+      atPath: fakeBin, withIntermediateDirectories: true)
+    let findShim = """
+      #!/bin/sh
+      for argument in "$@"; do
+        if [ "$argument" = "-mindepth" ]; then
+          exit 1
+        fi
+      done
+      exec /usr/bin/find "$@"
+      """
+    let findPath = (fakeBin as NSString).appendingPathComponent("find")
+    try findShim.write(toFile: findPath, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o755], ofItemAtPath: findPath)
+
+    let inheritedPath = TestGlobalLock.withLock {
+      ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+    }
+    let result = await runHelper(
+      directory: directory,
+      environment: [
+        "SWIFT_MK_CODELOAD_BASE": server.codeloadBase,
+        "PATH": fakeBin + ":" + inheritedPath,
+      ]
+    )
+
+    #expect(
+      result.status != 0,
+      "a failed preserve enumeration must fail the provision, not silently drop files")
+    #expect(
+      readMakeFile(directory, "build.lock") == "live lock\n",
+      "build.lock must survive a provision that could not enumerate what to preserve")
   }
 }
 
@@ -203,10 +198,9 @@ func helperFailsWhenPreservingAGeneratedFileCannotBeCopied() async throws {
     try writeMakeFile(directory, "scripts/swift-mk-build.sh", "#!/usr/bin/env bash\nexit 0\n")
     try writeMakeFile(directory, "build.lock", "warm lock\n")
     let lockPath = makePath(directory, "build.lock")
-    try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: lockPath)
-    defer {
-      try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: lockPath)
-    }
+    try FileManager.default.setAttributes(
+      [.posixPermissions: unreadableFileMode], ofItemAtPath: lockPath)
+    defer { restorePermissions(writableFileMode, atPath: lockPath) }
 
     let result = await runHelper(
       directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
@@ -242,7 +236,7 @@ func readMarker(_ directory: String) -> [String: String] {
   var fields: [String: String] = [:]
   for line in body.split(separator: "\n") {
     let parts = line.split(separator: "=", maxSplits: 1)
-    if parts.count == 2 {
+    if parts.count == markerKeyValuePartCount {
       fields[String(parts[0])] = String(parts[1])
     }
   }
@@ -494,7 +488,7 @@ func helperForceProvisionsWhenValidationTimesOutAndMarkerIsStale() async throws 
     try warmSnapshot(directory)
     try writeMarker(directory, etag: "\"cached\"", age: staleMarkerAge)
     server.stall(5)
-    server.trickle(bytesPerSecond: 2048)
+    server.trickle(bytesPerSecond: slowButProgressingRate)
 
     let result = await runHelper(
       directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])

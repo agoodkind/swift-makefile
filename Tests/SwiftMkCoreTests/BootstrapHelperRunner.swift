@@ -82,7 +82,17 @@ enum BootstrapHelperRunner {
     let errPipe = Pipe()
     process.standardOutput = outPipe
     process.standardError = errPipe
-    try? process.run()
+    do {
+      try process.run()
+    } catch {
+      // A spawn that never started has no exit status of its own, so report the
+      // launch failure rather than letting it read as a helper failure.
+      return Result(
+        stdout: "",
+        stderr: "test: could not launch the bootstrap helper: \(error)",
+        status: -1
+      )
+    }
     let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
     let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
