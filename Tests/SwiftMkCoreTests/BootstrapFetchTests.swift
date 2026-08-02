@@ -692,6 +692,11 @@ func helperReportsRealReasonWhenValidationTempFileCannotBeCreated() async throws
       ])
     #expect(result.status != 0)
     #expect(!result.stderr.contains("serving the .make snapshot validated"))
-    #expect(result.stderr.contains("could not create a temporary file for validation"))
+    // The concurrent-parse lock also lives under TMPDIR and is acquired before
+    // validation ever runs, so a broken TMPDIR now fails at the lock, with its
+    // own message naming the local cause. What this test locks is the property,
+    // not the wording: a broken TMPDIR must fail loudly with a local-setup
+    // reason and must never be narrated as upstream being unreachable.
+    #expect(result.stderr.contains("local setup problem"))
   }
 }

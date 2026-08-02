@@ -140,6 +140,16 @@ extension EnvironmentSerialized {
       run(["config", "user.email", "test@example.com"], in: directory)
       run(["config", "user.name", "Test"], in: directory)
       run(["config", "commit.gpgsign", "false"], in: directory)
+      // A host's global core.hooksPath applies to every repository, including
+      // this throwaway fixture. One observed hook blocks any commit on a branch
+      // named `main`, which is exactly the branch these fixtures commit to, so
+      // the fixture silently ended up with zero commits and the assertions
+      // compared against the literal string "HEAD". A repo-local hooksPath
+      // pointing at an empty directory overrides the global one and keeps the
+      // fixture hermetic on any machine.
+      let emptyHooks = directory.appendingPathComponent(".git/no-hooks", isDirectory: true)
+      try FileManager.default.createDirectory(at: emptyHooks, withIntermediateDirectories: true)
+      run(["config", "core.hooksPath", emptyHooks.path], in: directory)
     }
 
     private func writeFile(_ directory: URL, _ name: String, _ body: String) throws {
