@@ -10,7 +10,9 @@ Stable tags use `26.7.26`, `26.7.26-r1`, and later same-day revisions. Stable DM
 
 Every distributable build keeps `CFBundleShortVersionString` at the base calendar version. `CFBundleVersion` combines `yyyyMMddHHmm` with the six-digit `GITHUB_RUN_NUMBER`, such as `202607261030000087`. The workflow rejects missing, nonnumeric, zero, and more-than-six-digit run numbers.
 
-A stable release normally selects a published pre-release through `candidate-tag`. The selected pre-release must contain an asset matching `candidate-asset-pattern`. An emergency stable release can select `source-sha` only when `allow-source-sha` is `true`. The workflow rejects missing and conflicting source selections.
+`release-on-merge` defaults to `manual`, so a main-branch push does not publish a release. Set it to `prerelease` or `stable` to opt into publishing after a merge. Pull requests remain pre-release dry runs.
+
+A manual stable dispatch with no source override releases the selected workflow ref. `candidate-tag` selects a published pre-release containing an asset matching `candidate-asset-pattern`. `source-sha` selects a commit only when `allow-source-sha` is `true`. The workflow rejects conflicting source overrides.
 
 The workflow checks out the resolved source SHA before it builds. It publishes `prerelease` builds as GitHub pre-releases and `stable` builds as normal GitHub releases. Releases serialize per repository without cancelling an active release.
 

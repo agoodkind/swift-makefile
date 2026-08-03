@@ -6,6 +6,8 @@ The engine owns the reusable CI workflow. A pull request receives one required V
 
 A consumer calls [_ci.yml](../../.github/workflows/_ci.yml), which runs Verify and optional Extra Targets. Verify runs the configured verify build and test commands, defaulting to the repo's normal build and test when they are unset. When a repo sets them to a combined build-with-tests plus a test-without-building pair, the product and test targets compile once and the tests reuse that build; when they are unset, Verify runs the normal build and then the normal test, so the product compiles for the build and again for the test. Either way Verify then runs SwiftLint, Format, Complexity, Swiftcheck Extra, and Audit against the built tree with no further product compile. Dead-code analysis remains a local gate because it requires its own compile. The jobs use the shared [ci-gate action](../../.github/actions/ci-gate/action.yml), so a consumer declares setup inputs and an optional extra-targets list.
 
+The reusable release workflow defaults `release-on-merge` to `manual`, so a main-branch push does not publish. A consumer sets it to `prerelease` or `stable` to opt into publishing after a merge. Manual dispatch selects a release track. A stable dispatch with no source override releases the selected workflow ref.
+
 ## Skip detector
 
 CI skips Verify when a pull request changes nothing the build or lint family depends on. The required Verify check still reports green, and the decision requires no consumer configuration.

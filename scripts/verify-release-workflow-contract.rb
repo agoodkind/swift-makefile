@@ -110,6 +110,9 @@ workflow_inputs = triggers.dig("workflow_call", "inputs")
 release_track_input = workflow_inputs.fetch("release-track")
 require_value(release_track_input["default"], "", "legacy release track default")
 require_value(release_track_input["required"], nil, "legacy release track requirement")
+release_on_merge_input = workflow_inputs.fetch("release-on-merge")
+require_value(release_on_merge_input["default"], "manual", "release on merge default")
+require_value(release_on_merge_input["required"], nil, "release on merge requirement")
 allow_source_sha_input = workflow_inputs.fetch("allow-source-sha")
 require_value(allow_source_sha_input["default"], false, "legacy source SHA acknowledgement default")
 require_value(allow_source_sha_input["required"], nil, "legacy source SHA acknowledgement requirement")
@@ -118,20 +121,28 @@ require_value(workflow.dig("concurrency", "group"), "release-${{ github.reposito
 require_value(workflow.dig("concurrency", "cancel-in-progress"), false, "concurrency cancellation")
 
 source_job = workflow.dig("jobs", "source")
+require_value(source_job.dig("outputs", "enabled"), "${{ steps.resolve.outputs.enabled }}", "source enabled output")
+require_value(source_job.dig("outputs", "release_track"), "${{ steps.resolve.outputs.release_track }}", "source release track output")
 source_checkout = source_job.fetch("steps").find { |step| step["uses"] == "actions/checkout@v7" }
 require_value(source_checkout.dig("with", "repository"), "${{ job.workflow_repository }}", "source resolver repository")
 require_value(source_checkout.dig("with", "ref"), "${{ job.workflow_sha }}", "source resolver revision")
 require_value(source_checkout.dig("with", "path"), ".swift-makefile", "source resolver path")
 source_step = find_step(source_job.fetch("steps"), "Resolve source")
 require_value(source_step.fetch("run"), "bash .swift-makefile/scripts/release-source.sh", "source resolver")
+require_value(source_step.dig("env", "RELEASE_ON_MERGE"), "${{ inputs.release-on-merge }}", "source merge policy")
+
+plan_runners_job = workflow.dig("jobs", "plan-runners")
+require_value(plan_runners_job.fetch("if"), "${{ needs.source.outputs.enabled == 'true' }}", "release runner routing gate")
 
 meta_job = workflow.dig("jobs", "meta")
+require_value(meta_job.fetch("if"), "${{ needs.source.outputs.enabled == 'true' }}", "release metadata gate")
 meta_engine_checkout = find_step(meta_job.fetch("steps"), "Check out the swift-makefile engine")
 require_value(meta_engine_checkout.fetch("uses"), "actions/checkout@v7", "metadata engine checkout action")
 require_value(meta_engine_checkout.dig("with", "repository"), "${{ job.workflow_repository }}", "metadata engine repository")
 require_value(meta_engine_checkout.dig("with", "ref"), "${{ job.workflow_sha }}", "metadata engine revision")
 require_value(meta_engine_checkout.dig("with", "path"), ".swift-makefile", "metadata engine path")
 metadata_step = find_step(meta_job.fetch("steps"), "Compute release metadata")
+require_value(metadata_step.dig("env", "RELEASE_TRACK"), "${{ needs.source.outputs.release_track }}", "resolved metadata release track")
 verify_local_metadata_engine(repository_root, metadata_step)
 workflow_source = File.read(workflow_path)
 abort "release workflow contract: unsupported expression replace is present" if workflow_source.include?("replace(")
@@ -168,15 +179,20 @@ expected_dispatch_inputs = [
     "allow-source-sha",
     "candidate-asset-pattern",
     "candidate-tag",
+    "release-track",
     "source-sha",
 ]
 require_value(dispatch_inputs.keys.sort, expected_dispatch_inputs.sort, "stable promotion inputs")
+require_value(dispatch_inputs.dig("release-track", "default"), "stable", "manual release track default")
+require_value(dispatch_inputs.dig("release-track", "type"), "choice", "manual release track type")
+require_value(dispatch_inputs.dig("release-track", "options"), ["stable", "prerelease"], "manual release track options")
 release_job = caller.dig("jobs", "release")
 require_value(
     release_job.dig("with", "release-track"),
-    "${{ github.event_name == 'workflow_dispatch' && 'stable' || 'prerelease' }}",
+    "${{ github.event_name == 'pull_request' && 'prerelease' || github.event_name == 'workflow_dispatch' && inputs.release-track || '' }}",
     "caller release track selection",
 )
+require_value(release_job.dig("with", "release-on-merge"), "stable", "caller release on merge policy")
 
 release_makefile_path = File.join(repository_root, "swift-release.mk")
 release_makefile = File.read(release_makefile_path)
