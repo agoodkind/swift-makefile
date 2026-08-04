@@ -43,10 +43,10 @@ case "${GITHUB_EVENT_NAME:-}" in
 esac
 
 stable_tag_is_available() {
-    local git_error
-    local git_status
+    local remote_ref
     local release_view_error
     local tag
+    local tag_query_result
 
     tag=$1
     if release_view_error="$(gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" 2>&1)"; then
@@ -56,16 +56,18 @@ stable_tag_is_available() {
         printf 'could not determine whether stable release %s exists: %s\n' "${tag}" "${release_view_error}" >&2
         return 2
     fi
-    if git_error="$(git ls-remote --exit-code --tags origin "refs/tags/${tag}" 2>&1)"; then
-        return 1
-    else
-        git_status=$?
+    if ! tag_query_result="$(
+        gh api --paginate "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${tag}" --jq '.[].ref' 2>&1
+    )"; then
+        printf 'could not determine whether stable tag %s exists: %s\n' "${tag}" "${tag_query_result}" >&2
+        return 2
     fi
-    if [[ "${git_status}" -eq 2 ]]; then
-        return 0
-    fi
-    printf 'could not determine whether stable tag %s exists: %s\n' "${tag}" "${git_error}" >&2
-    return 2
+    while IFS= read -r remote_ref; do
+        if [[ "${remote_ref}" == "refs/tags/${tag}" ]]; then
+            return 1
+        fi
+    done <<< "${tag_query_result}"
+    return 0
 }
 
 next_stable_tag() {

@@ -241,6 +241,23 @@ enum ReleaseSourceScriptTests {
     }
   }
 
+  @Test
+  static func ignoresAPrefixOnlyRemoteTagMatch() throws {
+    try withHarness { harness in
+      let result = try harness.run(
+        track: "stable",
+        candidateTag: "",
+        sourceSHA: "",
+        allowSourceSHA: "false",
+        remoteTags: ["26.7.26-r10"])
+      let resolution = try harness.resolution()
+
+      #expect(result.status == 0)
+      #expect(resolution.track == .stable)
+      #expect(resolution.releaseTag == Harness.stableTag)
+    }
+  }
+
   private static func withHarness(_ body: (Harness) throws -> Void) throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
       "swift-mk-release-source-\(UUID().uuidString)", isDirectory: true)
@@ -276,7 +293,6 @@ private struct Harness {
     outputFile = directory.appendingPathComponent("output")
     try FileManager.default.createDirectory(at: binDirectory, withIntermediateDirectories: true)
     try writeFakeDate()
-    try writeFakeGit()
     try writeFakeGitHub()
   }
 
@@ -402,6 +418,16 @@ private struct Harness {
           *"release view 26.7.26"*)
               exit 0
               ;;
+          *"api"*"repos/example/repo/git/matching-refs/tags/"*)
+              tag="${3##*/}"
+              if [[ -n "${REMOTE_TAGS}" ]]; then
+                  while IFS= read -r remote_tag; do
+                      if [[ "${remote_tag}" == "${tag}"* ]]; then
+                          printf 'refs/tags/%s\\n' "${remote_tag}"
+                      fi
+                  done < <(printf '%s\\n' "${REMOTE_TAGS}" | tr ',' '\\n')
+              fi
+              ;;
           *"api repos/example/repo/commits/26.7.26-pre.202607261030+abc1234"*)
               printf 'candidate-commit-sha\\n'
               ;;
@@ -413,31 +439,6 @@ private struct Harness {
               ;;
           *)
               printf 'unexpected gh call: %s\\n' "$*" >&2
-              exit 2
-              ;;
-      esac
-      """
-    try script.write(to: executable, atomically: true, encoding: .utf8)
-    try FileManager.default.setAttributes(
-      [.posixPermissions: NSNumber(value: 0o755)], ofItemAtPath: executable.path)
-  }
-
-  private func writeFakeGit() throws {
-    let executable = binDirectory.appendingPathComponent("git")
-    let script = """
-      #!/usr/bin/env bash
-      set -euo pipefail
-
-      if [[ "$1" != "ls-remote" || "$2" != "--exit-code" || "$3" != "--tags" || "$4" != "origin" ]]; then
-          printf 'unexpected git call: %s\\n' "$*" >&2
-          exit 1
-      fi
-      tag="${5#refs/tags/}"
-      case ",${REMOTE_TAGS}," in
-          *",${tag},"*)
-              printf 'remote-sha\\trefs/tags/%s\\n' "${tag}"
-              ;;
-          *)
               exit 2
               ;;
       esac
