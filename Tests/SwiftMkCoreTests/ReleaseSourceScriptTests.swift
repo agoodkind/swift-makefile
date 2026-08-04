@@ -365,7 +365,8 @@ private struct Harness {
     var searchDirectory = (#filePath as NSString).deletingLastPathComponent
     while searchDirectory != "/" {
       let candidate =
-        (searchDirectory as NSString).appendingPathComponent("scripts/release-source.sh")
+        (searchDirectory as NSString).appendingPathComponent(
+          ".github/actions/resolve-release-source/resolve.sh")
       if FileManager.default.fileExists(atPath: candidate) {
         return candidate
       }
