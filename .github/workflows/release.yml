@@ -7,6 +7,14 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      release-track:
+        description: Release track.
+        required: false
+        default: stable
+        type: choice
+        options:
+          - stable
+          - prerelease
       candidate-tag:
         description: Published pre-release tag to promote.
         required: false
@@ -51,7 +59,8 @@ jobs:
     uses: ./.github/workflows/_release.yml
     with:
       ephemeral: ${{ github.event_name == 'pull_request' }}
-      release-track: ${{ github.event_name == 'workflow_dispatch' && 'stable' || 'prerelease' }}
+      release-track: ${{ github.event_name == 'pull_request' && 'prerelease' || github.event_name == 'workflow_dispatch' && inputs.release-track || '' }}
+      release-on-merge: stable
       candidate-tag: ${{ inputs.candidate-tag }}
       source-sha: ${{ inputs.source-sha }}
       allow-source-sha: ${{ inputs.allow-source-sha || false }}
