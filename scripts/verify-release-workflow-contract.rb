@@ -128,7 +128,11 @@ require_value(source_checkout.dig("with", "repository"), "${{ job.workflow_repos
 require_value(source_checkout.dig("with", "ref"), "${{ job.workflow_sha }}", "source resolver revision")
 require_value(source_checkout.dig("with", "path"), ".swift-makefile", "source resolver path")
 source_step = find_step(source_job.fetch("steps"), "Resolve source")
-require_value(source_step.fetch("run"), "bash .swift-makefile/scripts/release-source.sh", "source resolver")
+require_value(
+  source_step.fetch("run"),
+  "bash .swift-makefile/.github/actions/resolve-release-source/resolve.sh",
+  "source resolver"
+)
 require_value(source_step.dig("env", "RELEASE_ON_MERGE"), "${{ inputs.release-on-merge }}", "source merge policy")
 
 plan_runners_job = workflow.dig("jobs", "plan-runners")
