@@ -218,6 +218,12 @@ name: Release
 on:
   push: { branches: [main] }
   workflow_dispatch:
+    inputs:
+      release-track:
+        description: Release track
+        default: stable
+        type: choice
+        options: [stable, prerelease]
 permissions:
   contents: write
   id-token: write
@@ -227,12 +233,16 @@ jobs:
   release:
     uses: agoodkind/swift-makefile/.github/workflows/_release.yml@main
     with:
+      release-on-merge: manual
+      release-track: ${{ inputs.release-track }}
       signing-identity-name: "Developer ID Application: ... (TEAMID)"
       apple-team-id: TEAMID
       notarize-pattern: "*.dmg"
       sbom-subject-path: "Products/My.app"
     secrets: inherit
 ```
+
+`release-on-merge` defaults to `manual`, so main-branch pushes do not publish. Set it to `prerelease` or `stable` to opt into publishing after a merge. A stable dispatch with no source override releases the selected workflow ref.
 
 `_release.yml` runs meta, build, notarize, publish. The make layer owns the logic through `swift-release.mk`: set `SWIFT_MK_MODULES := swift-build.mk swift-release.mk` and define `SWIFT_MK_RELEASE_BUILD_CMD` to populate `dist/` (the workflow provides `RELEASE_TAG`, `MARKETING_VERSION`, `CURRENT_PROJECT_VERSION`, and signing variables). Signing, notarization, SBOM, and attestations all no-op silently when their secrets or inputs are absent.
 

@@ -293,8 +293,6 @@ public enum VersionMeta {
     if hasSourceSHA {
       throw VersionError.invalidSourceSelection("source-sha requires allow-source-sha=true")
     }
-    throw VersionError.invalidSourceSelection(
-      "stable builds require candidate-tag or acknowledged source-sha")
   }
 
   /// A run number is only usable when it parses as a base-ten unsigned integer.

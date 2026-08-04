@@ -5,6 +5,42 @@ set -euo pipefail
 release_tag=""
 source_ref=""
 source_sha="${GITHUB_SHA}"
+enabled="true"
+release_track="${RELEASE_TRACK}"
+release_on_merge="${RELEASE_ON_MERGE:-manual}"
+
+case "${release_on_merge}" in
+    manual | prerelease | stable)
+        ;;
+    *)
+        echo "release-on-merge must be manual, prerelease, or stable" >&2
+        exit 1
+        ;;
+esac
+
+case "${GITHUB_EVENT_NAME:-}" in
+    pull_request)
+        release_track="prerelease"
+        ;;
+    workflow_dispatch)
+        if [[ -z "${release_track}" ]]; then
+            release_track="stable"
+        fi
+        ;;
+    push)
+        if [[ "${GITHUB_REF:-}" == "refs/heads/main" ]]; then
+            case "${release_on_merge}" in
+                manual)
+                    enabled="false"
+                    release_track=""
+                    ;;
+                prerelease | stable)
+                    release_track="${release_on_merge}"
+                    ;;
+            esac
+        fi
+        ;;
+esac
 
 next_stable_tag() {
     local base_tag
@@ -36,15 +72,17 @@ next_stable_tag() {
     printf '%s-r%s\n' "${base_tag}" "${revision}"
 }
 
-if [[ -z "${RELEASE_TRACK}" ]]; then
+if [[ "${enabled}" != "true" ]]; then
     :
-elif [[ "${RELEASE_TRACK}" == "prerelease" ]]; then
+elif [[ -z "${release_track}" ]]; then
+    :
+elif [[ "${release_track}" == "prerelease" ]]; then
     if [[ -n "${CANDIDATE_TAG}" || -n "${SOURCE_SHA}" || "${ALLOW_SOURCE_SHA}" == "true" ]]; then
         echo "pre-release builds use the workflow commit and cannot select a stable source" >&2
         exit 1
     fi
     source_ref="${GITHUB_SHA}"
-elif [[ "${RELEASE_TRACK}" == "stable" ]]; then
+elif [[ "${release_track}" == "stable" ]]; then
     if [[ -n "${CANDIDATE_TAG}" && -n "${SOURCE_SHA}" ]]; then
         echo "candidate-tag and source-sha conflict" >&2
         exit 1
@@ -74,8 +112,9 @@ elif [[ "${RELEASE_TRACK}" == "stable" ]]; then
         echo "source-sha requires allow-source-sha=true" >&2
         exit 1
     else
-        echo "stable releases require candidate-tag or acknowledged source-sha" >&2
-        exit 1
+        source_ref="${GITHUB_SHA}"
+        utc_calendar_tag="$(date -u '+%y.%-m.%-d')"
+        release_tag="$(next_stable_tag "${utc_calendar_tag}")"
     fi
 else
     echo "release-track must be prerelease or stable" >&2
@@ -86,6 +125,8 @@ if [[ -n "${source_ref}" ]]; then
     source_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${source_ref}" --jq .sha)"
 fi
 {
+    echo "enabled=${enabled}"
+    echo "release_track=${release_track}"
     echo "source_sha=${source_sha}"
     echo "release_tag=${release_tag}"
 } >> "${GITHUB_OUTPUT}"

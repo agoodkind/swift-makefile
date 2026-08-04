@@ -21,6 +21,9 @@ on:
       release-track:
         type: string
         default: ""
+      release-on-merge:
+        type: string
+        default: manual
       candidate-tag:
         type: string
         default: ""
@@ -157,6 +160,8 @@ jobs:
     permissions:
       contents: read
     outputs:
+      enabled: ${{ steps.resolve.outputs.enabled }}
+      release_track: ${{ steps.resolve.outputs.release_track }}
       source_sha: ${{ steps.resolve.outputs.source_sha }}
       release_tag: ${{ steps.resolve.outputs.release_tag }}
     steps:
@@ -171,6 +176,7 @@ jobs:
         shell: bash
         env:
           RELEASE_TRACK: ${{ inputs.release-track }}
+          RELEASE_ON_MERGE: ${{ inputs.release-on-merge }}
           CANDIDATE_TAG: ${{ inputs.candidate-tag }}
           SOURCE_SHA: ${{ inputs.source-sha }}
           ALLOW_SOURCE_SHA: ${{ inputs.allow-source-sha }}
@@ -185,6 +191,8 @@ jobs:
   # local action after checkout; consumers fetch it via @main.
   plan-runners:
     name: Route Release Job
+    needs: source
+    if: ${{ needs.source.outputs.enabled == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
@@ -216,6 +224,7 @@ jobs:
   meta:
     name: Meta
     needs: source
+    if: ${{ needs.source.outputs.enabled == 'true' }}
     runs-on: ubuntu-latest
     # Run in the Swift toolchain image so the prebuilt Linux swift-mk can load
     # libIndexStore.so.21.0, which ships only inside the toolchain. On a bare
@@ -301,7 +310,7 @@ jobs:
       - name: Compute release metadata
         id: meta
         env:
-          RELEASE_TRACK: ${{ inputs.release-track }}
+          RELEASE_TRACK: ${{ needs.source.outputs.release_track }}
           RELEASE_TAG: ${{ needs.source.outputs.release_tag }}
           SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
           SWIFT_MK_DEV_DIR: .swift-makefile

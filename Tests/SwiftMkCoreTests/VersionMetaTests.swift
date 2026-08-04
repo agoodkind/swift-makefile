@@ -145,6 +145,12 @@ enum VersionMetaTests {
   }
 
   @Test
+  static func stableSourceSelectionUsesTheSelectedWorkflowRef() throws {
+    try VersionMeta.validateSource(
+      track: .stable, candidateTag: "", sourceSHA: "", allowSourceSHA: false)
+  }
+
+  @Test
   static func prereleaseSourceSelectionUsesTheWorkflowCommit() throws {
     // Rejecting an empty pre-release selection would prevent the workflow commit
     // from being the pre-release source.
