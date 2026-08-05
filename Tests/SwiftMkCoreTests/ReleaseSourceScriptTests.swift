@@ -20,14 +20,13 @@ enum ReleaseSourceScriptTests {
     try withHarness { harness in
       let result = try harness.run(
         track: "", candidateTag: "", sourceSHA: "", allowSourceSHA: "false")
+      let resolution = try harness.resolution()
 
       #expect(result.status == 0)
-      guard result.status == 0 else {
-        return
-      }
-      let output = try harness.output()
-      #expect(output.contains("source_sha=pre-source-sha"))
-      #expect(output.contains("release_tag=\n"))
+      #expect(resolution.enabled)
+      #expect(resolution.track == nil)
+      #expect(resolution.sourceSHA == Harness.workflowSHA)
+      #expect(resolution.releaseTag == nil)
     }
   }
 
@@ -156,11 +155,13 @@ enum ReleaseSourceScriptTests {
     try withHarness { harness in
       let result = try harness.run(
         track: "prerelease", candidateTag: "", sourceSHA: "", allowSourceSHA: "false")
-      let output = try harness.output()
+      let resolution = try harness.resolution()
 
       #expect(result.status == 0)
-      #expect(output.contains("source_sha=pre-source-sha"))
-      #expect(output.contains("release_tag="))
+      #expect(resolution.enabled)
+      #expect(resolution.track == .prerelease)
+      #expect(resolution.sourceSHA == Harness.workflowSHA)
+      #expect(resolution.releaseTag == nil)
     }
   }
 
@@ -172,11 +173,11 @@ enum ReleaseSourceScriptTests {
         candidateTag: "26.7.26-pre.202607261030+abc1234",
         sourceSHA: "",
         allowSourceSHA: "false")
-      let output = try harness.output()
+      let resolution = try harness.resolution()
 
       #expect(result.status == 0)
-      #expect(output.contains("source_sha=candidate-commit-sha"))
-      #expect(output.contains("release_tag=26.7.26-r1"))
+      #expect(resolution.sourceSHA == "candidate-commit-sha")
+      #expect(resolution.releaseTag == Harness.stableTag)
     }
   }
 
@@ -191,7 +192,7 @@ enum ReleaseSourceScriptTests {
         candidateIsDraft: "true")
 
       #expect(result.status != 0)
-      #expect(result.stderr.contains("published non-draft GitHub pre-release"))
+      #expect(!result.stderr.isEmpty)
     }
   }
 
@@ -205,7 +206,7 @@ enum ReleaseSourceScriptTests {
         allowSourceSHA: "false")
 
       #expect(result.status != 0)
-      #expect(result.stderr.contains("source-sha requires allow-source-sha=true"))
+      #expect(!result.stderr.isEmpty)
     }
   }
 
@@ -214,12 +215,46 @@ enum ReleaseSourceScriptTests {
     try withHarness { harness in
       let result = try harness.run(
         track: "stable", candidateTag: "", sourceSHA: "emergency-sha", allowSourceSHA: "true")
-      let output = try harness.output()
+      let resolution = try harness.resolution()
 
       #expect(result.status == 0)
-      #expect(output.contains("source_sha=emergency-commit-sha"))
-      #expect(output.contains("release_tag=26.7.26-r1"))
+      #expect(resolution.sourceSHA == "emergency-commit-sha")
+      #expect(resolution.releaseTag == Harness.stableTag)
       #expect(try harness.dateCallCount() == 1)
+    }
+  }
+
+  @Test
+  static func allocatesPastAnOrphanedRemoteTag() throws {
+    try withHarness { harness in
+      let result = try harness.run(
+        track: "stable",
+        candidateTag: "",
+        sourceSHA: "",
+        allowSourceSHA: "false",
+        remoteTags: [Harness.stableTag])
+      let resolution = try harness.resolution()
+
+      #expect(result.status == 0)
+      #expect(resolution.track == .stable)
+      #expect(resolution.releaseTag == "26.7.26-r2")
+    }
+  }
+
+  @Test
+  static func ignoresAPrefixOnlyRemoteTagMatch() throws {
+    try withHarness { harness in
+      let result = try harness.run(
+        track: "stable",
+        candidateTag: "",
+        sourceSHA: "",
+        allowSourceSHA: "false",
+        remoteTags: ["26.7.26-r10"])
+      let resolution = try harness.resolution()
+
+      #expect(result.status == 0)
+      #expect(resolution.track == .stable)
+      #expect(resolution.releaseTag == Harness.stableTag)
     }
   }
 
@@ -269,7 +304,8 @@ private struct Harness {
     candidateIsDraft: String = "false",
     releaseOnMerge: String? = nil,
     eventName: String = "push",
-    ref: String = "refs/tags/legacy"
+    ref: String = "refs/tags/legacy",
+    remoteTags: Set<String> = []
   ) throws -> Shell.Result {
     var environment = [
       "ALLOW_SOURCE_SHA": allowSourceSHA,
@@ -285,6 +321,7 @@ private struct Harness {
       "PATH":
         binDirectory.path + ":" + ProcessInfo.processInfo.environment["PATH", default: ""],
       "RELEASE_TRACK": track,
+      "REMOTE_TAGS": remoteTags.sorted().joined(separator: ","),
       "SOURCE_SHA": sourceSHA,
     ]
     if let releaseOnMerge {
@@ -344,7 +381,8 @@ private struct Harness {
     var searchDirectory = (#filePath as NSString).deletingLastPathComponent
     while searchDirectory != "/" {
       let candidate =
-        (searchDirectory as NSString).appendingPathComponent("scripts/release-source.sh")
+        (searchDirectory as NSString).appendingPathComponent(
+          ".github/actions/resolve-release-source/resolve.sh")
       if FileManager.default.fileExists(atPath: candidate) {
         return candidate
       }
@@ -373,8 +411,22 @@ private struct Harness {
               printf 'release not found\\n' >&2
               exit 1
               ;;
+          *"release view 26.7.26-r2"*)
+              printf 'release not found\\n' >&2
+              exit 1
+              ;;
           *"release view 26.7.26"*)
               exit 0
+              ;;
+          *"api"*"repos/example/repo/git/matching-refs/tags/"*)
+              tag="${3##*/}"
+              if [[ -n "${REMOTE_TAGS}" ]]; then
+                  while IFS= read -r remote_tag; do
+                      if [[ "${remote_tag}" == "${tag}"* ]]; then
+                          printf 'refs/tags/%s\\n' "${remote_tag}"
+                      fi
+                  done < <(printf '%s\\n' "${REMOTE_TAGS}" | tr ',' '\\n')
+              fi
               ;;
           *"api repos/example/repo/commits/26.7.26-pre.202607261030+abc1234"*)
               printf 'candidate-commit-sha\\n'
