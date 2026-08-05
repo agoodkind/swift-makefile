@@ -42,34 +42,56 @@ case "${GITHUB_EVENT_NAME:-}" in
         ;;
 esac
 
-next_stable_tag() {
-    local base_tag
+stable_tag_is_available() {
+    local remote_ref
     local release_view_error
+    local tag
+    local tag_query_result
+
+    tag=$1
+    if release_view_error="$(gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" 2>&1)"; then
+        return 1
+    fi
+    if [[ "${release_view_error}" != *"release not found"* ]]; then
+        printf 'could not determine whether stable release %s exists: %s\n' "${tag}" "${release_view_error}" >&2
+        return 2
+    fi
+    if ! tag_query_result="$(
+        gh api --paginate "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${tag}" --jq '.[].ref' 2>&1
+    )"; then
+        printf 'could not determine whether stable tag %s exists: %s\n' "${tag}" "${tag_query_result}" >&2
+        return 2
+    fi
+    while IFS= read -r remote_ref; do
+        if [[ "${remote_ref}" == "refs/tags/${tag}" ]]; then
+            return 1
+        fi
+    done <<< "${tag_query_result}"
+    return 0
+}
+
+next_stable_tag() {
+    local availability_status
+    local base_tag
+    local candidate_tag
     local revision
 
     base_tag=$1
-    if ! release_view_error="$(gh release view "${base_tag}" --repo "${GITHUB_REPOSITORY}" 2>&1)"; then
-        if [[ "${release_view_error}" == *"release not found"* ]]; then
-            printf '%s\n' "${base_tag}"
-            return 0
-        fi
-        printf 'could not determine whether stable release %s exists: %s\n' "${base_tag}" "${release_view_error}" >&2
-        return 1
-    fi
-
-    revision=1
+    candidate_tag="${base_tag}"
+    revision=0
     while true; do
-        if release_view_error="$(gh release view "${base_tag}-r${revision}" --repo "${GITHUB_REPOSITORY}" 2>&1)"; then
-            revision=$((revision + 1))
-            continue
+        if stable_tag_is_available "${candidate_tag}"; then
+            printf '%s\n' "${candidate_tag}"
+            return 0
+        else
+            availability_status=$?
         fi
-        if [[ "${release_view_error}" == *"release not found"* ]]; then
-            break
+        if [[ "${availability_status}" -ne 1 ]]; then
+            return "${availability_status}"
         fi
-        printf 'could not determine whether stable release %s-r%s exists: %s\n' "${base_tag}" "${revision}" "${release_view_error}" >&2
-        return 1
+        revision=$((revision + 1))
+        candidate_tag="${base_tag}-r${revision}"
     done
-    printf '%s-r%s\n' "${base_tag}" "${revision}"
 }
 
 if [[ "${enabled}" != "true" ]]; then

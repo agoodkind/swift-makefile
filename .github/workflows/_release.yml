@@ -181,7 +181,7 @@ jobs:
           SOURCE_SHA: ${{ inputs.source-sha }}
           ALLOW_SOURCE_SHA: ${{ inputs.allow-source-sha }}
           CANDIDATE_ASSET_PATTERN: ${{ inputs.candidate-asset-pattern }}
-        run: bash .swift-makefile/scripts/release-source.sh
+        run: bash .swift-makefile/.github/actions/resolve-release-source/resolve.sh
 
   # Decide pool-or-hosted for the macOS jobs, reusing the same capacity check the
   # CI gates use, so release is infra-agnostic. This runs the plan-runner action
