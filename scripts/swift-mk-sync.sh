@@ -51,6 +51,8 @@ snapshot_extract() {
     local tree
     local temp_dir
     local ok
+    local codeload_base
+    local etag_value
 
     mkdir -p .make
     make_dir="$(cd .make && pwd)"
@@ -70,12 +72,16 @@ snapshot_extract() {
 
     temp_dir="$(mktemp -d)"
     ok=""
+    # Internal override, in the same category as SWIFT_MK_API_REPO and
+    # SWIFT_MK_API_REF: tests point it at a local server, consumers never set it.
+    codeload_base="${SWIFT_MK_CODELOAD_BASE:-https://codeload.github.com}"
     if command -v gh >/dev/null 2>&1 \
         && gh api "repos/${SWIFT_MK_API_REPO}/tarball/${SWIFT_MK_API_REF}" > "${temp_dir}/snapshot.tar.gz" 2>/dev/null \
         && [[ -s "${temp_dir}/snapshot.tar.gz" ]]; then
         ok=1
     elif curl -fsSL --connect-timeout 5 --max-time 60 \
-        "https://codeload.github.com/${SWIFT_MK_API_REPO}/tar.gz/${SWIFT_MK_API_REF}" \
+        -D "${temp_dir}/headers" \
+        "${codeload_base}/${SWIFT_MK_API_REPO}/tar.gz/${SWIFT_MK_API_REF}" \
         -o "${temp_dir}/snapshot.tar.gz" \
         && [[ -s "${temp_dir}/snapshot.tar.gz" ]]; then
         ok=1
@@ -87,7 +93,20 @@ snapshot_extract() {
     fi
     snapshot_clear_engine "${make_dir}"
     tar -xz --strip-components=1 -C "${make_dir}" -f "${temp_dir}/snapshot.tar.gz"
-    printf "%s\n" "${SWIFT_MK_API_REF}" > "${make_dir}/.swift-mk-snapshot-ref"
+    # The same three-field marker scripts/swift-mk-bootstrap.sh writes, so the two
+    # writers cannot disagree: swift.mk's SWIFT_MK_SNAPSHOT_CURRENT check reads
+    # this etag field, not the bare ref name the marker used to hold. The gh path
+    # above never writes a headers file, so awk's "cannot open file" is expected
+    # here, not a real failure; 2>/dev/null only silences its message, not its
+    # nonzero exit, and that exit would otherwise trip `set -e` through the
+    # pipeline (pipefail) on this assignment. `|| true` keeps a missing headers
+    # file resolving to an empty etag_value instead of aborting the function.
+    etag_value=$(awk 'tolower($1) == "etag:" { print $2 }' "${temp_dir}/headers" 2>/dev/null | tr -d '\r' | tail -n 1) || true
+    {
+        printf 'ref=%s\n' "${SWIFT_MK_API_REF}"
+        printf 'etag=%s\n' "${etag_value}"
+        printf 'timestamp=%s\n' "${EPOCHSECONDS:-$(date +%s)}"
+    } > "${make_dir}/.swift-mk-snapshot-ref"
     rm -rf "${temp_dir}"
 }
 
