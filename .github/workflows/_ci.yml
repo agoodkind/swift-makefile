@@ -92,9 +92,23 @@ on:
         type: string
         default: agk-local-macos-26
     secrets:
+      # The two certificates a build can sign with. Set whichever ones this
+      # repository actually signs with; `signing-identity-name` decides which one
+      # a given build uses, so passing both is normal for a repository that signs
+      # its CI and its release differently.
+      #
+      # A repository whose CI runner is not a registered device cannot use
+      # development provisioning, so its CI signs with Apple Distribution and App
+      # Store profiles, which carry no device list. It still releases with
+      # Developer ID, because a downloadable app cannot be App Store signed. Such a
+      # repository sets both.
       APPLE_DEVELOPER_ID_P12_BASE64:
         required: false
       APPLE_DEVELOPER_ID_P12_PASSWORD:
+        required: false
+      APPLE_DISTRIBUTION_P12_BASE64:
+        required: false
+      APPLE_DISTRIBUTION_P12_PASSWORD:
         required: false
       APPLE_DEVELOPER_ID_PROFILE_BASE64:
         required: false
@@ -353,6 +367,8 @@ jobs:
           fetch-depth: ${{ inputs.fetch-depth }}
           apple-developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
           apple-developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          apple-distribution-p12-base64: ${{ secrets.APPLE_DISTRIBUTION_P12_BASE64 }}
+          apple-distribution-p12-password: ${{ secrets.APPLE_DISTRIBUTION_P12_PASSWORD }}
           apple-developer-id-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
           apple-notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
           apple-notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
@@ -400,6 +416,8 @@ jobs:
           fetch-depth: ${{ inputs.fetch-depth }}
           apple-developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
           apple-developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          apple-distribution-p12-base64: ${{ secrets.APPLE_DISTRIBUTION_P12_BASE64 }}
+          apple-distribution-p12-password: ${{ secrets.APPLE_DISTRIBUTION_P12_PASSWORD }}
           apple-developer-id-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
           apple-notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
           apple-notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
@@ -526,6 +544,8 @@ jobs:
           fetch-depth: ${{ inputs.fetch-depth }}
           apple-developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
           apple-developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          apple-distribution-p12-base64: ${{ secrets.APPLE_DISTRIBUTION_P12_BASE64 }}
+          apple-distribution-p12-password: ${{ secrets.APPLE_DISTRIBUTION_P12_PASSWORD }}
           apple-developer-id-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
           apple-notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
           apple-notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
@@ -573,6 +593,8 @@ jobs:
           fetch-depth: ${{ inputs.fetch-depth }}
           apple-developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
           apple-developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          apple-distribution-p12-base64: ${{ secrets.APPLE_DISTRIBUTION_P12_BASE64 }}
+          apple-distribution-p12-password: ${{ secrets.APPLE_DISTRIBUTION_P12_PASSWORD }}
           apple-developer-id-profile-base64: ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
           apple-notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
           apple-notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}

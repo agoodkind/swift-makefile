@@ -559,8 +559,10 @@ jobs:
         if: env.HAS_SIGNING == 'true'
         uses: agoodkind/swift-makefile/.github/actions/import-signing-cert@main
         with:
-          p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          # A release signs with Developer ID, whatever a consumer's CI signs with.
+          # An App Store certificate cannot sign something a person downloads.
+          developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
           identity-name: ${{ inputs.signing-identity-name }}
 
       - name: Install provisioning profile
