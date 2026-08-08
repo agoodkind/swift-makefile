@@ -92,12 +92,22 @@ runs:
       run: |
         set -euo pipefail
 
-        keychain_password="$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | dd bs=1 count=40 2>/dev/null)"
+        # One command, no pipe. Reading /dev/urandom through a pipe into a
+        # byte-counting reader makes the reader exit first, which kills the writer
+        # with a broken pipe; under `pipefail` that fails, and on a runner it hung
+        # instead. openssl reads its own randomness and stops on its own.
+        keychain_password="$(openssl rand -hex 24)"
         # Masked before it reaches any later step's environment, so no log can
         # echo it even if a step runs with the shell tracing on.
         echo "::add-mask::${keychain_password}"
 
-        security create-keychain -p "$keychain_password" "$KEYCHAIN_NOEXT"
+        # Create with the .keychain suffix, which is what apple-actions passes.
+        # Under ~/Library/Keychains the Security framework appends -db to whatever
+        # path it is given, so this produces the .keychain-db file every later
+        # command names. Passing the extensionless path instead produces a file
+        # ending in a bare -db, and each later command then names a keychain that
+        # does not exist.
+        security create-keychain -p "$keychain_password" "${KEYCHAIN_NOEXT}.keychain"
         # Keep it unlocked for the job: the default is a six-hour idle relock,
         # which a long build can cross, and a relocked keychain fails signing
         # with a prompt nobody can answer.
