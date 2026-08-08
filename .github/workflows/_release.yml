@@ -554,13 +554,31 @@ jobs:
           SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
         run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/ci-diagnostics/start.sh" "${RUNNER_TEMP}/ci-diagnostics" "${SWIFT_MK_HELPER_ROOT}"
 
+      # A release signs with Developer ID, whatever a repository's CI signs with,
+      # because an App Store certificate cannot sign something a person downloads.
+      #
+      # Two steps for one action, the same split the CI gate uses. This repository
+      # runs the copy in the branch under test, so a change to the action is
+      # exercised by the release dry run that ships it; every other repository runs
+      # the released copy. Referencing only @main would have this repository test
+      # the previous action against the current workflow, which fails whenever the
+      # two change together.
+      - name: Install signing certificate (swift-makefile)
+        id: cert-local
+        if: ${{ env.HAS_SIGNING == 'true' && github.repository == 'agoodkind/swift-makefile' }}
+        uses: ./.github/actions/import-signing-cert
+        with:
+          developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          identity-name: ${{ inputs.signing-identity-name }}
+
       - name: Install signing certificate
-        id: cert
-        if: env.HAS_SIGNING == 'true'
+        id: cert-remote
+        if: ${{ env.HAS_SIGNING == 'true' && github.repository != 'agoodkind/swift-makefile' }}
         uses: agoodkind/swift-makefile/.github/actions/import-signing-cert@main
         with:
-          p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          developer-id-p12-base64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          developer-id-p12-password: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
           identity-name: ${{ inputs.signing-identity-name }}
 
       - name: Install provisioning profile
@@ -579,8 +597,8 @@ jobs:
         shell: bash
         env:
           SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
-          SIGNING_KEYCHAIN: ${{ steps.cert.outputs.keychain }}
-          SIGNING_IDENTITY_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
+          SIGNING_KEYCHAIN: ${{ steps.cert-local.outputs.keychain || steps.cert-remote.outputs.keychain }}
+          SIGNING_IDENTITY_SHA1: ${{ steps.cert-local.outputs.identity-sha1 || steps.cert-remote.outputs.identity-sha1 }}
         run: |
           bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/ci-diagnostics/capture-signing.sh" \
             "${RUNNER_TEMP}/ci-diagnostics" "${SIGNING_KEYCHAIN}" "${SIGNING_IDENTITY_SHA1}"
@@ -593,8 +611,8 @@ jobs:
       - name: Build release artifacts
         shell: bash
         env:
-          CERT_SHA1: ${{ steps.cert.outputs.identity-sha1 }}
-          CODE_SIGN_KEYCHAIN: ${{ steps.cert.outputs.keychain }}
+          CERT_SHA1: ${{ steps.cert-local.outputs.identity-sha1 || steps.cert-remote.outputs.identity-sha1 }}
+          CODE_SIGN_KEYCHAIN: ${{ steps.cert-local.outputs.keychain || steps.cert-remote.outputs.keychain }}
           TEAM_ID: ${{ inputs.apple-team-id }}
           PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile.outputs.profile-specifier }}
           RELEASE_TAG: ${{ needs.meta.outputs.tag }}

@@ -1,15 +1,25 @@
-name: Import Developer ID signing certificate
-description: Import the Developer ID Application certificate with apple-actions/import-codesign-certs and resolve its codesigning identity SHA-1.
+name: Import signing certificates
+description: Import the signing certificates a build needs into one keychain and resolve the codesigning identity SHA-1 for the identity the caller names.
 
 inputs:
-  p12-base64:
-    description: Base64-encoded Developer ID Application .p12.
-    required: true
-  p12-password:
-    description: Import password for the .p12.
-    required: true
+  developer-id-p12-base64:
+    description: Base64-encoded Developer ID Application .p12. Pass it when the build signs anything with Developer ID.
+    required: false
+    default: ""
+  developer-id-p12-password:
+    description: Import password for the Developer ID .p12.
+    required: false
+    default: ""
+  distribution-p12-base64:
+    description: Base64-encoded Apple Distribution .p12. Pass it when the build signs on a machine that is not a registered device, where only App Store profiles work.
+    required: false
+    default: ""
+  distribution-p12-password:
+    description: Import password for the Apple Distribution .p12.
+    required: false
+    default: ""
   identity-name:
-    description: 'Full identity name to resolve, e.g. "Developer ID Application: Name (TEAMID)".'
+    description: 'Full identity name to resolve, e.g. "Developer ID Application: Name (TEAMID)" or "Apple Distribution: Name (TEAMID)". It decides which imported certificate signs.'
     required: true
 
 outputs:
@@ -49,17 +59,82 @@ runs:
         printf 'path_noext=%s\n' "$keychain_base" >> "$GITHUB_OUTPUT"
         printf 'path=%s\n' "$keychain_path" >> "$GITHUB_OUTPUT"
 
+    - name: Require at least one certificate
+      shell: bash
+      env:
+        DEVELOPER_ID_P12: ${{ inputs.developer-id-p12-base64 }}
+        DISTRIBUTION_P12: ${{ inputs.distribution-p12-base64 }}
+      run: |
+        set -euo pipefail
+
+        if [[ -z "$DEVELOPER_ID_P12" && -z "$DISTRIBUTION_P12" ]]; then
+            echo "signing was requested but neither a Developer ID nor an Apple Distribution certificate was passed" >&2
+            exit 1
+        fi
+
     - name: Remove stale signing keychain for this runner
       shell: bash
       env:
         KEYCHAIN_PATH: ${{ steps.keychain.outputs.path }}
       run: security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
 
-    - uses: apple-actions/import-codesign-certs@v3
+    # The keychain is created here rather than by an import step so that each
+    # import is guarded only by whether its own certificate was passed. Letting
+    # the first import create it would make the steps order-dependent: whichever
+    # ran first would have to create, and the other would have to not, which
+    # cannot be expressed when either may be absent.
+    - name: Create the signing keychain
+      id: create-keychain
+      shell: bash
+      env:
+        KEYCHAIN_NOEXT: ${{ steps.keychain.outputs.path_noext }}
+        KEYCHAIN_PATH: ${{ steps.keychain.outputs.path }}
+      run: |
+        set -euo pipefail
+
+        # One command, no pipe. Reading /dev/urandom through a pipe into a
+        # byte-counting reader makes the reader exit first, which kills the writer
+        # with a broken pipe; under `pipefail` that fails, and on a runner it hung
+        # instead. openssl reads its own randomness and stops on its own.
+        keychain_password="$(openssl rand -hex 24)"
+        # Masked before it reaches any later step's environment, so no log can
+        # echo it even if a step runs with the shell tracing on.
+        echo "::add-mask::${keychain_password}"
+
+        # Create with the .keychain suffix, which is what apple-actions passes.
+        # Under ~/Library/Keychains the Security framework appends -db to whatever
+        # path it is given, so this produces the .keychain-db file every later
+        # command names. Passing the extensionless path instead produces a file
+        # ending in a bare -db, and each later command then names a keychain that
+        # does not exist.
+        security create-keychain -p "$keychain_password" "${KEYCHAIN_NOEXT}.keychain"
+        # Keep it unlocked for the job: the default is a six-hour idle relock,
+        # which a long build can cross, and a relocked keychain fails signing
+        # with a prompt nobody can answer.
+        security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+        security unlock-keychain -p "$keychain_password" "$KEYCHAIN_PATH"
+
+        printf 'password=%s\n' "$keychain_password" >> "$GITHUB_OUTPUT"
+
+    - name: Import the Developer ID certificate
+      if: ${{ inputs.developer-id-p12-base64 != '' }}
+      uses: apple-actions/import-codesign-certs@v3
       with:
-        p12-file-base64: ${{ inputs.p12-base64 }}
-        p12-password: ${{ inputs.p12-password }}
+        p12-file-base64: ${{ inputs.developer-id-p12-base64 }}
+        p12-password: ${{ inputs.developer-id-p12-password }}
         keychain: ${{ steps.keychain.outputs.path_noext }}
+        create-keychain: "false"
+        keychain-password: ${{ steps.create-keychain.outputs.password }}
+
+    - name: Import the Apple Distribution certificate
+      if: ${{ inputs.distribution-p12-base64 != '' }}
+      uses: apple-actions/import-codesign-certs@v3
+      with:
+        p12-file-base64: ${{ inputs.distribution-p12-base64 }}
+        p12-password: ${{ inputs.distribution-p12-password }}
+        keychain: ${{ steps.keychain.outputs.path_noext }}
+        create-keychain: "false"
+        keychain-password: ${{ steps.create-keychain.outputs.password }}
 
     - name: Scope the user keychain search list to the signing keychain
       shell: bash
@@ -78,7 +153,7 @@ runs:
         # "No certificate for team". Set the list explicitly to the signing
         # keychain plus the System keychain: the signing keychain supplies the
         # identity and the System keychain supplies the trust anchors that
-        # validate the Developer ID chain.
+        # validate the certificate chain.
         security list-keychains -d user -s "$KEYCHAIN_PATH" /Library/Keychains/System.keychain
 
     - name: Resolve identity SHA-1
@@ -99,7 +174,12 @@ runs:
         )"
 
         if [[ -z "$identity_sha1" ]]; then
-            echo "Developer ID Application identity '$IDENTITY_NAME' not found in $KEYCHAIN_PATH" >&2
+            echo "signing identity '$IDENTITY_NAME' not found in $KEYCHAIN_PATH" >&2
+            echo "identities that were imported:" >&2
+            # Names only. This is what tells a reader whether the wrong
+            # certificate was supplied rather than the right one failing to
+            # validate, which is otherwise indistinguishable from this failure.
+            security find-identity -p codesigning "$KEYCHAIN_PATH" >&2
             exit 1
         fi
 

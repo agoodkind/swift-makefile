@@ -23,6 +23,7 @@ private enum WorkflowHelperError: LocalizedError {
   case invalidJSONShape(label: String)
   case invalidJSONElement(label: String)
   case failedCommand(command: String, exitStatus: Int32)
+  case missingSigningCertificate
   case missingSigningSecret(String)
 
   var errorDescription: String? {
@@ -41,6 +42,14 @@ private enum WorkflowHelperError: LocalizedError {
       return "\(label) must contain only strings"
     case let .failedCommand(command, exitStatus):
       return "\(command) exited with status \(exitStatus)"
+    case .missingSigningCertificate:
+      return
+        "workflow-helper: signed CI needs a certificate, and neither "
+        + "APPLE_DEVELOPER_ID_P12_BASE64 nor APPLE_DISTRIBUTION_P12_BASE64 is set. "
+        + "Set the one this repository signs CI with: Apple Distribution when the "
+        + "runner is not a registered device, Developer ID otherwise. "
+        + "If this fails in a Dependabot run, check that the same secret name is "
+        + "available as a Dependabot secret"
     case let .missingSigningSecret(name):
       return
         "workflow-helper: \(name) is required for signed CI; "
@@ -142,20 +151,43 @@ private func requireSigningSecret(_ present: Bool, name: String) throws {
 
 private func validateSigningInputs(environment: Environment) throws {
   if environment.bool("IMPORT_SIGNING_CERT") {
-    try requireSigningSecret(
-      environment.bool("HAS_SIGNING_CERT"),
-      name: "APPLE_DEVELOPER_ID_P12_BASE64"
-    )
-    try requireSigningSecret(
-      environment.bool("HAS_SIGNING_PASSWORD"),
-      name: "APPLE_DEVELOPER_ID_P12_PASSWORD"
-    )
+    try requireSigningCertificate(environment: environment)
   }
 
   if environment.bool("INSTALL_PROVISIONING_PROFILE") {
     try requireSigningSecret(
       environment.bool("HAS_PROVISIONING_PROFILE"),
       name: "APPLE_DEVELOPER_ID_PROFILE_BASE64"
+    )
+  }
+}
+
+/// A signed build needs at least one certificate, and each certificate it does
+/// supply needs its password.
+///
+/// Which certificate is right depends on where the build runs. A machine that is
+/// not a registered device cannot use development provisioning, so it signs with
+/// Apple Distribution and App Store profiles; a build producing something a person
+/// downloads signs with Developer ID. A repository that does both supplies both,
+/// and `signing-identity-name` decides which one a given build uses. So this
+/// refuses only the case where neither was supplied, rather than naming one.
+private func requireSigningCertificate(environment: Environment) throws {
+  let hasDeveloperID = environment.bool("HAS_DEVELOPER_ID_CERT")
+  let hasDistribution = environment.bool("HAS_DISTRIBUTION_CERT")
+
+  guard hasDeveloperID || hasDistribution else {
+    throw WorkflowHelperError.missingSigningCertificate
+  }
+  if hasDeveloperID {
+    try requireSigningSecret(
+      environment.bool("HAS_DEVELOPER_ID_PASSWORD"),
+      name: "APPLE_DEVELOPER_ID_P12_PASSWORD"
+    )
+  }
+  if hasDistribution {
+    try requireSigningSecret(
+      environment.bool("HAS_DISTRIBUTION_PASSWORD"),
+      name: "APPLE_DISTRIBUTION_P12_PASSWORD"
     )
   }
 }
