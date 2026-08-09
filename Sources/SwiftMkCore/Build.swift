@@ -42,7 +42,16 @@ public enum Build {
   /// skips them. Returns the gate-failure status when the gates fail off-CI, a
   /// nonzero status when `SWIFT_BUILD_CMD` is unset, or the build command's exit
   /// status.
-  public static func gateAndBuild() -> Int32 {
+  ///
+  /// `command` names the command to build instead of reading the consumer's configured
+  /// one, which is how `release-build` runs a release command through the same gated
+  /// entry. It is an argument rather than an environment variable because `swift.mk`
+  /// exports `SWIFT_BUILD_CMD` and defines it with `?=`: an inherited value wins over
+  /// that default, so a release command that recurses into make would have the nested
+  /// make read the release command back as its build command and re-enter this entry.
+  /// A stickies release recursed 256 levels deep that way and died when the runner ran
+  /// out of processes.
+  public static func gateAndBuild(command: String? = nil) -> Int32 {
     // Mark this gated invocation before any compile so the configured build
     // command, and any `toolchain build` it calls, carry the gate proof. On CI
     // the inline gates skip, but the proof must still be set so the downstream
@@ -62,12 +71,12 @@ public enum Build {
     } else {
       Output.log("build: inline gates disabled; skipping inline gates")
     }
-    let configured = Env.get("SWIFT_BUILD_CMD")
+    let configured = resolvedBuildCommand(command)
     guard !configured.isEmpty else {
       Output.error("build: SWIFT_BUILD_CMD is not set")
       return missingBuildCommandStatus
     }
-    let command = withSwiftPMCompileCache(configured)
+    let resolved = withSwiftPMCompileCache(configured)
     Output.info("build: running configured build command")
     let cacheEnvironment = BuildCache.environment() ?? [:]
     // Serialize against any other build in this worktree (a dev-tool SwiftPM build, the
@@ -75,8 +84,18 @@ public enum Build {
     // corrupt each other. Re-entrant, so a `toolchain build`/`swiftpm build` child the
     // command spawns inherits this hold instead of deadlocking on it.
     return BuildLock.withLock {
-      Shell.runForwardingOutput("/bin/sh", ["-c", command], environment: cacheEnvironment)
+      Shell.runForwardingOutput("/bin/sh", ["-c", resolved], environment: cacheEnvironment)
     }
+  }
+
+  /// The command to build: the one passed in when there is one, else the consumer's
+  /// configured `SWIFT_BUILD_CMD`. A passed command is never written back into the
+  /// environment, which is what keeps a release command out of a nested make's reach.
+  static func resolvedBuildCommand(_ passed: String?) -> String {
+    if let passed, !passed.isEmpty {
+      return passed
+    }
+    return Env.get("SWIFT_BUILD_CMD")
   }
 
   /// Run a compile command under the gate proof: refuse loud when this process is

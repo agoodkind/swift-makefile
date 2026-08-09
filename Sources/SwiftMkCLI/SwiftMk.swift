@@ -216,8 +216,13 @@ struct BuildCommand: ParsableCommand {
     abstract: "Run the lint gates, then the configured build command."
   )
 
+  @Option(
+    name: .customLong("command"),
+    help: "Build this command instead of the configured SWIFT_BUILD_CMD.")
+  var command: String?
+
   func run() throws {
-    let status = Build.gateAndBuild()
+    let status = Build.gateAndBuild(command: command)
     if status != 0 { throw ExitCode(status) }
   }
 }
