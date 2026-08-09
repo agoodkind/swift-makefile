@@ -69,8 +69,13 @@ jobs:
       # format that can carry a stapled ticket. Match only the dmg so the
       # unsigned source tarball is skipped.
       notarize-pattern: "*.dmg"
-      signing-identity-name: "Developer ID Application: Alex Goodkind (H3BMXM4W7H)"
-      apple-team-id: H3BMXM4W7H
+      # The identity and team come from repository variables so a certificate or
+      # team change is one settings edit, not a commit in every repository that
+      # calls this workflow. The two certificates keep separate variables because
+      # a release signs Developer ID while an unregistered CI runner signs Apple
+      # Distribution, and one shared slot for both was a defect once already.
+      signing-identity-name: ${{ vars.APPLE_DEVELOPER_ID_IDENTITY }}
+      apple-team-id: ${{ vars.APPLE_TEAM_ID }}
       # Smoke-verify the published dmg by downloading it and running the shipped
       # swift-mk binary, so a non-launching release fails here.
       smoke-asset: swift-mk_darwin_arm64.dmg
