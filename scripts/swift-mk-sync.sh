@@ -21,6 +21,14 @@ fi
 # snapshot marker, and any *.log. Everything else in .make is engine content the
 # snapshot re-provides, so clearing it and re-extracting drops orphans while keeping
 # the runtime state a build depends on.
+#
+# The gate proof is part of that runtime state, because a re-extract can happen in
+# the middle of a gated build: the build entry writes .make/.gate/stamp, the
+# consumer's generate step recurses into make, that run re-extracts, and clearing
+# the stamp made every later compile in the same build report no proof. Those
+# compiles then took the decoupled path and ran the hard gate on a release runner
+# that installs no lint tooling, so the release failed on missing binaries rather
+# than on a finding.
 snapshot_clear_engine() {
     local make_dir="$1"
     find "${make_dir}" -mindepth 1 -maxdepth 1 \
@@ -31,6 +39,7 @@ snapshot_clear_engine() {
         ! -name swift-mk-build \
         ! -name dev \
         ! -name .swift-mk-snapshot-ref \
+        ! -name .gate \
         ! -name swift.mk \
         ! -name '*.log' \
         -exec rm -rf {} +

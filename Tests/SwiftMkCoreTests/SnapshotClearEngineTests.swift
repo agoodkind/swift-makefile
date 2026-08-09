@@ -42,9 +42,14 @@ enum SnapshotClearEngineTests {
     let devLink = makeDir.appendingPathComponent("dev/swift-makefile")
     let marker = makeDir.appendingPathComponent(".swift-mk-snapshot-ref")
     let snapshotLog = makeDir.appendingPathComponent("swift-mk-snapshot.log")
+    // The gate proof authorizes every compile in the build that is running, and a
+    // re-extract can happen mid-build when a consumer's generate step recurses into
+    // make. Clearing it sent later compiles down the decoupled path, where a release
+    // runner has no lint tools and the hard gate failed on missing binaries.
+    let gateStamp = makeDir.appendingPathComponent(".gate/stamp")
     let engineFiles = [orphanSource, enginePackage, engineModule]
     let generatedFiles = [
-      buildLock, logsEntry, binary, binaryKey, devLink, marker, snapshotLog,
+      buildLock, logsEntry, binary, binaryKey, devLink, marker, snapshotLog, gateStamp,
     ]
 
     for fileURL in engineFiles + generatedFiles {
