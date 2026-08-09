@@ -144,8 +144,12 @@ extension Lint {
       Output.emitStandardError("test: SWIFT_TEST_CMD is not set\n")
       return false
     }
+    // A test compile fills and reads the same content-addressed store as the build, so
+    // it carries the same flags. Without them a `swift test` that compiles anything
+    // writes nothing to the store and replays nothing from it.
+    let cached = Build.withSwiftPMCompileCache(command)
     let status = BuildLock.withLock {
-      Shell.runForwardingOutput("/bin/sh", ["-c", command])
+      Shell.runForwardingOutput("/bin/sh", ["-c", cached])
     }
     return status == 0
   }

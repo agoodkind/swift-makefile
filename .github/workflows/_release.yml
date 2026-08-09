@@ -523,6 +523,12 @@ jobs:
           # so the lint toolchain (swift-format, swiftlint, periphery, osv-scanner) is
           # not needed and installing it only slows the release.
           install-lint-tools: "false"
+          # Name the gate so the compile-cache bucket participates: release-build is a
+          # compiling writer, and its restore keys fall back to the family pile Verify
+          # saved for the same dependencies, so a release replays those compiles
+          # instead of cold-building. Without a gate name the bucket is disabled and
+          # the release compiles everything from scratch on every run.
+          gate: release-build
           cache-profile: ${{ inputs.cache-profile }}
           cache-version: ${{ inputs.cache-version }}
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
@@ -534,6 +540,7 @@ jobs:
           xcode-version: ${{ inputs.xcode-version }}
           github-token: ${{ github.token }}
           install-lint-tools: "false"
+          gate: release-build
           cache-profile: ${{ inputs.cache-profile }}
           cache-version: ${{ inputs.cache-version }}
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
