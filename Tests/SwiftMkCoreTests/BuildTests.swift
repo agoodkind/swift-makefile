@@ -115,3 +115,24 @@ func shellQuotingEscapesEmbeddedSingleQuotes() {
   #expect(Build.shellQuoted("plain") == "'plain'")
   #expect(Build.shellQuoted("a'b") == "'a'\\''b'")
 }
+
+@Test
+func aPassedCommandWinsAndNeverEntersTheEnvironment() {
+  // `release-build` passes its command as an argument rather than through
+  // SWIFT_BUILD_CMD. swift.mk exports that variable and defaults it with `?=`, so an
+  // inherited value wins over the default: a release command that recurses into make
+  // had the nested make read the release command back as its build command and re-enter
+  // the build, until the runner ran out of processes at 256 levels deep.
+  let saved = Environment.snapshot(["SWIFT_BUILD_CMD"])
+  defer { saved.restore() }
+
+  setenv("SWIFT_BUILD_CMD", "configured", 1)
+  #expect(Build.resolvedBuildCommand("release") == "release")
+  // Resolving a passed command leaves the environment untouched, so anything the
+  // command spawns still sees the consumer's own configuration.
+  #expect(Env.get("SWIFT_BUILD_CMD") == "configured")
+
+  // With nothing passed the consumer's configured command is used, unchanged.
+  #expect(Build.resolvedBuildCommand(nil) == "configured")
+  #expect(Build.resolvedBuildCommand("") == "configured")
+}

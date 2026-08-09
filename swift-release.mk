@@ -81,10 +81,14 @@ release-build:
 	@# the source-quality gates for a release commit are owned by the CI Verify
 	@# job that already ran on it; compile authorization is unaffected, since it
 	@# comes from the GateProof mark, not from the inline gates.
+	@# The release command travels as an argument, not through SWIFT_BUILD_CMD. swift.mk
+	@# exports that variable and defines it with `?=`, so an inherited value wins over the
+	@# default: a release command that recurses into make had the nested make read the
+	@# release command back as its build command and re-enter this same target, until the
+	@# runner ran out of processes.
 	@$(SWIFT_MK_SIGNING_PRELUDE) \
 	SWIFT_MK_SKIP_INLINE_GATES=1 \
-		SWIFT_BUILD_CMD="$(SWIFT_MK_RELEASE_BUILD_CMD)" \
-		"$(SWIFT_MK_BIN)" build
+		"$(SWIFT_MK_BIN)" build --command "$(SWIFT_MK_RELEASE_BUILD_CMD)"
 	@if [ -z "$$(ls -A '$(SWIFT_MK_DIST_DIR)' 2>/dev/null)" ]; then \
 		echo "release-build: SWIFT_MK_RELEASE_BUILD_CMD left $(SWIFT_MK_DIST_DIR)/ empty" >&2; \
 		exit 1; \
