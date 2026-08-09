@@ -70,13 +70,21 @@ release-build:
 		exit 1; \
 	fi
 	@mkdir -p "$(SWIFT_MK_DIST_DIR)"
-	@# A release build compiles the commit CI already gated in its own job, on a
-	@# runner that installs no lint tooling. Exported, not assigned inline, so it
-	@# reaches the build command's own child processes: a consumer build tool that
-	@# links SwiftMkCore runs the gate in-process and reads this from its environment.
-	@# Off CI the flag does nothing and the gate still runs.
-	@export SWIFT_MK_SKIP_INLINE_GATES=1; \
-	eval "$(SWIFT_MK_RELEASE_BUILD_CMD)"
+	@# Run the release command through `swift-mk build` rather than a bare eval,
+	@# the same shape the `verify` target uses: the entry marks GateProof, so a
+	@# consumer build tool that links SwiftMkCore sees a live gate ancestor and
+	@# compiles under that proof instead of re-running the decoupled hard gate on
+	@# a runner that installs no lint tooling (_release.yml sets
+	@# install-lint-tools=false because a release build never lints). The entry
+	@# also brings the signing preflight, the build lock, and the cache
+	@# environment. SWIFT_MK_SKIP_INLINE_GATES keeps this a pure compile, because
+	@# the source-quality gates for a release commit are owned by the CI Verify
+	@# job that already ran on it; compile authorization is unaffected, since it
+	@# comes from the GateProof mark, not from the inline gates.
+	@$(SWIFT_MK_SIGNING_PRELUDE) \
+	SWIFT_MK_SKIP_INLINE_GATES=1 \
+		SWIFT_BUILD_CMD="$(SWIFT_MK_RELEASE_BUILD_CMD)" \
+		"$(SWIFT_MK_BIN)" build
 	@if [ -z "$$(ls -A '$(SWIFT_MK_DIST_DIR)' 2>/dev/null)" ]; then \
 		echo "release-build: SWIFT_MK_RELEASE_BUILD_CMD left $(SWIFT_MK_DIST_DIR)/ empty" >&2; \
 		exit 1; \
