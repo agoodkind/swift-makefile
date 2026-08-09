@@ -242,13 +242,19 @@ public enum CacheService {
   /// The gates that actually compile the package and therefore own the compile cache.
   /// The engine decides this from the gate name alone, so a consumer sets nothing. The
   /// exact writer gate strings are `verify`, `build`, `test`, `lint-deadcode`, `deadcode`,
-  /// and `swiftcheck-extra`. `verify` compiles the product and test targets once and runs
-  /// the source-only lints against that build, so it owns and saves the compile cache the
-  /// same way `build` does. swiftcheck-extra builds its analyzer and the target, so it
-  /// restores a compiling sibling's pile and saves its own, which is what lets the
-  /// swiftcheck gate replay a build's output instead of cold-building.
+  /// `swiftcheck-extra`, and `release-build`. `verify` compiles the product and test
+  /// targets once and runs the source-only lints against that build, so it owns and saves
+  /// the compile cache the same way `build` does. swiftcheck-extra builds its analyzer
+  /// and the target, so it restores a compiling sibling's pile and saves its own, which
+  /// is what lets the swiftcheck gate replay a build's output instead of cold-building.
+  /// release-build compiles the same commit Verify gated, so restoring the family pile
+  /// (its restore keys fall back to any sibling writer) is what lets a release replay
+  /// Verify's compiles instead of cold-building.
   static func isCompileWriterGate(_ gate: String) -> Bool {
-    ["verify", "build", "test", "lint-deadcode", "deadcode", "swiftcheck-extra"].contains(gate)
+    [
+      "verify", "build", "test", "lint-deadcode", "deadcode", "swiftcheck-extra",
+      "release-build",
+    ].contains(gate)
   }
 
   /// A value unique to this run attempt, so each compile-cache save lands under a fresh

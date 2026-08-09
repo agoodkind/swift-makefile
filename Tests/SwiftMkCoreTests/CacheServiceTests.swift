@@ -73,6 +73,12 @@ func verifyGateOwnsTheCompileCache() {
   #expect(CacheService.isCompileWriterGate("verify"))
   #expect(CacheService.isCompileWriterGate("build"))
   #expect(CacheService.isCompileWriterGate("test"))
+  // The release build compiles the commit Verify gated, and its restore keys fall
+  // back to the family pile, so it must participate or every release compiles cold.
+  #expect(CacheService.isCompileWriterGate("release-build"))
   #expect(!CacheService.isCompileWriterGate("lint-format"))
   #expect(!CacheService.isCompileWriterGate("quality"))
+  // An unnamed gate stays a non-writer: a job that forgets to name itself must not
+  // save an empty pile over a full one.
+  #expect(!CacheService.isCompileWriterGate(""))
 }
