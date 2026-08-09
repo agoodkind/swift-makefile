@@ -62,11 +62,12 @@ public enum Build {
     } else {
       Output.log("build: inline gates disabled; skipping inline gates")
     }
-    let command = Env.get("SWIFT_BUILD_CMD")
-    guard !command.isEmpty else {
+    let configured = Env.get("SWIFT_BUILD_CMD")
+    guard !configured.isEmpty else {
       Output.error("build: SWIFT_BUILD_CMD is not set")
       return missingBuildCommandStatus
     }
+    let command = withSwiftPMCompileCache(configured)
     Output.info("build: running configured build command")
     let cacheEnvironment = BuildCache.environment() ?? [:]
     // Serialize against any other build in this worktree (a dev-tool SwiftPM build, the
@@ -89,8 +90,79 @@ public enum Build {
       return refusal
     }
     let cacheEnvironment = BuildCache.environment() ?? [:]
+    let cached = withSwiftPMCompileCache(command)
     return BuildLock.withLock {
-      Shell.runForwardingOutput("/bin/sh", ["-c", command], environment: cacheEnvironment)
+      Shell.runForwardingOutput("/bin/sh", ["-c", cached], environment: cacheEnvironment)
     }
+  }
+
+  /// The configured command with the SwiftPM compilation-cache flags appended when it
+  /// is one bare `swift build` or `swift test`, else unchanged.
+  ///
+  /// A command routed through the engine (`swift-mk toolchain swiftpm build`, the
+  /// default) already receives these flags inside `SwiftPM.runSwift`, as an argv array.
+  /// A consumer that writes the invocation itself, which the build-tooling audit allows
+  /// in a make variable, was reaching the compiler with no `-cas-path` at all, so its
+  /// content-addressed store stayed empty, nothing was ever saved to the CI compile
+  /// bucket, and every run compiled cold. Appending here is what makes the engine own
+  /// the cache for both command shapes rather than only the routed one. It also keeps
+  /// every engine-mediated compile in one module mode: `-explicit-module-build` and
+  /// plain builds sharing one `.build` poison each other's clang module records, which
+  /// is why the dead-code scan already forwards these same flags.
+  ///
+  /// The rewrite is deliberately narrow:
+  /// - `swift run` is never rewritten. Its arguments after the product name belong to
+  ///   the consumer's tool, so an append would hand the flags to that tool.
+  /// - A command carrying any shell operator is never rewritten, because the append
+  ///   target is not determinable from here.
+  /// - A command already naming `-cas-path` is never rewritten, so an explicit consumer
+  ///   choice is not doubled.
+  static func withSwiftPMCompileCache(
+    _ command: String,
+    flags: [String] = SwiftPM.compileCacheArguments()
+  ) -> String {
+    guard !flags.isEmpty else {
+      return command
+    }
+    guard isBareSwiftCompile(command) else {
+      Output.debug(
+        "build: leaving the configured command unchanged; it is not a single bare "
+          + "`swift build`/`swift test`, so route it through `swift-mk toolchain "
+          + "swiftpm` to get the compilation cache")
+      return command
+    }
+    if command.contains("-cas-path") {
+      return command
+    }
+    // The command string runs through `/bin/sh -c`, so each appended flag is
+    // single-quoted; the CAS path under the user's home may contain characters the
+    // shell would otherwise split or expand.
+    return ([command] + flags.map(shellQuoted)).joined(separator: " ")
+  }
+
+  /// Whether the command is one `swift build` or `swift test` with no shell operator,
+  /// so appended arguments land on that invocation, and on nothing else, as options
+  /// swift itself parses.
+  static func isBareSwiftCompile(_ command: String) -> Bool {
+    let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+    let appendableSubcommands = ["build", "test"]
+    let words = trimmed.split(whereSeparator: \.isWhitespace).map(String.init)
+    // The executable word and the subcommand word.
+    let minimumInvocationWords = 2
+    guard words.count >= minimumInvocationWords, words[0] == "swift",
+      appendableSubcommands.contains(words[1])
+    else {
+      return false
+    }
+    // Any shell operator means more than one command, a redirection, or a substitution
+    // whose text is not known here, so the append target is not determinable.
+    let shellOperators = ["&&", "||", ";", "|", "&", "`", "$(", ">", "<", "\n"]
+    return !shellOperators.contains { trimmed.contains($0) }
+  }
+
+  /// The argument wrapped in single quotes for `/bin/sh -c`, with embedded single
+  /// quotes escaped by the standard close-escape-reopen sequence.
+  static func shellQuoted(_ argument: String) -> String {
+    "'" + argument.replacingOccurrences(of: "'", with: "'\\''") + "'"
   }
 }
