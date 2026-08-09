@@ -124,9 +124,22 @@ public enum GatedBuild {
     guard SigningBuildConfig.checkSigningPreflight() else {
       return Toolchain.gateFailureStatus
     }
-    // (3) The fixed hard gate. (4) On failure, skip the compile and stop nonzero.
-    guard Lint.runHardBuildCheck(context: request.context, hooks: request.hooks) else {
-      return Toolchain.gateFailureStatus
+    // (3) The fixed hard gate, unless the caller owns gating elsewhere on CI. (4) On
+    // failure, skip the compile and stop nonzero.
+    if skipsHardGate() {
+      // Generation normally runs inside the gate, and the compile needs its output,
+      // so it still runs here. Skipping it too would fail the build on missing
+      // generated sources rather than on anything the gate would have caught.
+      if let generate = request.hooks.generate, !generate() {
+        Output.log("generate: FAILED")
+        return Toolchain.gateFailureStatus
+      }
+      Output.info(
+        "gated build: lint gate skipped, the caller runs it as its own CI job")
+    } else {
+      guard Lint.runHardBuildCheck(context: request.context, hooks: request.hooks) else {
+        return Toolchain.gateFailureStatus
+      }
     }
     // (5) Apply the swift-mk signing override so the compile signs through swift-mk
     // even without the make prelude.
@@ -135,6 +148,29 @@ public enum GatedBuild {
     // (6) Mint the receipt only now, after the gate passed, and (7) run the compile.
     let receipt = GateReceipt()
     return request.compile(receipt)
+  }
+
+  /// Whether this build may compile without running the hard gate.
+  ///
+  /// Only when both hold: the caller set `SWIFT_MK_SKIP_INLINE_GATES=1`, and this is a
+  /// CI run. The release job is the case this exists for. It builds the same commit CI
+  /// already gated in its own job, on a runner that installs no lint tooling, so
+  /// re-running the gate there fails on a missing `periphery` rather than on anything
+  /// about the code.
+  ///
+  /// Both conditions are required, which is stricter than `Build.runsInlineGates`. The
+  /// environment variable alone does nothing off CI, so a developer cannot set it and
+  /// compile past the gate on their own machine, which is the whole reason the hard
+  /// gate ignores every other narrowing knob.
+  static func skipsHardGate(
+    githubActions: String = Env.get("GITHUB_ACTIONS"),
+    githubRunId: String = Env.get("GITHUB_RUN_ID"),
+    skipInlineGates: String = Env.get("SWIFT_MK_SKIP_INLINE_GATES")
+  ) -> Bool {
+    guard skipInlineGates == "1" else {
+      return false
+    }
+    return githubActions == "true" && !githubRunId.isEmpty
   }
 
   /// Default `SWIFTCHECK_EXTRA_BUILD_REPO` for the decoupled gate when the consumer

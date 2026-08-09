@@ -70,7 +70,13 @@ release-build:
 		exit 1; \
 	fi
 	@mkdir -p "$(SWIFT_MK_DIST_DIR)"
-	@eval "$(SWIFT_MK_RELEASE_BUILD_CMD)"
+	@# A release build compiles the commit CI already gated in its own job, on a
+	@# runner that installs no lint tooling. Exported, not assigned inline, so it
+	@# reaches the build command's own child processes: a consumer build tool that
+	@# links SwiftMkCore runs the gate in-process and reads this from its environment.
+	@# Off CI the flag does nothing and the gate still runs.
+	@export SWIFT_MK_SKIP_INLINE_GATES=1; \
+	eval "$(SWIFT_MK_RELEASE_BUILD_CMD)"
 	@if [ -z "$$(ls -A '$(SWIFT_MK_DIST_DIR)' 2>/dev/null)" ]; then \
 		echo "release-build: SWIFT_MK_RELEASE_BUILD_CMD left $(SWIFT_MK_DIST_DIR)/ empty" >&2; \
 		exit 1; \
