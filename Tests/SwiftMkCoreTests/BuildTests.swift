@@ -51,3 +51,67 @@ func inlineGatesRunWhenRunIdMissing() {
     Build.runsInlineGates(
       githubActions: "true", githubRunId: "", skipInlineGates: ""))
 }
+
+// MARK: - Compile-cache flags on hand-written commands
+
+/// The flags a real toolchain would produce, with a path that a naive space-joined
+/// append would split at the shell, so quoting is part of what these tests pin.
+private let fakeCompileCacheFlags = [
+  "-Xswiftc", "-explicit-module-build",
+  "-Xswiftc", "-cache-compile-job",
+  "-Xswiftc", "-cas-path",
+  "-Xswiftc", "/Users/a b/Library/Caches/swift-mk/SwiftPMCompilationCache",
+]
+
+@Test
+func bareSwiftBuildGainsQuotedCompileCacheFlags() {
+  let rewritten = Build.withSwiftPMCompileCache(
+    "swift build --configuration release --build-tests -Xswiftc -enable-testing",
+    flags: fakeCompileCacheFlags)
+
+  #expect(rewritten.hasPrefix("swift build --configuration release"))
+  #expect(rewritten.contains("'-cache-compile-job'"))
+  // The CAS path is one shell word even with a space in it.
+  #expect(rewritten.contains("'/Users/a b/Library/Caches/swift-mk/SwiftPMCompilationCache'"))
+}
+
+@Test
+func bareSwiftTestGainsCompileCacheFlags() {
+  let rewritten = Build.withSwiftPMCompileCache(
+    "swift test --configuration release --skip-build --no-parallel",
+    flags: fakeCompileCacheFlags)
+  #expect(rewritten.contains("'-explicit-module-build'"))
+}
+
+@Test
+func swiftRunIsNeverRewritten() {
+  // `swift run <product> [args]` hands trailing words to the consumer's tool, so an
+  // append would deliver the flags to that tool rather than to swift.
+  let command = "swift run my-tool --serve"
+  #expect(Build.withSwiftPMCompileCache(command, flags: fakeCompileCacheFlags) == command)
+}
+
+@Test
+func compoundAndRoutedCommandsAreNeverRewritten() {
+  // A shell operator means the append target is not determinable.
+  let compound = "swift build && ditto -c out dist/out.zip"
+  #expect(Build.withSwiftPMCompileCache(compound, flags: fakeCompileCacheFlags) == compound)
+  // The routed form receives its flags inside the SwiftPM chokepoint as an argv
+  // array; a second append here would double them.
+  let routed = "\"/repo/.make/swift-mk\" toolchain swiftpm build"
+  #expect(Build.withSwiftPMCompileCache(routed, flags: fakeCompileCacheFlags) == routed)
+}
+
+@Test
+func explicitCasPathAndEmptyFlagsLeaveTheCommandAlone() {
+  let explicit = "swift build -Xswiftc -cas-path -Xswiftc /tmp/own-cas"
+  #expect(Build.withSwiftPMCompileCache(explicit, flags: fakeCompileCacheFlags) == explicit)
+  let command = "swift build"
+  #expect(Build.withSwiftPMCompileCache(command, flags: []) == command)
+}
+
+@Test
+func shellQuotingEscapesEmbeddedSingleQuotes() {
+  #expect(Build.shellQuoted("plain") == "'plain'")
+  #expect(Build.shellQuoted("a'b") == "'a'\\''b'")
+}
