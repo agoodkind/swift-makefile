@@ -29,6 +29,12 @@ fi
 # compiles then took the decoupled path and ran the hard gate on a release runner
 # that installs no lint tooling, so the release failed on missing binaries rather
 # than on a finding.
+#
+# The signing xcconfig is the same kind of state, written by the signing preflight
+# before the build and named by XCODE_XCCONFIG_FILE for the whole build. Losing it
+# mid-build leaves xcodebuild pointing at a path that no longer exists, so it
+# reports the file cannot be opened and then that every target needs a development
+# team, which reads as a signing misconfiguration rather than a deleted file.
 snapshot_clear_engine() {
     local make_dir="$1"
     find "${make_dir}" -mindepth 1 -maxdepth 1 \
@@ -40,6 +46,7 @@ snapshot_clear_engine() {
         ! -name dev \
         ! -name .swift-mk-snapshot-ref \
         ! -name .gate \
+        ! -name signing.xcconfig \
         ! -name swift.mk \
         ! -name '*.log' \
         -exec rm -rf {} +
