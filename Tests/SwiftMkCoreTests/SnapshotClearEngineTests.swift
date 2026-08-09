@@ -47,9 +47,16 @@ enum SnapshotClearEngineTests {
     // make. Clearing it sent later compiles down the decoupled path, where a release
     // runner has no lint tools and the hard gate failed on missing binaries.
     let gateStamp = makeDir.appendingPathComponent(".gate/stamp")
+    // The signing preflight writes this before the build and names it in
+    // XCODE_XCCONFIG_FILE for the build's whole life. Losing it mid-build makes
+    // xcodebuild report that the file cannot be opened and that every target needs a
+    // development team, which reads as a signing misconfiguration rather than a
+    // deleted file.
+    let signingConfig = makeDir.appendingPathComponent(SigningBuildConfig.fileName)
     let engineFiles = [orphanSource, enginePackage, engineModule]
     let generatedFiles = [
       buildLock, logsEntry, binary, binaryKey, devLink, marker, snapshotLog, gateStamp,
+      signingConfig,
     ]
 
     for fileURL in engineFiles + generatedFiles {
@@ -107,6 +114,9 @@ enum SnapshotClearEngineTests {
       .map(String.init)
       .filter { !$0.isEmpty }
     #expect(spared.contains(".gate"), "the clear path no longer spares .gate")
+    #expect(
+      spared.contains(SigningBuildConfig.fileName),
+      "the clear path no longer spares \(SigningBuildConfig.fileName)")
 
     for name in spared {
       #expect(

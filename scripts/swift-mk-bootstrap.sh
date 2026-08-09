@@ -374,7 +374,8 @@ install_from_stage() {
         if ! find "${MAKE_DIR}" -mindepth 1 -maxdepth 1 \
             \( -name logs -o -name build.lock -o -name swift-mk -o -name swift-mk.key \
                -o -name swift-mk-build -o -name dev -o -name .swift-mk-snapshot-ref \
-               -o -name .gate -o -name swift.mk -o -name '*.log' \) -print0 \
+               -o -name .gate -o -name signing.xcconfig \
+               -o -name swift.mk -o -name '*.log' \) -print0 \
             > "${preserve_list}" 2>"${preserve_log}"; then
             printf 'error: could not enumerate the runtime files to preserve (find failed): %s\n' \
                 "$(stderr_sample "${preserve_log}")" >&2
