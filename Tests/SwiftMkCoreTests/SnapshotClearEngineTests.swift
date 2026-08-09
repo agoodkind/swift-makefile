@@ -83,6 +83,38 @@ enum SnapshotClearEngineTests {
     }
   }
 
+  /// The bootstrap swaps `.make` wholesale rather than clearing selectively: it stages
+  /// a new tree, copies in only the names its preserve list enumerates, then moves the
+  /// old directory away and deletes it. So the two lists must name the same runtime
+  /// state, or a file survives one path and is destroyed by the other. That drift is
+  /// what let a cold re-extract inside a consumer's nested `make generate` delete the
+  /// gate stamp after the clear path had already been taught to keep it.
+  @Test
+  static func bootstrapPreservesEverythingTheClearPathPreserves() throws {
+    let root = SnapshotClearEngineTests.repoRoot()
+    let clearText = try String(
+      contentsOf: root.appendingPathComponent("scripts/swift-mk-sync.sh"), encoding: .utf8)
+    let bootstrapText = try String(
+      contentsOf: root.appendingPathComponent("scripts/swift-mk-bootstrap.sh"), encoding: .utf8)
+
+    // Names the clear path spares, read from the script rather than restated here, so
+    // the assertion tracks the source instead of a copy that can go stale.
+    let spared =
+      clearText
+      .components(separatedBy: "! -name ")
+      .dropFirst()
+      .map { $0.prefix { !$0.isWhitespace && $0 != "\\" } }
+      .map(String.init)
+      .filter { !$0.isEmpty }
+    #expect(spared.contains(".gate"), "the clear path no longer spares .gate")
+
+    for name in spared {
+      #expect(
+        bootstrapText.contains("-name \(name)"),
+        "the bootstrap swap does not preserve \(name), so a cold re-extract destroys it")
+    }
+  }
+
   private static func repoRoot() -> URL {
     URL(fileURLWithPath: #filePath)
       .deletingLastPathComponent()
