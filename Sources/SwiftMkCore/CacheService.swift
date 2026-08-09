@@ -44,6 +44,36 @@ public enum CacheOutput {
     return lines.joined(separator: "\n") + "\n"
   }
 
+  /// The same plan as job environment variables, in `$GITHUB_ENV` format.
+  ///
+  /// A step output reaches a step's `with:` block only while that step runs. The save
+  /// half of `actions/cache` runs as a post step, where the same expression can
+  /// evaluate empty: a Verify job reached the cache action through an extra composite
+  /// level and its post step reported `Input required and not supplied: path`, so it
+  /// saved nothing and the compile cache never accumulated. A job environment variable
+  /// is set once and readable from every later step including the post steps, so the
+  /// save half sees the same key and paths the restore half used.
+  public static func githubEnv(
+    plan: CachePlan.Result, paths: CachePaths.Resolved
+  ) -> String {
+    var lines: [String] = ["SWIFT_MK_CACHE_DEPENDENCY_KEY=\(plan.dependencyKey)"]
+    lines.append(
+      contentsOf: heredoc(
+        "SWIFT_MK_CACHE_DEPENDENCY_RESTORE_KEYS", "CACHE_KEYS", plan.dependencyRestoreKeys))
+    lines.append("SWIFT_MK_CACHE_BUILD_KEY=\(plan.buildKey)")
+    lines.append(
+      contentsOf: heredoc("SWIFT_MK_CACHE_BUILD_RESTORE_KEYS", "CACHE_KEYS", plan.buildRestoreKeys))
+    lines.append("SWIFT_MK_CACHE_COMPILE_KEY=\(plan.compileKey)")
+    lines.append(
+      contentsOf: heredoc(
+        "SWIFT_MK_CACHE_COMPILE_RESTORE_KEYS", "CACHE_KEYS", plan.compileRestoreKeys))
+    lines.append(
+      contentsOf: heredoc("SWIFT_MK_CACHE_DEPENDENCY_PATHS", "CACHE_PATHS", paths.dependency))
+    lines.append(contentsOf: heredoc("SWIFT_MK_CACHE_BUILD_PATHS", "CACHE_PATHS", paths.build))
+    lines.append(contentsOf: heredoc("SWIFT_MK_CACHE_COMPILE_PATHS", "CACHE_PATHS", paths.compile))
+    return lines.joined(separator: "\n") + "\n"
+  }
+
   private static func heredoc(_ name: String, _ base: String, _ values: [String]) -> [String] {
     // A GitHub heredoc block ends at the first line equal to the delimiter. A value
     // (notably a line from EXTRA_CACHE_PATHS) that equals the base delimiter would end
@@ -67,12 +97,22 @@ public enum CacheService {
   /// matching the former cache-plan.sh exit-2 behavior.
   static let usageExitCode: Int32 = 2
 
-  /// `cache plan`: resolve the plan from the environment and append it to
-  /// `$GITHUB_OUTPUT`.
+  /// `cache plan`: resolve the plan from the environment and publish it to both
+  /// `$GITHUB_OUTPUT` and `$GITHUB_ENV`.
+  ///
+  /// The step outputs drive the `if:` guards, which evaluate while the step runs. The
+  /// environment copy is what the cache steps read for their keys and paths, because
+  /// those inputs are re-evaluated by the post step that performs the save, where a
+  /// step-output expression can come back empty.
   public static func runPlan() -> Int32 {
     let outputPath = Env.get("GITHUB_OUTPUT")
     if outputPath.isEmpty {
       Output.error("cache plan: GITHUB_OUTPUT is not set")
+      return usageExitCode
+    }
+    let environmentPath = Env.get("GITHUB_ENV")
+    if environmentPath.isEmpty {
+      Output.error("cache plan: GITHUB_ENV is not set")
       return usageExitCode
     }
     let plan: CachePlan.Result
@@ -82,12 +122,15 @@ public enum CacheService {
       Output.error("cache plan: \(error)")
       return usageExitCode
     }
-    let text = CacheOutput.githubOutput(plan: plan, paths: resolvedPaths())
-    Output.info("cache plan: appending plan to \(outputPath)")
+    let paths = resolvedPaths()
+    Output.info("cache plan: appending plan to \(outputPath) and \(environmentPath)")
     do {
-      try appendToFile(path: outputPath, text: text)
+      try appendToFile(
+        path: outputPath, text: CacheOutput.githubOutput(plan: plan, paths: paths))
+      try appendToFile(
+        path: environmentPath, text: CacheOutput.githubEnv(plan: plan, paths: paths))
     } catch {
-      Output.error("cache plan: could not write \(outputPath): \(error)")
+      Output.error("cache plan: could not write the plan: \(error)")
       return usageExitCode
     }
     return 0
