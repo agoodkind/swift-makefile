@@ -408,6 +408,14 @@ SWIFT_MK_SWIFT_CACHE ?= auto
 SWIFT_MK_SWIFTPM_CACHE ?= $(SWIFT_MK_SWIFT_CACHE)
 SWIFT_MK_XCODE_CACHE ?= $(SWIFT_MK_SWIFT_CACHE)
 SWIFT_MK_XCODE_CACHE_DIAGNOSTICS ?= false
+# The SwiftPM peer of the Xcode diagnostics knob, which turns each cached compile
+# into a remark naming the output it served and the key it served it under. The
+# engine reads it from the environment, and make exports a command-line assignment
+# on its own, so `make <target> SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS=1` already worked.
+# A consumer that sets it in its own Makefile does not, because make exports a
+# makefile assignment only when told to, which is why the sibling knobs are exported
+# below and this one now is too.
+SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS ?= false
 SWIFT_MK_XCODE_CACHE_AUTO_ENABLED := $(shell awk 'BEGIN { version = "$(SWIFT_MK_XCODE_VERSION_MAJOR)" + 0; if (version >= 26) print "YES"; else print "NO"; }')
 SWIFT_MK_XCODE_CACHE_ENABLED := NO
 ifneq ($(filter $(SWIFT_MK_XCODE_CACHE),1 true TRUE yes YES on ON),)
@@ -628,6 +636,7 @@ export SWIFT_MK_SWIFTPM_CACHE
 export SWIFT_MK_XCODE_CACHE
 export SWIFT_MK_XCODE_CACHE_PREFIX_MAP
 export SWIFT_MK_XCODE_CACHE_DIAGNOSTICS
+export SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS
 export SWIFT_MK_XCODEBUILD_ARGS
 export SWIFT_MK_XCODEBUILD_NO_CACHE_ARGS
 export SWIFT_XCODE_GENERATOR
