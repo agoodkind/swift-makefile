@@ -143,6 +143,12 @@ env:
   # swift-mk). Empty keeps unlabeled runs at swift-mk's default quiet level. The
   # macOS system capture is added only inside the ci-gate action.
   SWIFT_MK_LOG_LEVEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') && 'debug' || '' }}
+  # The same label makes the compilation cache report itself. Each replayed compile
+  # prints the output file it served and the key it served it under, which is the only
+  # way to read a hit rate out of a CI run instead of inferring one from wall clock.
+  # Off by default because a warm build emits one remark per replayed output.
+  SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS: ${{ contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') && '1' || '' }}
+  SWIFT_MK_XCODE_CACHE_DIAGNOSTICS: ${{ contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') && '1' || '' }}
 
 jobs:
   # changes: change-detection runs on a free ubuntu-latest runner instead of a
