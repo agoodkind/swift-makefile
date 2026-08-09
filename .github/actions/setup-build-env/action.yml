@@ -310,17 +310,24 @@ runs:
       if: steps.cache-plan.outputs.dependency-cache-enabled == 'true' && env.SWIFT_MK_POOL != '1'
       uses: actions/cache@v5
       with:
-        path: ${{ steps.cache-plan.outputs.dependency-paths }}
-        key: ${{ steps.cache-plan.outputs.dependency-key }}
-        restore-keys: ${{ steps.cache-plan.outputs.dependency-restore-keys }}
+        # Keys and paths come from the job environment, not from the plan step's
+        # outputs. The save half of this action runs as a post step that re-evaluates
+        # these inputs, and a step-output expression can evaluate empty there: a Verify
+        # job reached this action through an extra composite level and its post step
+        # reported `Input required and not supplied: path`, so the compile cache saved
+        # nothing on every run. The `if:` guard still reads the step output, because it
+        # is evaluated while the step itself runs.
+        path: ${{ env.SWIFT_MK_CACHE_DEPENDENCY_PATHS }}
+        key: ${{ env.SWIFT_MK_CACHE_DEPENDENCY_KEY }}
+        restore-keys: ${{ env.SWIFT_MK_CACHE_DEPENDENCY_RESTORE_KEYS }}
 
     - name: Restore build intermediate cache
       if: steps.cache-plan.outputs.build-cache-enabled == 'true' && env.SWIFT_MK_POOL != '1'
       uses: actions/cache@v5
       with:
-        path: ${{ steps.cache-plan.outputs.build-paths }}
-        key: ${{ steps.cache-plan.outputs.build-key }}
-        restore-keys: ${{ steps.cache-plan.outputs.build-restore-keys }}
+        path: ${{ env.SWIFT_MK_CACHE_BUILD_PATHS }}
+        key: ${{ env.SWIFT_MK_CACHE_BUILD_KEY }}
+        restore-keys: ${{ env.SWIFT_MK_CACHE_BUILD_RESTORE_KEYS }}
 
     # The compile cache (the CAS store) is a rolling pile: the key carries a unique
     # run value so it never collides, so the post-job save always lands, and the build
@@ -332,9 +339,9 @@ runs:
       if: steps.cache-plan.outputs.compile-cache-enabled == 'true' && env.SWIFT_MK_POOL != '1'
       uses: actions/cache@v5
       with:
-        path: ${{ steps.cache-plan.outputs.compile-paths }}
-        key: ${{ steps.cache-plan.outputs.compile-key }}
-        restore-keys: ${{ steps.cache-plan.outputs.compile-restore-keys }}
+        path: ${{ env.SWIFT_MK_CACHE_COMPILE_PATHS }}
+        key: ${{ env.SWIFT_MK_CACHE_COMPILE_KEY }}
+        restore-keys: ${{ env.SWIFT_MK_CACHE_COMPILE_RESTORE_KEYS }}
 
     # Tuist arrives through mise, so it only applies to repos that declare a
     # toolchain; an xcodegen-only consumer has no .tool-versions and must not

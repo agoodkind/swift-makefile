@@ -99,6 +99,59 @@ func compileCacheReportedDisabledWhenNoCompilePaths() {
 }
 
 @Test
+func githubEnvCarriesTheSameKeysAndPathsAsTheStepOutputs() {
+  // The save half of actions/cache runs as a post step and re-evaluates its inputs,
+  // where a step-output expression can come back empty; the cache steps therefore read
+  // the plan from the job environment. Both copies must describe the same plan, or a
+  // restore and its save would disagree about what is being cached.
+  let plan = CachePlan.Result(
+    dependencyCacheEnabled: true,
+    buildCacheEnabled: true,
+    compileCacheEnabled: true,
+    dependencyKey: "dk",
+    dependencyRestoreKeys: ["dr-"],
+    buildKey: "bk",
+    buildRestoreKeys: [],
+    compileKey: "ck",
+    compileRestoreKeys: ["cw-", "cf-"])
+  let paths = CachePaths.Resolved(dependency: ["/a", "/b"], build: ["/c"], compile: ["/cas"])
+  let environment = CacheOutput.githubEnv(plan: plan, paths: paths)
+
+  #expect(environment.contains("SWIFT_MK_CACHE_COMPILE_KEY=ck\n"))
+  #expect(environment.contains("SWIFT_MK_CACHE_COMPILE_PATHS<<CACHE_PATHS\n/cas\nCACHE_PATHS\n"))
+  #expect(
+    environment.contains("SWIFT_MK_CACHE_COMPILE_RESTORE_KEYS<<CACHE_KEYS\ncw-\ncf-\nCACHE_KEYS\n"))
+  #expect(environment.contains("SWIFT_MK_CACHE_DEPENDENCY_KEY=dk\n"))
+  #expect(
+    environment.contains("SWIFT_MK_CACHE_DEPENDENCY_PATHS<<CACHE_PATHS\n/a\n/b\nCACHE_PATHS\n"))
+  #expect(environment.contains("SWIFT_MK_CACHE_BUILD_KEY=bk\n"))
+  #expect(environment.contains("SWIFT_MK_CACHE_BUILD_PATHS<<CACHE_PATHS\n/c\nCACHE_PATHS\n"))
+  // An empty list still emits both delimiters, so the action reads "" rather than
+  // inheriting whatever a previous step left in the variable.
+  #expect(environment.contains("SWIFT_MK_CACHE_BUILD_RESTORE_KEYS<<CACHE_KEYS\nCACHE_KEYS\n"))
+}
+
+@Test
+func githubEnvDelimiterAvoidsCollisionWithValues() {
+  let plan = CachePlan.Result(
+    dependencyCacheEnabled: true,
+    buildCacheEnabled: true,
+    compileCacheEnabled: false,
+    dependencyKey: "dk",
+    dependencyRestoreKeys: [],
+    buildKey: "bk",
+    buildRestoreKeys: [],
+    compileKey: "ck",
+    compileRestoreKeys: [])
+  let paths = CachePaths.Resolved(
+    dependency: [], build: ["CACHE_PATHS", "real/path"], compile: [])
+  let environment = CacheOutput.githubEnv(plan: plan, paths: paths)
+  #expect(
+    environment.contains(
+      "SWIFT_MK_CACHE_BUILD_PATHS<<CACHE_PATHS_EOF\nCACHE_PATHS\nreal/path\nCACHE_PATHS_EOF\n"))
+}
+
+@Test
 func githubOutputDelimiterAvoidsCollisionWithValues() {
   // A path value equal to the base delimiter (e.g. from EXTRA_CACHE_PATHS) must not end
   // the heredoc block early; the delimiter is extended until no value line matches.
