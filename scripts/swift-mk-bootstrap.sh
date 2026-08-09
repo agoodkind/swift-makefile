@@ -360,10 +360,21 @@ install_from_stage() {
         # loses the live build.lock while a build holds it, so the running build
         # keeps the old inode while the next build creates and locks a new one
         # and the per-worktree lock stops serializing anything.
+        #
+        # .gate is preserved for the same reason: a consumer's generate step
+        # recurses into make, and when that nested run finds a new engine ref it
+        # stages a fresh tree and swaps .make wholesale. The swap keeps only what
+        # this list names, so an unlisted .gate/stamp is destroyed in the middle of
+        # the gated build that wrote it. Every later compile then reports no proof
+        # and takes the decoupled path, which runs the hard gate on a release
+        # runner that installs no lint tooling, so the release fails on missing
+        # binaries rather than on a finding. The sibling allowlist in
+        # scripts/swift-mk-sync.sh guards the same runtime state on the clear path;
+        # a name added there belongs here too.
         if ! find "${MAKE_DIR}" -mindepth 1 -maxdepth 1 \
             \( -name logs -o -name build.lock -o -name swift-mk -o -name swift-mk.key \
                -o -name swift-mk-build -o -name dev -o -name .swift-mk-snapshot-ref \
-               -o -name swift.mk -o -name '*.log' \) -print0 \
+               -o -name .gate -o -name swift.mk -o -name '*.log' \) -print0 \
             > "${preserve_list}" 2>"${preserve_log}"; then
             printf 'error: could not enumerate the runtime files to preserve (find failed): %s\n' \
                 "$(stderr_sample "${preserve_log}")" >&2
