@@ -153,10 +153,15 @@ public enum GatedBuild {
   /// Whether this build may compile without running the hard gate.
   ///
   /// Only when both hold: the caller set `SWIFT_MK_SKIP_INLINE_GATES=1`, and this is a
-  /// CI run. The release job is the case this exists for. It builds the same commit CI
-  /// already gated in its own job, on a runner that installs no lint tooling, so
-  /// re-running the gate there fails on a missing `periphery` rather than on anything
-  /// about the code.
+  /// CI run.
+  ///
+  /// The release job is the case this exists for, and it resolves a contradiction
+  /// rather than relaxing anything. The release workflow declares that a release build
+  /// never lints, and installs no lint toolchain on that basis. A consumer whose build
+  /// tool links this module linted anyway: with no gate ancestor it takes the decoupled
+  /// path and runs the gate itself, which then failed on a missing `swiftlint` rather
+  /// than on anything about the code. The gate still runs on that same commit, in the
+  /// CI job that installs the tools.
   ///
   /// Both conditions are required, which is stricter than `Build.runsInlineGates`. The
   /// environment variable alone does nothing off CI, so a developer cannot set it and

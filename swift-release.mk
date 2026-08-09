@@ -70,11 +70,12 @@ release-build:
 		exit 1; \
 	fi
 	@mkdir -p "$(SWIFT_MK_DIST_DIR)"
-	@# A release build compiles the commit CI already gated in its own job, on a
-	@# runner that installs no lint tooling. Exported, not assigned inline, so it
-	@# reaches the build command's own child processes: a consumer build tool that
-	@# links SwiftMkCore runs the gate in-process and reads this from its environment.
-	@# Off CI the flag does nothing and the gate still runs.
+	@# This job sets install-lint-tools=false because a release build never lints;
+	@# say the same thing to the build command, so a consumer build tool that links
+	@# SwiftMkCore and runs the gate in-process agrees rather than failing on a
+	@# missing swiftlint. The gate still runs on this commit in the CI job that has
+	@# the tools. Exported, not assigned inline, so it reaches that tool's own child
+	@# processes. Off CI the flag does nothing and the gate still runs.
 	@export SWIFT_MK_SKIP_INLINE_GATES=1; \
 	eval "$(SWIFT_MK_RELEASE_BUILD_CMD)"
 	@if [ -z "$$(ls -A '$(SWIFT_MK_DIST_DIR)' 2>/dev/null)" ]; then \
