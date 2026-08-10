@@ -86,8 +86,16 @@ release-build:
 	@# default: a release command that recurses into make had the nested make read the
 	@# release command back as its build command and re-enter this same target, until the
 	@# runner ran out of processes.
+	@# Generation runs first, the same shape and guard `verify` and `build` use. A
+	@# generated-source consumer has sources that exist only after this command runs, and
+	@# a release always starts from a fresh checkout, so without this the release path was
+	@# the one build entry that compiled against sources that were never rendered. The
+	@# consumer's own build command cannot cover it when that command is the thing whose
+	@# dependencies need the generated sources to compile. SWIFT_MK_GENERATED=1 tells the
+	@# in-process chain generation already happened, matching the build path.
 	@$(SWIFT_MK_SIGNING_PRELUDE) \
-	SWIFT_MK_SKIP_INLINE_GATES=1 \
+	$(if $(strip $(SWIFT_GENERATE_CMD)),$(SWIFT_GENERATE_CMD) &&,) \
+	$(if $(strip $(SWIFT_GENERATE_CMD)),SWIFT_MK_GENERATED=1 ,)SWIFT_MK_SKIP_INLINE_GATES=1 \
 		"$(SWIFT_MK_BIN)" build --command "$(SWIFT_MK_RELEASE_BUILD_CMD)"
 	@if [ -z "$$(ls -A '$(SWIFT_MK_DIST_DIR)' 2>/dev/null)" ]; then \
 		echo "release-build: SWIFT_MK_RELEASE_BUILD_CMD left $(SWIFT_MK_DIST_DIR)/ empty" >&2; \
