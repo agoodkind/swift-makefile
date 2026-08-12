@@ -114,6 +114,41 @@ compilation cache store on disk.
   lanes; no partial state is saved to the cross-run cache because the save
   step runs only on job completion.
 
+## Invariants preserved, and the log line that proves each
+
+The combined job changes topology, not the build path. Every compile still
+enters through the engine's chokepoints, so the gate, cache, and module-mode
+invariants ride along unchanged. The implementation must show each of these in
+the probe run's job log before any consumer switches:
+
+- **One compile tree; tests skip-build.** The verify build and test commands
+  are unchanged; the test lane runs the configured skip-build test command
+  against the tree the build stage made. Proof: the job log shows one verify
+  build invocation and a test invocation carrying `--skip-build`.
+- **Release reuse is local.** The release build runs on the machine whose
+  compilation cache the verify build just filled. Proof: cache replay remarks
+  in the release build's section of the log, with the `ci-diagnostics` label
+  turning on `SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS` as it does today; hit rate
+  is read per package, cold then warm, from that log.
+- **CAS fills and rolls.** The combined job is a compile-bucket writer under
+  its own gate name in `CachePlan`'s writer list; the rolling per-attempt key
+  and sibling-fallback restore keys are untouched. Proof: `Cache saved with
+  key` carrying the new writer name at job end, and the next run's `Cache
+  restored from key` naming it.
+- **Gate proof, not values.** Both compiles run through `swift-mk build`
+  exactly as the current Verify and release-build recipes do; the orchestrator
+  invokes those existing make targets rather than new command strings, so
+  GateProof ancestry and the inline-gate skip are inherited, and no new knob
+  is introduced. Proof: the log shows the same `swift-mk build --command`
+  entries the two jobs show today.
+- **One module mode.** Both compiles are engine-mediated, so both are
+  explicit-module-build against the same stores; no plain build touches the
+  tree. Proof: absence of any non-chokepoint compile invocation in the log.
+- **Release lane never lints.** The lint gates live only in the test lane's
+  step list; the release lane's steps are the release stages verbatim. A lint
+  binary missing in the release lane still fails loudly as a
+  gate-ran-where-none-should defect.
+
 ## Rollout and verification
 
 1. Land the engine change behind its own pull request, whose combined job is
