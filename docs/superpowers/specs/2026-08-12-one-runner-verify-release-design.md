@@ -83,6 +83,18 @@ compilation cache store on disk.
   action with the same hosted floor and retry pair. Pool runners keep their
   host-mount caching and skip the actions/cache steps as they do now.
 
+## Runner budget: one macOS job per pull request, Linux is free
+
+The whole pull request lifecycle uses exactly one macOS job. Extra Targets
+does not keep a separate macOS job: a consumer's configured extra targets run
+as additional stages inside the combined job's test lane, after the verify
+tests, publishing their own named check. Everything that does not need Xcode
+stays on `ubuntu-latest`, which does not count against the four-runner cap:
+the change detector, the no-op skip aggregators, and the check-run
+publishing. The lifecycle is: Linux change detection, then either the Linux
+no-op (docs-only change) or the single macOS job, with Linux aggregators
+reporting the named checks.
+
 ## What changes where
 
 - **Engine.** The release stages (build, sign, notarize, package, appcast dry
@@ -167,7 +179,9 @@ request and restores on the next.
 
 ## Out of scope
 
-- Extra Targets keeps its own job and routing; folding it into the combined
-  job is a separate decision.
 - The Developer ID provisioning replacement for iphone-cell-tunnel (ICT-20)
-  stays an account action independent of this design.
+  stays an account action independent of this design. Until its
+  `APPLE_DEVELOPER_ID_PROFILE_BASE64` secret carries Developer ID profiles
+  instead of App Store profiles, that repository's release lane fails at
+  signing for the already-diagnosed reason; the combined job changes where the
+  failure appears, not what fixes it.
