@@ -231,7 +231,7 @@ $(if $(filter ok,$(shell mkdir -p .make && if bash "$(SWIFT_MK_FETCH_SCRIPT)" "$
 endef
 
 define swift-mk-require-one
-$(if $(wildcard $(1)),,$(error swift-makefile expected $(1); rerun without SWIFT_MK_SKIP_FETCH))
+$(if $(wildcard $(1)),,$(error swift-makefile expected $(1); the engine snapshot is incomplete))
 endef
 
 # One engine snapshot replaces the per-file fetch. In consumer mode the whole
@@ -252,7 +252,7 @@ endef
 SWIFT_MK_SNAPSHOT_HELPER := .make/scripts/swift-mk-bootstrap.sh
 SWIFT_MK_SNAPSHOT_CURRENT := $(shell if [ -f .make/Package.swift ] && grep -q '^etag=..*' .make/.swift-mk-snapshot-ref 2>/dev/null; then printf 1; fi)
 ifeq ($(SWIFT_MK_HELPER_DIR),$(SWIFT_MK_FETCHED_SCRIPT_DIR))
-ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
+ifeq ($(strip $(_SWIFT_MK_PROVISIONED)),1)
 SWIFT_MK_SNAPSHOT := $(call swift-mk-require-one,.make/Package.swift)
 else ifneq ($(wildcard $(SWIFT_MK_SNAPSHOT_HELPER)),)
 # The helper owns validation, reuse, and failure once it has landed once. It is
@@ -265,7 +265,7 @@ else ifneq ($(wildcard $(SWIFT_MK_SNAPSHOT_HELPER)),)
 # command line reaches this file but not a $(shell) child, and the helper would
 # silently fall back to its own default. GITHUB_ACTIONS and GITHUB_RUN_ID ride
 # along so the CI rule holds even when a caller passes them as make variables.
-SWIFT_MK_SNAPSHOT := $(if $(filter ok,$(shell SWIFT_MK_API_REPO="$(SWIFT_MK_API_REPO)" SWIFT_MK_API_REF="$(SWIFT_MK_API_REF)" SWIFT_MK_MODULES="$(SWIFT_MK_MODULES)" SWIFT_MK_CODELOAD_BASE="$(SWIFT_MK_CODELOAD_BASE)" SWIFT_MK_DEV_DIR="$(SWIFT_MK_DEV_DIR)" SWIFT_MK_SKIP_FETCH="$(SWIFT_MK_SKIP_FETCH)" GITHUB_ACTIONS="$(GITHUB_ACTIONS)" GITHUB_RUN_ID="$(GITHUB_RUN_ID)" bash "$(SWIFT_MK_SNAPSHOT_HELPER)" >&2 && printf ok)),,$(error swift-makefile failed to provision the engine snapshot))
+SWIFT_MK_SNAPSHOT := $(if $(filter ok,$(shell SWIFT_MK_API_REPO="$(SWIFT_MK_API_REPO)" SWIFT_MK_API_REF="$(SWIFT_MK_API_REF)" SWIFT_MK_MODULES="$(SWIFT_MK_MODULES)" SWIFT_MK_CODELOAD_BASE="$(SWIFT_MK_CODELOAD_BASE)" SWIFT_MK_DEV_DIR="$(SWIFT_MK_DEV_DIR)" _SWIFT_MK_PROVISIONED="$(_SWIFT_MK_PROVISIONED)" GITHUB_ACTIONS="$(GITHUB_ACTIONS)" GITHUB_RUN_ID="$(GITHUB_RUN_ID)" bash "$(SWIFT_MK_SNAPSHOT_HELPER)" >&2 && printf ok)),,$(error swift-makefile failed to provision the engine snapshot))
 else ifneq ($(strip $(SWIFT_MK_SNAPSHOT_CURRENT)),1)
 # Cold path for a consumer whose .make predates the helper (or whose marker is
 # still the old bare-ref format). It extracts once, which lands the helper
@@ -285,7 +285,7 @@ SWIFT_MK_MODULES ?=
 # SWIFT_MK_DEV_DIR and downloads otherwise. The module list is the consumer's
 # own small selection, not the whole engine source tree, so fetching whichever
 # one is actually missing is not the manifest footgun the snapshot removed.
-ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
+ifeq ($(strip $(_SWIFT_MK_PROVISIONED)),1)
 SWIFT_MK_FETCHED_MODULES := $(foreach m,$(SWIFT_MK_MODULES),$(call swift-mk-require-one,.make/$(m)))
 else
 SWIFT_MK_FETCHED_MODULES := $(foreach m,$(SWIFT_MK_MODULES),$(if $(wildcard .make/$(m)),,$(call swift-mk-fetch-path,$(m),.make/$(m))))
@@ -341,7 +341,7 @@ XCODE_TEMPLATE_DIR ?= $(HOME)/Library/Developer/Xcode/UserData
 # that path: fetch-path still runs for dev-dir mode, where no snapshot extract
 # ever happens, and as the fallback for a snapshot that genuinely lacks one of
 # these files, the same two cases swift-mk-fetch-path already existed for.
-ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
+ifeq ($(strip $(_SWIFT_MK_PROVISIONED)),1)
 SWIFT_MK_FETCHED_SWIFTLINT := $(call swift-mk-require-one,$(SWIFT_MK_SWIFTLINT_CONFIG))
 SWIFT_MK_FETCHED_SWIFT_FORMAT := $(call swift-mk-require-one,$(SWIFT_MK_SWIFT_FORMAT_CONFIG))
 SWIFT_MK_FETCHED_PERIPHERY := $(call swift-mk-require-one,$(SWIFT_MK_PERIPHERY_CONFIG))
@@ -350,7 +350,7 @@ SWIFT_MK_FETCHED_SWIFTLINT := $(if $(wildcard $(SWIFT_MK_SWIFTLINT_CONFIG)),,$(c
 SWIFT_MK_FETCHED_SWIFT_FORMAT := $(if $(wildcard $(SWIFT_MK_SWIFT_FORMAT_CONFIG)),,$(call swift-mk-fetch-path,.swift-format,$(SWIFT_MK_SWIFT_FORMAT_CONFIG)))
 SWIFT_MK_FETCHED_PERIPHERY := $(if $(wildcard $(SWIFT_MK_PERIPHERY_CONFIG)),,$(call swift-mk-fetch-path,.periphery.yml,$(SWIFT_MK_PERIPHERY_CONFIG)))
 endif
-ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
+ifeq ($(strip $(_SWIFT_MK_PROVISIONED)),1)
 SWIFT_MK_FETCHED_OSV := $(call swift-mk-require-one,$(SWIFT_MK_OSV_CONFIG))
 else
 SWIFT_MK_FETCHED_OSV := $(if $(wildcard $(SWIFT_MK_OSV_CONFIG)),,$(call swift-mk-fetch-path,osv-scanner.toml,$(SWIFT_MK_OSV_CONFIG)))
@@ -359,12 +359,12 @@ endif
 # swift.mk owns the shared mise config outright: it is fetched here, not by the
 # consumer's tracked bootstrap.mk, so every consumer converges on its next run
 # with no consumer-repo change. The top-level run fetches it once, which is how
-# the SWIFT_MK_SKIP_FETCH=1 sub-makes consumers use for their inner builds find
-# it already present; a strict skip-fetch run that genuinely lacks it gets the
+# the _SWIFT_MK_PROVISIONED=1 sub-makes the engine uses for inner builds find
+# it already present; a provisioned run that genuinely lacks it gets the
 # standard pre-fetch error.
 ifneq ($(wildcard $(SWIFT_MK_MISE_CONFIG)),)
 SWIFT_MK_FETCHED_MISE := 1
-else ifeq ($(strip $(SWIFT_MK_SKIP_FETCH)),1)
+else ifeq ($(strip $(_SWIFT_MK_PROVISIONED)),1)
 SWIFT_MK_FETCHED_MISE := $(call swift-mk-require-one,$(SWIFT_MK_MISE_CONFIG))
 else
 SWIFT_MK_FETCHED_MISE := $(call swift-mk-fetch-path,mise.toml,$(SWIFT_MK_MISE_CONFIG))

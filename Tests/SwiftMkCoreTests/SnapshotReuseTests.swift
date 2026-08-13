@@ -362,7 +362,7 @@ func warmSnapshotHelperParseIssuesExactlyOneRequest() async throws {
   // SWIFT_MK_HELPER_DIR == SWIFT_MK_FETCHED_SCRIPT_DIR) re-invokes the landed
   // helper on every parse whose goal is not exactly "help", the same fast path
   // HelpFastPathTests covers. Only a real parse with a real goal can prove
-  // bootstrap.mk's own SWIFT_MK_SKIP_FETCH override actually stops that second
+  // bootstrap.mk's own provisioned override actually stops that second
   // invocation from costing a second network round trip; a stubbed swift.mk or
   // a bare "help" goal would pass this test whether or not the override exists.
   var files = engineFiles()

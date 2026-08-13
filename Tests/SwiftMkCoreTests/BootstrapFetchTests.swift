@@ -122,7 +122,7 @@ func helperSwapFailureLeavesWarmTreeIntactForLaterSkipFetch() async throws {
     let skipFetchResult = await runHelper(
       directory: directory,
       environment: [
-        "SWIFT_MK_CODELOAD_BASE": server.codeloadBase, "SWIFT_MK_SKIP_FETCH": "1",
+        "SWIFT_MK_CODELOAD_BASE": server.codeloadBase, "_SWIFT_MK_PROVISIONED": "1",
       ])
     #expect(skipFetchResult.status == 0, "skip-fetch failed: \(skipFetchResult.stderr)")
   }
@@ -169,7 +169,7 @@ func helperSkipFetchRejectsARequiredAssetThatIsActuallyADirectory() async throws
 
   let result = await runHelper(
     directory: directory,
-    environment: ["SWIFT_MK_CODELOAD_BASE": "http://127.0.0.1:9", "SWIFT_MK_SKIP_FETCH": "1"])
+    environment: ["SWIFT_MK_CODELOAD_BASE": "http://127.0.0.1:9", "_SWIFT_MK_PROVISIONED": "1"])
   #expect(result.status != 0)
 }
 
