@@ -20,7 +20,7 @@ Each subsystem has a present-tense overview under `docs/<area>/overview.md` that
 
 - `swift-mk` is a Swift command-line program that carries the shared lint, baseline, gate, and notice logic. It builds from the root SwiftPM package: the `SwiftMkCore` library holds the logic, the `SwiftMkCLI` executable wraps it, and the package produces the `swift-mk` product using `apple/swift-argument-parser`. `scripts/swift-mk-build.sh` builds and caches the binary at `.make/swift-mk`, and `swift.mk` invokes it.
 - `Sources/SwiftMkCore/` holds the shared lint, baseline, gate, and notice logic.
-- `bootstrap.mk` fetches `swift.mk`, shared configs, shared helper scripts, and shared modules into `.make/`.
+- `bootstrap.mk` is the committed stub a consumer includes. It obtains the provisioning helper and runs it to populate `.make/`.
 - `swift.mk` defines the shared public targets.
 - `swift-build.mk` defines shared build, run, generate, clean, deploy, and install targets from consumer-provided commands.
 - `swift-release.mk` defines shared release wrapper targets from consumer-provided commands.

@@ -10,14 +10,14 @@
 #
 # It resolves one run correlation and prints it: adopt an inbound W3C TRACEPARENT,
 # else the canonical TRACE_ID/SPAN_ID pair, else the SWIFT_MK_TRACE_ID/
-# SWIFT_MK_SPAN_ID aliases, else (skip-fetch only) the persisted .traceparent,
+# SWIFT_MK_SPAN_ID aliases, else (provisioned only) the persisted .traceparent,
 # else mint a fresh id. The chosen traceparent is written under the log directory,
 # the header is printed to stderr once per run (guarded by the .run sentinel), and
 # `ok <traceparent> <trace> <span>` is printed to stdout for the make caller to
 # parse into its exported variables.
 #
 # Inputs (environment): TRACEPARENT, TRACE_ID, SPAN_ID, SWIFT_MK_TRACE_ID,
-# SWIFT_MK_SPAN_ID, SWIFT_MK_SKIP_FETCH, SWIFT_MK_ROOT. The make caller passes its
+# SWIFT_MK_SPAN_ID, _SWIFT_MK_PROVISIONED, SWIFT_MK_ROOT. The make caller passes its
 # own make-var values through the environment so a make-level assignment is honored
 # the same as an inherited environment value.
 
@@ -219,7 +219,7 @@ main() {
         traceparent="00-$trace-$span-01"
     fi
 
-    if [[ -z "$traceparent" && "${SWIFT_MK_SKIP_FETCH:-}" == "1" && -s "$traceparent_file" ]]; then
+    if [[ -z "$traceparent" && "${_SWIFT_MK_PROVISIONED:-}" == "1" && -s "$traceparent_file" ]]; then
         if IFS= read -r file_traceparent <"$traceparent_file"; then
             if traceparent=$(normalize_traceparent "$file_traceparent"); then
                 id_pair=$(ids_from_traceparent "$traceparent")

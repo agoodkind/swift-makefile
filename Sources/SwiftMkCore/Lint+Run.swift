@@ -297,7 +297,7 @@ extension Lint {
       let make = Env.get("SWIFT_MK_RECURSIVE_MAKE", Env.get("MAKE", "make"))
       let makeArgs = Env.words(Env.get("SWIFT_MK_RECURSIVE_MAKE_ARGS"))
       let result = Shell.run(
-        make, makeArgs + [gate], environment: ["SWIFT_MK_SKIP_FETCH": "1"])
+        make, makeArgs + [gate], environment: ["_SWIFT_MK_PROVISIONED": "1"])
       Output.emitStandardOutput(result.combined)
       return result.status == 0
     }

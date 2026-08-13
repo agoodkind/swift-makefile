@@ -73,7 +73,3 @@ A pull request runs Verify. A push to the default branch skips the Verify and Ex
 ## OSV policy is non-overridable
 
 The dependency audit uses the engine's OSV config through an `override` in [swift.mk](../../swift.mk), so a consumer cannot weaken the policy or its exception list. The single source of exceptions is the engine.
-
-## Bootstrap is a thin stub
-
-`bootstrap.mk` fetches only `swift.mk`, and `swift.mk` extracts one engine snapshot into `.make` plus the shared configs, so a consumer self-heals on the next build. The snapshot carries the whole engine tree, so a source added to the engine is present with no per-file manifest to maintain. [Consumer fetch](../fetch/overview.md) describes the snapshot and its smoke test.

@@ -559,7 +559,7 @@ serve_from_disk_with_warning() {
     recorded=$(read_marker_field "timestamp")
     etag_value=$(read_marker_field "etag" || printf 'unknown')
     now=$(current_epoch_seconds)
-    printf '%s\n' "swift-mk: upstream unreachable; serving the .make snapshot validated $(format_age $(( now - recorded ))) ago (etag ${etag_value}); validation curl exit ${validate_status}: $(stderr_sample "${log_path}"). Set SWIFT_MK_SKIP_FETCH=1 to silence, or check network access to ${SWIFT_MK_CODELOAD_BASE}" >&2
+    printf '%s\n' "swift-mk: upstream unreachable; serving the .make snapshot validated $(format_age $(( now - recorded ))) ago (etag ${etag_value}); validation curl exit ${validate_status}: $(stderr_sample "${log_path}"). Check network access to ${SWIFT_MK_CODELOAD_BASE}" >&2
 }
 
 # running_in_ci matches the test Build.runsInlineGates already uses.
@@ -632,11 +632,11 @@ main() {
         return 0
     fi
 
-    if [[ "${SWIFT_MK_SKIP_FETCH:-}" == "1" ]]; then
+    if [[ "${_SWIFT_MK_PROVISIONED:-}" == "1" ]]; then
         if assets_complete "${MAKE_DIR}"; then
             return 0
         fi
-        printf '%s\n' "error: SWIFT_MK_SKIP_FETCH=1 but .make is missing a required asset" >&2
+        printf '%s\n' "error: engine snapshot is missing a required asset" >&2
         return 1
     fi
 
