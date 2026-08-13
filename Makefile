@@ -58,7 +58,7 @@ CHECK_SWIFT_MK := $(MAKE) -C swiftcheck -f ../$(SWIFT_MK) $(CHECK_ARGS)
 
 .DEFAULT_GOAL := check
 
-.PHONY: build verify check lint fmt test analyze audit build-check lint-tools \
+.PHONY: build verify verify-build verify-test verify-quality check lint fmt test analyze audit build-check lint-tools \
 	quality-guard \
 	lint-swiftlint lint-format lint-complexity lint-deadcode swiftcheck-extra \
 	lint-swiftlint-baseline lint-swiftlint-baseline-prune-fixed lint-swiftlint-baseline-remove-fixed lint-swiftlint-baseline-accept-new \
@@ -77,6 +77,20 @@ build:
 verify:
 	$(ROOT_SWIFT_MK) verify
 	$(CHECK_SWIFT_MK) verify
+
+# Each stage covers both packages, so a CI job running the stages as separate
+# steps keeps the same per-package work `verify` chains.
+verify-build:
+	$(ROOT_SWIFT_MK) verify-build
+	$(CHECK_SWIFT_MK) verify-build
+
+verify-test:
+	$(ROOT_SWIFT_MK) verify-test
+	$(CHECK_SWIFT_MK) verify-test
+
+verify-quality:
+	$(ROOT_SWIFT_MK) verify-quality
+	$(CHECK_SWIFT_MK) verify-quality
 
 build-check:
 	$(ROOT_SWIFT_MK) build-check
