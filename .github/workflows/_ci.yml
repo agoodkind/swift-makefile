@@ -70,6 +70,28 @@ on:
       fetch-depth:
         type: string
         default: "1"
+      # Run Verify as separate build, test, and quality stages and then the
+      # signed release stages on the same machine, publishing one named check run
+      # per stage. A consumer that turns this on drops the `pull_request` trigger
+      # from its release workflow, so a pull request occupies one macOS slot
+      # instead of two. Requires `checks: write` in the caller's own permissions,
+      # since a called workflow cannot hold a permission the caller withheld.
+      release-dry-run:
+        type: boolean
+        default: false
+      # Ceiling for a Verify job that also runs the release stages. It replaces
+      # timeout-minutes only while the release dry run actually runs.
+      release-timeout-minutes:
+        type: number
+        default: 60
+      # Globs evaluated inside dist-dir naming the artifacts the release dry run
+      # notarizes. Empty runs the release build and skips notarization.
+      notarize-pattern:
+        type: string
+        default: ""
+      dist-dir:
+        type: string
+        default: dist
       timeout-minutes:
         type: number
         # 60 leaves headroom for a one-time cold compile-cache populate. The SwiftPM
@@ -344,9 +366,11 @@ jobs:
     # Route to ubuntu on an index-confirmed skip so a docs-only push does not
     # occupy a macOS pool slot.
     runs-on: ${{ needs.changes.outputs.run == 'false' && 'ubuntu-latest' || needs.route-verify.outputs.label }}
-    timeout-minutes: ${{ inputs.timeout-minutes }}
+    timeout-minutes: ${{ (inputs.release-dry-run && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') && inputs.release-timeout-minutes || inputs.timeout-minutes }}
     permissions:
       contents: read
+      # The gate publishes one check run per stage when the release dry run is on.
+      checks: write
     steps:
       - uses: actions/checkout@v7
         if: ${{ github.repository == 'agoodkind/swift-makefile' }}
@@ -359,13 +383,26 @@ jobs:
           gate: verify
           runner: ${{ needs.changes.outputs.run == 'false' && 'ubuntu-latest' || needs.route-verify.outputs.label }}
           run: ${{ needs.changes.outputs.run }}
+          release-dry-run: ${{ inputs.release-dry-run }}
+          # A fork carries no secrets, and Dependabot reads its own secret set, so
+          # neither can run a signed stage. They still run the staged verify half
+          # and report Release dry run as skipped, so the same four checks a
+          # ruleset requires appear on every pull request.
+          sign-release: ${{ inputs.release-dry-run && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' }}
+          notarize-pattern: ${{ inputs.notarize-pattern }}
+          dist-dir: ${{ inputs.dist-dir }}
+          head-sha: ${{ github.event.pull_request.head.sha }}
           xcode-version: ${{ inputs.xcode-version }}
           cache-profile: ${{ inputs.cache-profile }}
           cache-version: ${{ inputs.cache-version }}
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
           brew-packages: ${{ inputs.brew-packages }}
-          import-signing-cert: ${{ inputs.import-signing-cert }}
-          install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
+          # A release-dry-run consumer asks for signing so the release stage can
+          # sign; hold that request off exactly where that stage cannot run, or
+          # the signing preflight fails a fork before the build starts. A consumer
+          # that did not opt in forwards its own value unchanged.
+          import-signing-cert: ${{ inputs.import-signing-cert && (!inputs.release-dry-run || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')) }}
+          install-provisioning-profile: ${{ inputs.install-provisioning-profile && (!inputs.release-dry-run || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')) }}
           signing-identity-name: ${{ inputs.signing-identity-name }}
           apple-team-id: ${{ inputs.apple-team-id }}
           setup-target: ${{ inputs.setup-target }}
@@ -394,9 +431,11 @@ jobs:
     # the aggregators skip so the run cancels cleanly and ci-infra-retry.yml reruns.
     if: ${{ !cancelled() && (github.event_name != 'push' || github.ref_name != github.event.repository.default_branch) && needs.route-verify.outputs.on_pool == 'true' && needs.verify-pool.result != 'success' }}
     runs-on: ${{ inputs.runner }}
-    timeout-minutes: ${{ inputs.timeout-minutes }}
+    timeout-minutes: ${{ (inputs.release-dry-run && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') && inputs.release-timeout-minutes || inputs.timeout-minutes }}
     permissions:
       contents: read
+      # The gate publishes one check run per stage when the release dry run is on.
+      checks: write
     steps:
       - uses: actions/checkout@v7
         if: ${{ github.repository == 'agoodkind/swift-makefile' }}
@@ -408,13 +447,20 @@ jobs:
         with: &verify-hosted-inputs
           gate: verify
           runner: ${{ inputs.runner }}
+          release-dry-run: ${{ inputs.release-dry-run }}
+          # See the pool attempt's note on holding the signed stage off a fork or
+          # a Dependabot pull request.
+          sign-release: ${{ inputs.release-dry-run && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' }}
+          notarize-pattern: ${{ inputs.notarize-pattern }}
+          dist-dir: ${{ inputs.dist-dir }}
+          head-sha: ${{ github.event.pull_request.head.sha }}
           xcode-version: ${{ inputs.xcode-version }}
           cache-profile: ${{ inputs.cache-profile }}
           cache-version: ${{ inputs.cache-version }}
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
           brew-packages: ${{ inputs.brew-packages }}
-          import-signing-cert: ${{ inputs.import-signing-cert }}
-          install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
+          import-signing-cert: ${{ inputs.import-signing-cert && (!inputs.release-dry-run || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')) }}
+          install-provisioning-profile: ${{ inputs.install-provisioning-profile && (!inputs.release-dry-run || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')) }}
           signing-identity-name: ${{ inputs.signing-identity-name }}
           apple-team-id: ${{ inputs.apple-team-id }}
           setup-target: ${{ inputs.setup-target }}
