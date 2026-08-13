@@ -46,8 +46,18 @@ runs:
       run: |
         set -euo pipefail
 
+        # The cache key carries no toolchain component, and a cached binary
+        # built under a since-removed Xcode aborts at dyld load (its
+        # libIndexStore.dylib rpath no longer resolves), so existence is not
+        # reusability. Probe a launch and rebuild on any failure.
         if [ -x .swift-mk-notarize-bin/swift-mk ]; then
-            exit 0
+            probe_rc=0
+            .swift-mk-notarize-bin/swift-mk version >/dev/null 2>&1 || probe_rc=$?
+            if [ "${probe_rc}" -eq 0 ]; then
+                exit 0
+            fi
+            echo "notarize-staple: cached swift-mk failed to launch (exit ${probe_rc}); rebuilding against the active toolchain" >&2
+            rm -rf .swift-mk-notarize-bin
         fi
         swift build --package-path .swift-mk-notarize-src -c release --product swift-mk
         bin_dir="$(swift build --package-path .swift-mk-notarize-src -c release --show-bin-path)"
