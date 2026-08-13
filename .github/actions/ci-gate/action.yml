@@ -435,24 +435,33 @@ runs:
         } >> "${GITHUB_OUTPUT}"
 
     - name: Notarize and staple (swift-makefile)
-      id: notarize-local
-      if: ${{ inputs.run != 'false' && inputs.gate == 'verify' && inputs.release-dry-run == 'true' && inputs.sign-release == 'true' && inputs.notarize-pattern != '' && github.repository == 'agoodkind/swift-makefile' }}
-      uses: ./.github/actions/notarize-staple
-      with:
-        artifact-path: ${{ steps.release-artifacts.outputs.list }}
-        notary-key-base64: ${{ inputs.apple-notary-key-base64 }}
-        notary-key-id: ${{ inputs.apple-notary-key-id }}
-        notary-issuer-id: ${{ inputs.apple-notary-issuer-id }}
+      id: notarize
+      # The notarize-staple composite exists for the release workflow's notarize
+      # job, which has no checkout and builds an engine from main. This job
+      # already carries a verified engine built from the source under test
+      # (setup-build-env exports SWIFT_MK_BIN), so notarize through it: no
+      # second engine build, no main checkout, and the dry run notarizes with
+      # the engine the pull request actually changes.
+      if: ${{ inputs.run != 'false' && inputs.gate == 'verify' && inputs.release-dry-run == 'true' && inputs.sign-release == 'true' && inputs.notarize-pattern != '' }}
+      shell: bash
+      env:
+        ARTIFACT_PATH: ${{ steps.release-artifacts.outputs.list }}
+        APPLE_NOTARY_KEY_BASE64: ${{ inputs.apple-notary-key-base64 }}
+        APPLE_NOTARY_KEY_ID: ${{ inputs.apple-notary-key-id }}
+        APPLE_NOTARY_ISSUER_ID: ${{ inputs.apple-notary-issuer-id }}
+      run: |
+        set -euo pipefail
 
-    - name: Notarize and staple
-      id: notarize-remote
-      if: ${{ inputs.run != 'false' && inputs.gate == 'verify' && inputs.release-dry-run == 'true' && inputs.sign-release == 'true' && inputs.notarize-pattern != '' && github.repository != 'agoodkind/swift-makefile' }}
-      uses: agoodkind/swift-makefile/.github/actions/notarize-staple@main
-      with:
-        artifact-path: ${{ steps.release-artifacts.outputs.list }}
-        notary-key-base64: ${{ inputs.apple-notary-key-base64 }}
-        notary-key-id: ${{ inputs.apple-notary-key-id }}
-        notary-issuer-id: ${{ inputs.apple-notary-issuer-id }}
+        if [[ -z "${SWIFT_MK_BIN:-}" ]] || [[ ! -x "${SWIFT_MK_BIN}" ]]; then
+            echo "notarize: SWIFT_MK_BIN is not an executable engine; setup-build-env did not run" >&2
+            exit 1
+        fi
+        if [[ -z "${ARTIFACT_PATH// /}" ]]; then
+            echo "notarize: no artifacts matched the notarize pattern" >&2
+            exit 1
+        fi
+        # shellcheck disable=SC2086
+        "${SWIFT_MK_BIN}" notarize $ARTIFACT_PATH
 
     - name: Publish Release dry run check
       id: publish-release
@@ -486,7 +495,7 @@ runs:
         # outcome, which separates a cancellation from a real stage failure
         # without a status-check function; those are defined for `if` conditions,
         # not for a step environment.
-        UNFINISHED_CONCLUSION: ${{ (steps.verify-build.outcome == 'cancelled' || steps.verify-test.outcome == 'cancelled' || steps.verify-quality.outcome == 'cancelled' || steps.release-build.outcome == 'cancelled' || steps.notarize-local.outcome == 'cancelled' || steps.notarize-remote.outcome == 'cancelled') && 'cancelled' || 'failure' }}
+        UNFINISHED_CONCLUSION: ${{ (steps.verify-build.outcome == 'cancelled' || steps.verify-test.outcome == 'cancelled' || steps.verify-quality.outcome == 'cancelled' || steps.release-build.outcome == 'cancelled' || steps.notarize.outcome == 'cancelled') && 'cancelled' || 'failure' }}
         BUILD_PUBLISHED: ${{ steps.publish-build.outcome }}
         TESTS_PUBLISHED: ${{ steps.publish-tests.outcome }}
         QUALITY_PUBLISHED: ${{ steps.publish-quality.outcome }}
