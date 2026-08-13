@@ -391,6 +391,13 @@ runs:
         TEAM_ID: ${{ inputs.apple-team-id }}
         PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile-local.outputs.profile-specifier || steps.profile-remote.outputs.profile-specifier }}
         SWIFT_MK_DIST_DIR: ${{ inputs.dist-dir }}
+        # The release workflow's meta job stamps a real ARTIFACT_VERSION; this
+        # job has no meta stage, and a consumer that keys its artifact names on
+        # the version can collide two paths when the value falls back to a
+        # configuration-shaped default (measured: fan-curve's dmg copy failed on
+        # identical source and destination). The placeholder keeps names
+        # distinct; the dry run proves the path, not the version.
+        ARTIFACT_VERSION: dry-run
         APPLE_NOTARY_KEY_BASE64: ${{ inputs.apple-notary-key-base64 }}
         APPLE_NOTARY_KEY_ID: ${{ inputs.apple-notary-key-id }}
         APPLE_NOTARY_ISSUER_ID: ${{ inputs.apple-notary-issuer-id }}
