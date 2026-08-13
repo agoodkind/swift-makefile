@@ -241,17 +241,18 @@ private func renderSwiftBuildMakefileCommands(codeSignKeychain: String) throws -
     """
   try makefile.write(to: makefileURL, atomically: true, encoding: .utf8)
 
-  var arguments = [
+  // The keychain travels as a command-line override even when empty, because a
+  // bare omission lets make read the ambient CODE_SIGN_KEYCHAIN a signing CI
+  // job exports, and the without-keychain case must not depend on the host env.
+  let arguments = [
     "-f", makefileURL.path,
     "print-signing",
     "SWIFT_MK_BIN=/tmp/swift-mk",
     "CODE_SIGN_IDENTITY=Developer ID Application: Example",
     "SWIFT_MK_SIGN_BUNDLES_DIR=Products/Bundles",
     "SWIFT_MK_SIGN_PRODUCTS=Products/App",
+    "CODE_SIGN_KEYCHAIN=\(codeSignKeychain)",
   ]
-  if !codeSignKeychain.isEmpty {
-    arguments.append("CODE_SIGN_KEYCHAIN=\(codeSignKeychain)")
-  }
 
   let result = Shell.run("make", arguments)
   #expect(result.status == 0, Comment(rawValue: result.combined))

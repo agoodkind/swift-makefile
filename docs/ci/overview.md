@@ -8,6 +8,20 @@ A consumer calls [_ci.yml](../../.github/workflows/_ci.yml), which runs Verify a
 
 The reusable release workflow defaults `release-on-merge` to `manual`, so a main-branch push does not publish. A consumer sets it to `prerelease` or `stable` to opt into publishing after a merge. Manual dispatch selects a release track. A stable dispatch with no source override releases the selected workflow ref.
 
+## One macOS job per pull request
+
+A consumer that sets `release-dry-run` runs its signed release stages inside Verify instead of in a second macOS job. Verify then runs four stages on one runner: the verify build, the tests against that build, the source-only quality gates, and the signed release build with notarization and stapling. The release build replays the compilation cache the verify build just filled on the same machine. Two separate jobs could not do that, because each one read the cross-run cache before the other had saved.
+
+Each stage publishes its own check run against the pull request head commit, named `Build`, `Tests`, `Quality`, and `Release dry run`, so a branch ruleset can require a stage by name. A failing stage reports its own name as failed and every later name as cancelled, because the stages are strictly ordered and each one publishes only after it passes. A cancelled run reports every unfinished name as cancelled. A change-based skip publishes all four green from the Linux no-op path and occupies no macOS runner.
+
+Publishing needs `checks: write` in the caller's own permissions, since a called workflow cannot hold a permission the caller withheld. Publishing is reporting, not a gate: a run that cannot publish logs the rejection with its exit status and leaves the stage's own result alone, so a missing permission costs the named rows rather than the gate.
+
+A fork or Dependabot pull request cannot read the signing secrets. It runs the three verify stages, holds off the certificate import that would otherwise fail its signing preflight, and reports `Release dry run` as skipped, so the same four names appear on every pull request.
+
+The release stages never lint. The quality gates finish before the release build starts, and a lint tool running in the release half would be a gate running where none should. A Verify job in this mode uses `release-timeout-minutes` as its ceiling instead of `timeout-minutes`.
+
+A consumer that turns this on drops the `pull_request` trigger from its release workflow, so the release pipeline runs only on a merge or a manual dispatch.
+
 ## Skip detector
 
 CI skips Verify when a pull request changes nothing the build or lint family depends on. The required Verify check still reports green, and the decision requires no consumer configuration.

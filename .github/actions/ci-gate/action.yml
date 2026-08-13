@@ -100,6 +100,31 @@ inputs:
     description: App Store Connect issuer identifier.
     required: false
     default: ""
+  release-dry-run:
+    description: >-
+      Run the verify gate as separate build, test, and quality stages and publish
+      one named check run per stage, instead of one `verify` step.
+    required: false
+    default: "false"
+  sign-release:
+    description: >-
+      Run the signed release stage after the quality stage. Only a run that can
+      read the signing secrets sets this, so the caller holds it off for fork and
+      Dependabot pull requests and the Release dry run check reports skipped.
+    required: false
+    default: "false"
+  notarize-pattern:
+    description: Globs evaluated inside dist-dir naming the artifacts to notarize.
+    required: false
+    default: ""
+  dist-dir:
+    description: Directory the release build populates.
+    required: false
+    default: dist
+  head-sha:
+    description: Commit the published check runs attach to.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -122,8 +147,10 @@ runs:
       with:
         fetch-depth: ${{ inputs.fetch-depth }}
 
+    # The indexed-skip path still needs the helper tree when the caller publishes
+    # stage checks, because the ubuntu no-op reports all four green from here.
     - name: Checkout swift-makefile helpers
-      if: ${{ inputs.run != 'false' && github.repository != 'agoodkind/swift-makefile' }}
+      if: ${{ (inputs.run != 'false' || inputs.release-dry-run == 'true') && github.repository != 'agoodkind/swift-makefile' }}
       uses: actions/checkout@v7
       with:
         repository: agoodkind/swift-makefile
@@ -249,7 +276,7 @@ runs:
       run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
 
     - name: Run verify
-      if: ${{ inputs.run != 'false' && inputs.gate == 'verify' }}
+      if: ${{ inputs.run != 'false' && inputs.gate == 'verify' && inputs.release-dry-run != 'true' }}
       shell: bash
       env:
         SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
@@ -263,6 +290,250 @@ runs:
         APPLE_NOTARY_KEY_ID: ${{ inputs.apple-notary-key-id }}
         APPLE_NOTARY_ISSUER_ID: ${{ inputs.apple-notary-issuer-id }}
       run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
+
+    # ── Staged verify plus the signed release dry run ────────────────────────
+    # The same work `verify` runs, split so each stage carries its own named
+    # check, then the release stages on the machine whose compilation cache the
+    # verify build just filled. The stages stay serialized: the release lane must
+    # not overlap the quality gates, because a lint tool running in the release
+    # half would be a gate running where none should.
+    - name: Run verify build
+      id: verify-build
+      if: ${{ inputs.run != 'false' && inputs.gate == 'verify' && inputs.release-dry-run == 'true' }}
+      shell: bash
+      env:
+        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+        MAKE_TARGET: verify-build
+        MAKE_ARGS: ${{ inputs.make-args }}
+        CERT_SHA1: ${{ steps.cert-local.outputs.identity-sha1 || steps.cert-remote.outputs.identity-sha1 }}
+        CODE_SIGN_KEYCHAIN: ${{ steps.cert-local.outputs.keychain || steps.cert-remote.outputs.keychain }}
+        TEAM_ID: ${{ inputs.apple-team-id }}
+        PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile-local.outputs.profile-specifier || steps.profile-remote.outputs.profile-specifier }}
+        APPLE_NOTARY_KEY_BASE64: ${{ inputs.apple-notary-key-base64 }}
+        APPLE_NOTARY_KEY_ID: ${{ inputs.apple-notary-key-id }}
+        APPLE_NOTARY_ISSUER_ID: ${{ inputs.apple-notary-issuer-id }}
+      run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
+
+    - name: Publish Build check
+      id: publish-build
+      if: ${{ inputs.run != 'false' && inputs.gate == 'verify' && inputs.release-dry-run == 'true' }}
+      shell: bash
+      env:
+        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+        HEAD_SHA: ${{ inputs.head-sha }}
+      run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/ci-gate/publish-check.sh" Build success
+
+    - name: Run verify tests
+      id: verify-test
+      if: ${{ inputs.run != 'false' && inputs.gate == 'verify' && inputs.release-dry-run == 'true' }}
+      shell: bash
+      env:
+        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+        MAKE_TARGET: verify-test
+        MAKE_ARGS: ${{ inputs.make-args }}
+        CERT_SHA1: ${{ steps.cert-local.outputs.identity-sha1 || steps.cert-remote.outputs.identity-sha1 }}
+        CODE_SIGN_KEYCHAIN: ${{ steps.cert-local.outputs.keychain || steps.cert-remote.outputs.keychain }}
+        TEAM_ID: ${{ inputs.apple-team-id }}
+        PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile-local.outputs.profile-specifier || steps.profile-remote.outputs.profile-specifier }}
+        APPLE_NOTARY_KEY_BASE64: ${{ inputs.apple-notary-key-base64 }}
+        APPLE_NOTARY_KEY_ID: ${{ inputs.apple-notary-key-id }}
+        APPLE_NOTARY_ISSUER_ID: ${{ inputs.apple-notary-issuer-id }}
+      run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
+
+    - name: Publish Tests check
+      id: publish-tests
+      if: ${{ inputs.run != 'false' && inputs.gate == 'verify' && inputs.release-dry-run == 'true' }}
+      shell: bash
+      env:
+        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+        HEAD_SHA: ${{ inputs.head-sha }}
+      run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/ci-gate/publish-check.sh" Tests success
+
+    - name: Run verify quality
+      id: verify-quality
+      if: ${{ inputs.run != 'false' && inputs.gate == 'verify' && inputs.release-dry-run == 'true' }}
+      shell: bash
+      env:
+        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+        MAKE_TARGET: verify-quality
+        MAKE_ARGS: ${{ inputs.make-args }}
+        CERT_SHA1: ${{ steps.cert-local.outputs.identity-sha1 || steps.cert-remote.outputs.identity-sha1 }}
+        CODE_SIGN_KEYCHAIN: ${{ steps.cert-local.outputs.keychain || steps.cert-remote.outputs.keychain }}
+        TEAM_ID: ${{ inputs.apple-team-id }}
+        PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile-local.outputs.profile-specifier || steps.profile-remote.outputs.profile-specifier }}
+        APPLE_NOTARY_KEY_BASE64: ${{ inputs.apple-notary-key-base64 }}
+        APPLE_NOTARY_KEY_ID: ${{ inputs.apple-notary-key-id }}
+        APPLE_NOTARY_ISSUER_ID: ${{ inputs.apple-notary-issuer-id }}
+      run: swift "${SWIFT_MK_HELPER_ROOT}/.github/actions/workflow-helper/workflow-helper.swift" run-make-with-signing
+
+    - name: Publish Quality check
+      id: publish-quality
+      if: ${{ inputs.run != 'false' && inputs.gate == 'verify' && inputs.release-dry-run == 'true' }}
+      shell: bash
+      env:
+        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+        HEAD_SHA: ${{ inputs.head-sha }}
+      run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/ci-gate/publish-check.sh" Quality success
+
+    # The release build mirrors the reusable release workflow's build step. It
+    # carries no release metadata because this job has no metadata stage to read
+    # one from, so the consumer's release command falls back to its own dev
+    # version; the dry run proves the release path runs, not what it is tagged.
+    # Signing values pass as make command-line variables only when present, so a
+    # secretless run never clobbers a consumer's ?= defaults with empties.
+    - name: Build release artifacts
+      id: release-build
+      if: ${{ inputs.run != 'false' && inputs.gate == 'verify' && inputs.release-dry-run == 'true' && inputs.sign-release == 'true' }}
+      shell: bash
+      env:
+        CERT_SHA1: ${{ steps.cert-local.outputs.identity-sha1 || steps.cert-remote.outputs.identity-sha1 }}
+        CODE_SIGN_KEYCHAIN: ${{ steps.cert-local.outputs.keychain || steps.cert-remote.outputs.keychain }}
+        TEAM_ID: ${{ inputs.apple-team-id }}
+        PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile-local.outputs.profile-specifier || steps.profile-remote.outputs.profile-specifier }}
+        SWIFT_MK_DIST_DIR: ${{ inputs.dist-dir }}
+        APPLE_NOTARY_KEY_BASE64: ${{ inputs.apple-notary-key-base64 }}
+        APPLE_NOTARY_KEY_ID: ${{ inputs.apple-notary-key-id }}
+        APPLE_NOTARY_ISSUER_ID: ${{ inputs.apple-notary-issuer-id }}
+        # Route caller-provided make inputs through env so they are shell data,
+        # not template text expanded into the script (avoids code injection via
+        # make-args).
+        BUILD_TARGET: release-build
+        MAKE_ARGS: ${{ inputs.make-args }}
+      run: |
+        sign_args=()
+        if [ -n "${CERT_SHA1:-}" ]; then
+          sign_args+=("CODE_SIGN_IDENTITY=$CERT_SHA1" "DMG_SIGN_IDENTITY=$CERT_SHA1")
+        fi
+        if [ -n "${CODE_SIGN_KEYCHAIN:-}" ]; then
+          sign_args+=("CODE_SIGN_KEYCHAIN=$CODE_SIGN_KEYCHAIN")
+        fi
+        if [ -n "${TEAM_ID:-}" ]; then
+          sign_args+=("DEVELOPMENT_TEAM=$TEAM_ID")
+        fi
+        # shellcheck disable=SC2086
+        make $BUILD_TARGET $MAKE_ARGS "${sign_args[@]}"
+
+    # Expand the notarize pattern into an explicit newline-separated file list,
+    # the same shape the release workflow's notarize job builds. A pattern that
+    # matches nothing yields an empty list, which notarize-staple rejects.
+    - name: Resolve release artifacts
+      id: release-artifacts
+      if: ${{ inputs.run != 'false' && inputs.gate == 'verify' && inputs.release-dry-run == 'true' && inputs.sign-release == 'true' && inputs.notarize-pattern != '' }}
+      shell: bash
+      env:
+        DIST_DIR: ${{ inputs.dist-dir }}
+        NOTARIZE_PATTERN: ${{ inputs.notarize-pattern }}
+      run: |
+        cd "${DIST_DIR}"
+        {
+          echo "list<<ARTIFACTS_EOF"
+          # shellcheck disable=SC2086
+          for artifact in ${NOTARIZE_PATTERN}; do
+            if [ -e "${artifact}" ]; then printf '%s/%s\n' "${DIST_DIR}" "${artifact}"; fi
+          done
+          echo "ARTIFACTS_EOF"
+        } >> "${GITHUB_OUTPUT}"
+
+    - name: Notarize and staple (swift-makefile)
+      id: notarize
+      # The notarize-staple composite exists for the release workflow's notarize
+      # job, which has no checkout and builds an engine from main. This job
+      # already carries a verified engine built from the source under test
+      # (setup-build-env exports SWIFT_MK_BIN), so notarize through it: no
+      # second engine build, no main checkout, and the dry run notarizes with
+      # the engine the pull request actually changes.
+      if: ${{ inputs.run != 'false' && inputs.gate == 'verify' && inputs.release-dry-run == 'true' && inputs.sign-release == 'true' && inputs.notarize-pattern != '' }}
+      shell: bash
+      env:
+        ARTIFACT_PATH: ${{ steps.release-artifacts.outputs.list }}
+        APPLE_NOTARY_KEY_BASE64: ${{ inputs.apple-notary-key-base64 }}
+        APPLE_NOTARY_KEY_ID: ${{ inputs.apple-notary-key-id }}
+        APPLE_NOTARY_ISSUER_ID: ${{ inputs.apple-notary-issuer-id }}
+      run: |
+        set -euo pipefail
+
+        if [[ -z "${SWIFT_MK_BIN:-}" ]] || [[ ! -x "${SWIFT_MK_BIN}" ]]; then
+            echo "notarize: SWIFT_MK_BIN is not an executable engine; setup-build-env did not run" >&2
+            exit 1
+        fi
+        if [[ -z "${ARTIFACT_PATH// /}" ]]; then
+            echo "notarize: no artifacts matched the notarize pattern" >&2
+            exit 1
+        fi
+        # shellcheck disable=SC2086
+        "${SWIFT_MK_BIN}" notarize $ARTIFACT_PATH
+
+    - name: Publish Release dry run check
+      id: publish-release
+      if: ${{ inputs.run != 'false' && inputs.gate == 'verify' && inputs.release-dry-run == 'true' && inputs.sign-release == 'true' }}
+      shell: bash
+      env:
+        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+        HEAD_SHA: ${{ inputs.head-sha }}
+      run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/ci-gate/publish-check.sh" "Release dry run" success
+
+    - name: Publish skipped Release dry run check
+      id: publish-release-skipped
+      if: ${{ inputs.run != 'false' && inputs.gate == 'verify' && inputs.release-dry-run == 'true' && inputs.sign-release != 'true' }}
+      shell: bash
+      env:
+        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+        HEAD_SHA: ${{ inputs.head-sha }}
+      run: bash "${SWIFT_MK_HELPER_ROOT}/.github/actions/ci-gate/publish-check.sh" "Release dry run" skipped
+
+    # Each stage publishes its own green check, so a name still missing one when
+    # the gate ends is the stage that stopped the run or a stage that never got
+    # to start. The stages are strictly ordered, so the first such name carries
+    # the real result and every later name was cancelled by it.
+    - name: Publish outstanding stage checks
+      if: ${{ always() && inputs.run != 'false' && inputs.gate == 'verify' && inputs.release-dry-run == 'true' }}
+      shell: bash
+      env:
+        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+        HEAD_SHA: ${{ inputs.head-sha }}
+        # A cancelled run leaves its in-flight stage step with a cancelled
+        # outcome, which separates a cancellation from a real stage failure
+        # without a status-check function; those are defined for `if` conditions,
+        # not for a step environment.
+        UNFINISHED_CONCLUSION: ${{ (steps.verify-build.outcome == 'cancelled' || steps.verify-test.outcome == 'cancelled' || steps.verify-quality.outcome == 'cancelled' || steps.release-build.outcome == 'cancelled' || steps.notarize.outcome == 'cancelled') && 'cancelled' || 'failure' }}
+        BUILD_PUBLISHED: ${{ steps.publish-build.outcome }}
+        TESTS_PUBLISHED: ${{ steps.publish-tests.outcome }}
+        QUALITY_PUBLISHED: ${{ steps.publish-quality.outcome }}
+        RELEASE_PUBLISHED: ${{ (steps.publish-release.outcome == 'success' || steps.publish-release-skipped.outcome == 'success') && 'success' || 'missing' }}
+      run: |
+        set -euo pipefail
+
+        publish="${SWIFT_MK_HELPER_ROOT}/.github/actions/ci-gate/publish-check.sh"
+        conclusion="${UNFINISHED_CONCLUSION}"
+        for entry in \
+            "Build:${BUILD_PUBLISHED}" \
+            "Tests:${TESTS_PUBLISHED}" \
+            "Quality:${QUALITY_PUBLISHED}" \
+            "Release dry run:${RELEASE_PUBLISHED}"; do
+            check_name="${entry%:*}"
+            publish_outcome="${entry##*:}"
+            if [[ "${publish_outcome}" == "success" ]]; then
+                continue
+            fi
+            bash "${publish}" "${check_name}" "${conclusion}"
+            conclusion="cancelled"
+        done
+
+    # An index-confirmed skip occupies no macOS runner, so this reports every
+    # required stage name green from the ubuntu no-op instead.
+    - name: Publish skipped stage checks
+      if: ${{ inputs.run == 'false' && inputs.gate == 'verify' && inputs.release-dry-run == 'true' }}
+      shell: bash
+      env:
+        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+        HEAD_SHA: ${{ inputs.head-sha }}
+      run: |
+        set -euo pipefail
+
+        publish="${SWIFT_MK_HELPER_ROOT}/.github/actions/ci-gate/publish-check.sh"
+        for check_name in Build Tests Quality "Release dry run"; do
+            bash "${publish}" "${check_name}" success
+        done
 
     - name: Run extra targets
       if: ${{ inputs.run != 'false' && inputs.gate == 'extra-targets' && steps.resolve.outputs.count != '0' }}

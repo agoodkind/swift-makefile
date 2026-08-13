@@ -175,16 +175,26 @@ public enum ReleasePackage {
     }
   }
 
+  /// The lean build's full argv: the plan's arguments plus the shared
+  /// compilation-cache flags. This build is an engine compile like any other, so
+  /// it must run in the same module mode as the verify build and read the same
+  /// content-addressed store; without the flags the release stage recompiles
+  /// cold on the machine whose store the verify build just filled.
+  static func buildInvocationArguments(_ plan: ReleasePackagePlan) -> [String] {
+    plan.buildArguments + SwiftPM.compileCacheArguments()
+  }
+
   private static func buildProduct(_ plan: ReleasePackagePlan) throws -> String {
+    let buildArguments = buildInvocationArguments(plan)
     Output.debug("release-build: running swift build for \(plan.builtProductName)")
-    let buildStatus = Shell.runForwardingOutput("swift", plan.buildArguments)
+    let buildStatus = Shell.runForwardingOutput("swift", buildArguments)
     if buildStatus != 0 {
       throw ReleasePackageError.commandFailed(
-        "swift \(plan.buildArguments.joined(separator: " "))",
+        "swift \(buildArguments.joined(separator: " "))",
         buildStatus)
     }
     Output.debug("release-build: resolving build product path for \(plan.builtProductName)")
-    let showBinPathArgs = plan.buildArguments + ["--show-bin-path"]
+    let showBinPathArgs = buildArguments + ["--show-bin-path"]
     let binPath = Shell.run("swift", showBinPathArgs)
     let showBinPathCommand = "swift \(showBinPathArgs.joined(separator: " "))"
     if binPath.status != 0 {

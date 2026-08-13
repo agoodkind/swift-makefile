@@ -1,4 +1,4 @@
-.PHONY: build verify deploy install run generate
+.PHONY: build verify verify-build verify-test verify-quality deploy install run generate
 
 # swift-mk owns build-time code signing. Before any xcodebuild runs, ask the
 # swift-mk binary for the signing xcconfig (built from DEVELOPMENT_TEAM /
@@ -128,22 +128,17 @@ SWIFT_MK_FRESH_INPUTS = $(shell find $(CURDIR) -type d \( -name .git -o -name .b
 
 build: $(SWIFT_MK_FRESH_RECORD)
 
-# Verification generates the project, runs the configured verify build and test
-# commands with normal build and test fallbacks, then runs the source-quality gates
-# and dependency audit. The build still enters through `swift-mk build`, which marks
-# GateProof before executing the configured command. This target owns the decoupled
-# source-quality gates, so its build subprocess skips inline gates and does not run
-# the compile-based dead-code gate.
-verify: swift-mk-bin
+# Split so a CI job can run each stage as its own step with its own named check.
+verify: verify-build verify-test verify-quality
+
+# The build enters through `swift-mk build`, which marks GateProof first. The
+# source-quality gates belong to verify-quality, so this build subprocess skips
+# inline gates and does not run the compile-based dead-code gate.
+verify-build: swift-mk-bin
 	@set -eu; \
 		verify_build_cmd="$${SWIFT_VERIFY_BUILD_CMD:-$${SWIFT_BUILD_CMD:-}}"; \
-		verify_test_cmd="$${SWIFT_VERIFY_TEST_CMD:-$${SWIFT_TEST_CMD:-}}"; \
 		if [ -z "$$verify_build_cmd" ]; then \
 			echo "swift-build.mk: neither SWIFT_VERIFY_BUILD_CMD nor SWIFT_BUILD_CMD is set"; \
-			exit 1; \
-		fi; \
-		if [ -z "$$verify_test_cmd" ]; then \
-			echo "swift-build.mk: neither SWIFT_VERIFY_TEST_CMD nor SWIFT_TEST_CMD is set"; \
 			exit 1; \
 		fi; \
 		$(if $(strip $(SWIFT_GENERATE_CMD)),if ! { $(SWIFT_GENERATE_CMD); }; then echo "swift-build.mk: verify generate step failed" >&2; exit 1; fi;,) \
@@ -156,10 +151,24 @@ verify: swift-mk-bin
 				$(SWIFT_MK_POST_BUILD_SIGN_CMD) \
 				&& $(SWIFT_MK_VERIFY_ARTIFACTS_CMD) \
 				&& $(SWIFT_MK_VERIFY_PRODUCTS_CMD); \
-		}; then exit 1; fi; \
+		}; then exit 1; fi
+
+# SWIFT_MK_GENERATED=1 because generation ran in verify-build, whether chained
+# here by `verify` or as the previous CI step on the same checkout.
+verify-test: swift-mk-bin
+	@set -eu; \
+		verify_test_cmd="$${SWIFT_VERIFY_TEST_CMD:-$${SWIFT_TEST_CMD:-}}"; \
+		if [ -z "$$verify_test_cmd" ]; then \
+			echo "swift-build.mk: neither SWIFT_VERIFY_TEST_CMD nor SWIFT_TEST_CMD is set"; \
+			exit 1; \
+		fi; \
 		$(if $(strip $(SWIFT_GENERATE_CMD)),SWIFT_MK_GENERATED=1 ) \
 			SWIFT_TEST_CMD="$$verify_test_cmd" \
-			"$(SWIFT_MK_BIN)" test; \
+			"$(SWIFT_MK_BIN)" test
+
+# The decoupled lint gates and the dependency audit; no product compiles here.
+verify-quality: swift-mk-bin
+	@set -eu; \
 		$(if $(strip $(SWIFT_GENERATE_CMD)),SWIFT_MK_GENERATED=1 ) \
 			LINT_GATES="lint-swiftlint lint-format lint-complexity swiftcheck-extra" \
 			"$(SWIFT_MK_BIN)" lint; \

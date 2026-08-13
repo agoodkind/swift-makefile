@@ -46,8 +46,23 @@ runs:
       run: |
         set -euo pipefail
 
+        # The cache key carries no toolchain component, and a cached binary
+        # built under a since-removed Xcode aborts at dyld load (its
+        # libIndexStore.dylib rpath no longer resolves), so existence is not
+        # reusability. Same recovery as the toolchain bootstrap: clear the
+        # provenance xattr and re-sign so a restored arm64 binary is not killed
+        # on launch, then probe with `--help`, an ArgumentParser built-in that
+        # exits 0 whenever the process launches, and rebuild on any failure.
         if [ -x .swift-mk-notarize-bin/swift-mk ]; then
-            exit 0
+            xattr -c .swift-mk-notarize-bin/swift-mk 2>/dev/null || true
+            codesign --force --sign - .swift-mk-notarize-bin/swift-mk >/dev/null 2>&1 || true
+            probe_rc=0
+            .swift-mk-notarize-bin/swift-mk --help >/dev/null 2>&1 || probe_rc=$?
+            if [ "${probe_rc}" -eq 0 ]; then
+                exit 0
+            fi
+            echo "notarize-staple: cached swift-mk failed to launch (exit ${probe_rc}); rebuilding against the active toolchain" >&2
+            rm -rf .swift-mk-notarize-bin
         fi
         swift build --package-path .swift-mk-notarize-src -c release --product swift-mk
         bin_dir="$(swift build --package-path .swift-mk-notarize-src -c release --show-bin-path)"
