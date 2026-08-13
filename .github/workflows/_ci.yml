@@ -80,10 +80,14 @@ on:
         type: boolean
         default: false
       # Ceiling for a Verify job that also runs the release stages. It replaces
-      # timeout-minutes only while the release dry run actually runs.
+      # timeout-minutes only while the release dry run actually runs. 90 because
+      # the combined job is the verify half plus a release build that replays no
+      # compile cache when the release command is a compound script: the engine's
+      # own hosted run finished its three verify stages at 40 minutes and was
+      # cancelled at a 60-minute ceiling mid release build.
       release-timeout-minutes:
         type: number
-        default: 60
+        default: 90
       # Globs evaluated inside dist-dir naming the artifacts the release dry run
       # notarizes. Empty runs the release build and skips notarization.
       notarize-pattern:
