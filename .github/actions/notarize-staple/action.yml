@@ -49,10 +49,15 @@ runs:
         # The cache key carries no toolchain component, and a cached binary
         # built under a since-removed Xcode aborts at dyld load (its
         # libIndexStore.dylib rpath no longer resolves), so existence is not
-        # reusability. Probe a launch and rebuild on any failure.
+        # reusability. Same recovery as the toolchain bootstrap: clear the
+        # provenance xattr and re-sign so a restored arm64 binary is not killed
+        # on launch, then probe with `--help`, an ArgumentParser built-in that
+        # exits 0 whenever the process launches, and rebuild on any failure.
         if [ -x .swift-mk-notarize-bin/swift-mk ]; then
+            xattr -c .swift-mk-notarize-bin/swift-mk 2>/dev/null || true
+            codesign --force --sign - .swift-mk-notarize-bin/swift-mk >/dev/null 2>&1 || true
             probe_rc=0
-            .swift-mk-notarize-bin/swift-mk version >/dev/null 2>&1 || probe_rc=$?
+            .swift-mk-notarize-bin/swift-mk --help >/dev/null 2>&1 || probe_rc=$?
             if [ "${probe_rc}" -eq 0 ]; then
                 exit 0
             fi
