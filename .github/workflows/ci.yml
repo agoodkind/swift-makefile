@@ -10,8 +10,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# A called workflow cannot hold a permission the caller withheld, so the stage
+# check runs the Verify job publishes need `checks: write` granted here.
 permissions:
   contents: read
+  checks: write
 
 jobs:
   # The caller job id is the middle segment of every reusable-workflow status
@@ -23,4 +26,17 @@ jobs:
       # Try the M1 self-hosted pool first; plan-runners falls back to hosted when
       # the pool is unavailable. The bearer token rides secrets: inherit.
       local-pool-capacity-url: ${{ vars.BROKER_CAPACITY_URL }}
+      # Run the signed release stages inside Verify, on the machine whose
+      # compilation cache the verify build just filled, so a pull request takes
+      # one macOS slot instead of racing the release workflow for a second.
+      release-dry-run: true
+      # Notarize and staple the signed swift-mk dmg. Match only the dmg so the
+      # unsigned source tarball is skipped.
+      notarize-pattern: "*.dmg"
+      # The identity and team come from repository variables, the same two the
+      # release workflow reads, so a certificate or team change stays one
+      # settings edit.
+      signing-identity-name: ${{ vars.APPLE_DEVELOPER_ID_IDENTITY }}
+      apple-team-id: ${{ vars.APPLE_TEAM_ID }}
+      import-signing-cert: true
     secrets: inherit

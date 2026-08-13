@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-  pull_request:
   workflow_dispatch:
     inputs:
       release-track:
@@ -34,12 +33,12 @@ on:
         default: "*.dmg"
         type: string
 
-# Match ci.yml: one concurrency group per ref. A new pull request push cancels
-# the prior signed dry run so a superseded run does not hold a pool slot. A push
-# to main or manual promotion is a real release, so it never cancels an in-flight publish.
+# One concurrency group per ref. Every run this workflow now takes is a real
+# release, so none of them cancels an in-flight publish. The signed dry run moved
+# into CI's Verify job and is no longer triggered here.
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 # The caller must grant every permission the called workflow's jobs request,
 # even for steps an input disables; the validation is static.
@@ -80,23 +79,3 @@ jobs:
       # swift-mk binary, so a non-launching release fails here.
       smoke-asset: swift-mk_darwin_arm64.dmg
     secrets: inherit
-
-  release-dry-run:
-    name: Release (dry run)
-    needs: release
-    if: ${{ always() && github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Require signed release dry run success
-        if: ${{ github.event.pull_request.head.repo.full_name == github.repository && needs.release.result != 'success' }}
-        run: |
-          echo "Signed release dry run did not succeed (result: ${{ needs.release.result }})." >&2
-          exit 1
-      - name: Report signed release dry run
-        if: ${{ github.event.pull_request.head.repo.full_name == github.repository && needs.release.result == 'success' }}
-        run: echo "Signed release dry run completed without publishing." >> "${GITHUB_STEP_SUMMARY}"
-      - name: Report fork skip
-        if: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
-        run: echo "Signed release dry run skipped for a fork pull request." >> "${GITHUB_STEP_SUMMARY}"
