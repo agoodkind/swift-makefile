@@ -101,7 +101,7 @@ swift_mk_content_key() {
 
 swift_mk_resolve_flags() {
     if [[ "$(uname -s)" == Darwin ]]; then
-        printf '%s' --disable-automatic-resolution
+        printf '%s\n' --disable-automatic-resolution
     fi
 }
 
