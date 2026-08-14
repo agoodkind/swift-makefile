@@ -56,6 +56,7 @@
     process.standardOutput = pipe
     process.standardError = pipe
     try process.run()
+    pipe.fileHandleForWriting.closeFile()
     let output = Output.decodeCapturedUTF8(pipe.fileHandleForReading.readDataToEndOfFile())
     process.waitUntilExit()
     #expect(process.terminationStatus == 0, "swift package resolve failed: \(output)")
