@@ -99,6 +99,12 @@ swift_mk_content_key() {
     printf '%s-%s-%s\n' "${source_hash}" "${config}" "${toolchain_id}"
 }
 
+swift_mk_resolve_flags() {
+    if [[ "$(uname -s)" == Darwin ]]; then
+        printf '%s' --disable-automatic-resolution
+    fi
+}
+
 swift_mk_pool_cache_args() {
     local package_path
     local pool_cache_root
@@ -137,6 +143,7 @@ swift_mk_build_from_repo() {
     local bin_path
     local scratch_path
     local content_key
+    local -a resolve_flags
     local -a pool_cache_args
 
     output_path=$(swift_mk_output_path)
@@ -164,9 +171,13 @@ swift_mk_build_from_repo() {
     while IFS= read -r arg; do
         pool_cache_args+=("${arg}")
     done < <(swift_mk_pool_cache_args "${package_path}")
-    swift build --package-path "${package_path}" --scratch-path "${scratch_path}" "${pool_cache_args[@]}" -c "${config}" --product swift-mk
+    resolve_flags=()
+    while IFS= read -r arg; do
+        [[ -n "${arg}" ]] && resolve_flags+=("${arg}")
+    done < <(swift_mk_resolve_flags)
+    swift build --package-path "${package_path}" --scratch-path "${scratch_path}" "${pool_cache_args[@]}" "${resolve_flags[@]}" -c "${config}" --product swift-mk
     set +e
-    bin_dir_output=$(swift build --package-path "${package_path}" --scratch-path "${scratch_path}" "${pool_cache_args[@]}" -c "${config}" --show-bin-path 2>&1)
+    bin_dir_output=$(swift build --package-path "${package_path}" --scratch-path "${scratch_path}" "${pool_cache_args[@]}" "${resolve_flags[@]}" -c "${config}" --show-bin-path 2>&1)
     bin_dir_status=$?
     set -e
     bin_dir=$(printf "%s\n" "${bin_dir_output}" | tr -d '\r' | awk 'NF { line = $0 } END { print line }')
