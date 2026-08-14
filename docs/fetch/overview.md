@@ -29,7 +29,7 @@ The helper downloads the archive for the pinned ref from GitHub and extracts it 
 
 The extract is idempotent. It records an ETag in `.make/.swift-mk-snapshot-ref`, and a later run whose marker validates against upstream with a present `.make/Package.swift` skips the re-extract, so file mtimes stay stable and the tool-binary staleness guard does not force a rebuild. The extract only adds files, so it leaves `.make/logs`, `.make/build.lock`, and the built binary in place.
 
-The engine repository commits `Package.resolved`, and the snapshot carries it into `.make`, so a consumer resolves the same dependency graph the engine reviewed with the lockfile change that selected it.
+The engine repository commits `Package.resolved`, and the snapshot carries it into `.make`, so a consumer resolves the same dependency graph the engine reviewed with the lockfile change that selected it. That file records the macOS graph; a Linux Dependabot resolve that drops Darwin-only pins fails Verify until the lockfile is re-resolved on macOS with `swift package resolve`.
 
 ## Dev-dir mode
 
