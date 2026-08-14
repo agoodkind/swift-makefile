@@ -18,14 +18,17 @@ endif
 endif
 export TRACEPARENT TRACE_ID SPAN_ID SWIFT_MK_TRACE_ID SWIFT_MK_SPAN_ID
 
+# On Darwin, refuse to rewrite the committed macOS lockfile during build and test.
+SWIFT_MK_DISABLE_AUTO_RESOLVE := $(shell test "$(shell uname -s)" = Darwin && printf '%s' '--disable-automatic-resolution')
+
 ROOT_ARGS := \
 	SWIFT_MK_DEV_DIR='$(CURDIR)' \
 	SWIFT_MK_MODULES='swift-build.mk swift-release.mk' \
 	SWIFT_MK_RELEASE_BUILD_CMD='bash scripts/release-build.sh' \
-	SWIFT_BUILD_CMD='swift build --product swift-mk-render' \
-	SWIFT_TEST_CMD='swift test' \
-	SWIFT_VERIFY_BUILD_CMD='swift build --configuration release --build-tests -Xswiftc -enable-testing' \
-	SWIFT_VERIFY_TEST_CMD='swift test --configuration release --skip-build --no-parallel' \
+	SWIFT_BUILD_CMD='swift build $(SWIFT_MK_DISABLE_AUTO_RESOLVE) --product swift-mk-render' \
+	SWIFT_TEST_CMD='swift test $(SWIFT_MK_DISABLE_AUTO_RESOLVE)' \
+	SWIFT_VERIFY_BUILD_CMD='swift build $(SWIFT_MK_DISABLE_AUTO_RESOLVE) --configuration release --build-tests -Xswiftc -enable-testing' \
+	SWIFT_VERIFY_TEST_CMD='swift test $(SWIFT_MK_DISABLE_AUTO_RESOLVE) --configuration release --skip-build --no-parallel' \
 	SWIFT_FORMAT_TARGETS='Package.swift Sources Tests' \
 	SWIFTLINT_TARGETS='Package.swift Sources Tests' \
 	PERIPHERY_ARGS='scan --config .periphery.yml --exclude-tests' \
