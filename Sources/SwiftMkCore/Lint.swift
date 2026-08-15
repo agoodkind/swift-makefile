@@ -208,6 +208,14 @@ public enum Lint {
     context: PathContext
   ) -> String? {
     Output.debug("periphery: capturing dead-code findings")
+    guard let periphery = Periphery.preparedBin() else {
+      let message = "periphery: pinned executable unavailable"
+      Output.error(message)
+      GateStatus.last = deadcodeHardFailStatus
+      Capture.write(DeadcodeScan.packageScanLabel + "\n" + message + "\n", to: rawPath)
+      Capture.write("", to: findingsPath)
+      return nil
+    }
     // Label the first of the two scans, then echo its result, so the package scan's
     // "No unused code detected" is plainly the package half and is never confused
     // with the Xcode scan's verdict below. The label goes into the raw capture too,
@@ -218,7 +226,7 @@ public enum Lint {
     // in this worktree through the same re-entrant lock the product build uses.
     let result = BuildLock.withLock {
       Shell.runForwardingAndCapturing(
-        Env.get("PERIPHERY", "periphery"), args, environment: lintEnvironment())
+        periphery, args, environment: lintEnvironment())
     }
     GateStatus.last = result.status
     Capture.write(DeadcodeScan.packageScanLabel + "\n" + result.combined, to: rawPath)

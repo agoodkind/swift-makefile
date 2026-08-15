@@ -21,7 +21,7 @@ inputs:
     required: false
     default: auto
   install-lint-tools:
-    description: Install swift-format, swiftlint, periphery, and osv-scanner.
+    description: Install swift-format, swiftlint, and osv-scanner.
     required: false
     default: "true"
   cache-profile:
@@ -422,7 +422,7 @@ runs:
 
         brew_locked_update
 
-        for tool in swift-format swiftlint periphery osv-scanner; do
+        for tool in swift-format swiftlint osv-scanner; do
             if command -v "$tool" >/dev/null 2>&1; then
                 brew_locked upgrade "$tool" 2>/dev/null || true
             else
@@ -432,5 +432,4 @@ runs:
 
         swift-format --version
         swiftlint version
-        periphery version
         osv-scanner --version

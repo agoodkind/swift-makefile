@@ -331,7 +331,9 @@ public enum CacheService {
         defaultSubdirectory: "SwiftPMCompilationCache",
         honorDisableToken: false),
       extraPaths: extraCachePaths())
-    return CachePaths.resolve(inputs)
+    var resolved = CachePaths.resolve(inputs)
+    resolved.dependency.append(Periphery.cacheBaseDirectory())
+    return resolved
   }
 
   /// Split EXTRA_CACHE_PATHS on newlines, dropping blank lines, matching how the
