@@ -21,11 +21,24 @@ inputs:
   identity-name:
     description: 'Full identity name to resolve, e.g. "Developer ID Application: Name (TEAMID)" or "Apple Distribution: Name (TEAMID)". It decides which imported certificate signs.'
     required: true
+  release-identity-name:
+    description: >-
+      Second identity to resolve, for a repository whose release signs with a
+      different certificate from the rest of its build. A downloadable app signs
+      Developer ID while its continuous integration signs Apple Distribution,
+      because the runner is not a registered device. Empty resolves nothing and
+      leaves `release-identity-sha1` empty, so a caller with one identity is
+      unaffected.
+    required: false
+    default: ""
 
 outputs:
   identity-sha1:
     description: SHA-1 of the resolved codesigning identity.
     value: ${{ steps.resolve.outputs.identity-sha1 }}
+  release-identity-sha1:
+    description: SHA-1 of the release identity, empty when the caller named none.
+    value: ${{ steps.resolve.outputs.release-identity-sha1 }}
   keychain:
     description: Absolute keychain database path for codesign --keychain.
     value: ${{ steps.keychain.outputs.path }}
@@ -161,26 +174,44 @@ runs:
       shell: bash
       env:
         IDENTITY_NAME: ${{ inputs.identity-name }}
+        RELEASE_IDENTITY_NAME: ${{ inputs.release-identity-name }}
         KEYCHAIN_PATH: ${{ steps.keychain.outputs.path }}
       run: |
         set -euo pipefail
 
-        identity_sha1="$(
+        resolve_identity() {
             security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
-                | awk -v identity="$IDENTITY_NAME" '
+                | awk -v identity="$1" '
                     BEGIN { quoted = sprintf("%c%s%c", 34, identity, 34) }
                     index($0, quoted) { print $2; exit }
                 '
-        )"
+        }
+
+        # Names only. This is what tells a reader whether the wrong certificate
+        # was supplied rather than the right one failing to validate, which is
+        # otherwise indistinguishable from this failure.
+        report_missing() {
+            echo "signing identity '$1' not found in $KEYCHAIN_PATH" >&2
+            echo "identities that were imported:" >&2
+            security find-identity -p codesigning "$KEYCHAIN_PATH" >&2
+        }
+
+        identity_sha1="$(resolve_identity "$IDENTITY_NAME")"
 
         if [[ -z "$identity_sha1" ]]; then
-            echo "signing identity '$IDENTITY_NAME' not found in $KEYCHAIN_PATH" >&2
-            echo "identities that were imported:" >&2
-            # Names only. This is what tells a reader whether the wrong
-            # certificate was supplied rather than the right one failing to
-            # validate, which is otherwise indistinguishable from this failure.
-            security find-identity -p codesigning "$KEYCHAIN_PATH" >&2
+            report_missing "$IDENTITY_NAME"
             exit 1
         fi
 
         printf 'identity-sha1=%s\n' "$identity_sha1" >> "$GITHUB_OUTPUT"
+
+        # A repository whose release signs with a different certificate names it
+        # here, and a missing one fails now rather than at codesign time.
+        if [[ -n "${RELEASE_IDENTITY_NAME:-}" ]]; then
+            release_identity_sha1="$(resolve_identity "$RELEASE_IDENTITY_NAME")"
+            if [[ -z "$release_identity_sha1" ]]; then
+                report_missing "$RELEASE_IDENTITY_NAME"
+                exit 1
+            fi
+            printf 'release-identity-sha1=%s\n' "$release_identity_sha1" >> "$GITHUB_OUTPUT"
+        fi
