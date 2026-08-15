@@ -22,10 +22,17 @@ enum SwiftMkUpdateSupport {
   static let successStatusCode = 200
   static let sampleTimestamp: TimeInterval = 1_782_000_000
 
-  static func config(currentVersion: String = currentTag) -> UpdateConfig {
+  static let defaultBinary = "swift-mk"
+
+  /// The asset name stays fixed while the binary varies, because a consumer's asset
+  /// carries an executable whose name has nothing to do with the file it ships in.
+  static func config(
+    binary: String = defaultBinary,
+    currentVersion: String = currentTag
+  ) -> UpdateConfig {
     UpdateConfig(
       repo: "agoodkind/swift-makefile",
-      binary: "swift-mk",
+      binary: binary,
       teamID: teamID,
       currentVersion: currentVersion,
       assetName: "swift-mk_darwin_arm64.dmg")
@@ -90,11 +97,13 @@ func withTemporaryDirectory(_ run: (URL) throws -> Void) throws {
 }
 
 func withPreparedUpdate(
+  binary: String = SwiftMkUpdateSupport.defaultBinary,
+  candidateSubdirectory: String? = nil,
   commandMode: StubCommandRunner.Mode = .success,
   _ run: (PreparedUpdate) throws -> Void
 ) throws {
   try withTemporaryDirectory { directory in
-    let targetURL = directory.appendingPathComponent("swift-mk")
+    let targetURL = directory.appendingPathComponent(binary)
     try PreparedUpdate.originalContents.write(
       to: targetURL, atomically: true, encoding: .utf8)
     let taggedReleaseURL =
@@ -115,11 +124,12 @@ func withPreparedUpdate(
           SwiftMkUpdateSupport.successStatusCode
         ),
       ])
-    let commandRunner = StubCommandRunner(binary: "swift-mk", mode: commandMode)
+    let commandRunner = StubCommandRunner(
+      binary: binary, mode: commandMode, subdirectory: candidateSubdirectory)
     let cacheDir = directory.appendingPathComponent("cache").path
     let statePath = directory.appendingPathComponent("state/update-state.json").path
     let options = UpdateOptions(
-      config: SwiftMkUpdateSupport.config(),
+      config: SwiftMkUpdateSupport.config(binary: binary),
       targetPath: targetURL.path,
       cacheDir: cacheDir,
       statePath: statePath,
@@ -180,22 +190,31 @@ final class StubHTTPClient: ReleaseHTTPClient {
 final class StubCommandRunner: CommandRunner {
   enum Mode {
     case success
+    case missingCandidate
     case signatureFailure
     case stapleFailure
     case teamMismatch
     case validateMismatch
   }
 
+  /// The name the asset carries in `missingCandidate` mode, standing in for an asset
+  /// that ships something other than the executable the caller named.
+  static let unrelatedCandidateName = "other-tool"
+
   private static let stapleArgumentCount = 2
 
   static let candidateContents = "new swift-mk\n"
 
   private let binary: String
+  private let subdirectory: String?
   private let mode: Mode
 
-  init(binary: String, mode: Mode) {
+  /// `subdirectory` places the candidate below the mount root, the way a consumer's
+  /// asset lays its products out, rather than at the top level.
+  init(binary: String, mode: Mode, subdirectory: String? = nil) {
     self.binary = binary
     self.mode = mode
+    self.subdirectory = subdirectory
   }
 
   func run(
@@ -264,10 +283,19 @@ final class StubCommandRunner: CommandRunner {
       return CommandOutput(status: 1, stdout: "", stderr: "missing mountpoint")
     }
     let mountPath = args[args.index(after: mountFlagIndex)]
-    let candidatePath = URL(fileURLWithPath: mountPath).appendingPathComponent(binary)
+    var candidateDirectory = URL(fileURLWithPath: mountPath, isDirectory: true)
+    if let subdirectory {
+      candidateDirectory = candidateDirectory.appendingPathComponent(
+        subdirectory, isDirectory: true)
+    }
+    var candidateName = binary
+    if mode == .missingCandidate {
+      candidateName = Self.unrelatedCandidateName
+    }
+    let candidatePath = candidateDirectory.appendingPathComponent(candidateName)
     do {
       try FileManager.default.createDirectory(
-        atPath: mountPath, withIntermediateDirectories: true)
+        at: candidateDirectory, withIntermediateDirectories: true)
       try Self.candidateContents.write(to: candidatePath, atomically: true, encoding: .utf8)
       return CommandOutput(status: 0, stdout: "", stderr: "")
     } catch {
