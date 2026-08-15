@@ -56,6 +56,15 @@ inputs:
     description: Expected signing identity name.
     required: false
     default: ""
+  release-signing-identity-name:
+    description: >-
+      Signing identity for the release stage, when it differs from the one the
+      verify stages use. A downloadable app signs Developer ID while its
+      continuous integration signs Apple Distribution, because the runner is not
+      a registered device and only App Store profiles work there. Empty makes the
+      release stage sign with `signing-identity-name`, unchanged.
+    required: false
+    default: ""
   apple-team-id:
     description: Apple developer team identifier.
     required: false
@@ -226,6 +235,7 @@ runs:
         distribution-p12-base64: ${{ inputs.apple-distribution-p12-base64 }}
         distribution-p12-password: ${{ inputs.apple-distribution-p12-password }}
         identity-name: ${{ inputs.signing-identity-name }}
+        release-identity-name: ${{ inputs.release-signing-identity-name }}
 
     - name: Install signing certificate
       id: cert-remote
@@ -237,6 +247,7 @@ runs:
         distribution-p12-base64: ${{ inputs.apple-distribution-p12-base64 }}
         distribution-p12-password: ${{ inputs.apple-distribution-p12-password }}
         identity-name: ${{ inputs.signing-identity-name }}
+        release-identity-name: ${{ inputs.release-signing-identity-name }}
 
     - name: Install provisioning profile (swift-makefile)
       id: profile-local
@@ -386,7 +397,11 @@ runs:
       if: ${{ inputs.run != 'false' && inputs.gate == 'verify' && inputs.release-dry-run == 'true' && inputs.sign-release == 'true' }}
       shell: bash
       env:
-        CERT_SHA1: ${{ steps.cert-local.outputs.identity-sha1 || steps.cert-remote.outputs.identity-sha1 }}
+        # The release stage signs with the release identity when the caller named
+        # one, because a downloadable app signs Developer ID while the verify
+        # stages sign Apple Distribution. Both certificates are already in this
+        # job's keychain; only the resolved identity differs.
+        CERT_SHA1: ${{ steps.cert-local.outputs.release-identity-sha1 || steps.cert-remote.outputs.release-identity-sha1 || steps.cert-local.outputs.identity-sha1 || steps.cert-remote.outputs.identity-sha1 }}
         CODE_SIGN_KEYCHAIN: ${{ steps.cert-local.outputs.keychain || steps.cert-remote.outputs.keychain }}
         TEAM_ID: ${{ inputs.apple-team-id }}
         PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile-local.outputs.profile-specifier || steps.profile-remote.outputs.profile-specifier }}

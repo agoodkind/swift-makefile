@@ -61,6 +61,14 @@ on:
       signing-identity-name:
         type: string
         default: ""
+      # Signing identity for the release dry run, when it differs from the one
+      # the verify stages use. A downloadable app signs Developer ID while its
+      # continuous integration signs Apple Distribution, because the runner is
+      # not a registered device and only App Store profiles work there. Empty
+      # makes the release stage sign with signing-identity-name, unchanged.
+      release-signing-identity-name:
+        type: string
+        default: ""
       apple-team-id:
         type: string
         default: ""
@@ -408,6 +416,7 @@ jobs:
           import-signing-cert: ${{ inputs.import-signing-cert && (!inputs.release-dry-run || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')) }}
           install-provisioning-profile: ${{ inputs.install-provisioning-profile && (!inputs.release-dry-run || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')) }}
           signing-identity-name: ${{ inputs.signing-identity-name }}
+          release-signing-identity-name: ${{ inputs.release-signing-identity-name }}
           apple-team-id: ${{ inputs.apple-team-id }}
           setup-target: ${{ inputs.setup-target }}
           make-args: ${{ inputs.make-args }}
@@ -466,6 +475,7 @@ jobs:
           import-signing-cert: ${{ inputs.import-signing-cert && (!inputs.release-dry-run || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')) }}
           install-provisioning-profile: ${{ inputs.install-provisioning-profile && (!inputs.release-dry-run || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')) }}
           signing-identity-name: ${{ inputs.signing-identity-name }}
+          release-signing-identity-name: ${{ inputs.release-signing-identity-name }}
           apple-team-id: ${{ inputs.apple-team-id }}
           setup-target: ${{ inputs.setup-target }}
           make-args: ${{ inputs.make-args }}
@@ -594,6 +604,7 @@ jobs:
           import-signing-cert: ${{ inputs.import-signing-cert }}
           install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
           signing-identity-name: ${{ inputs.signing-identity-name }}
+          release-signing-identity-name: ${{ inputs.release-signing-identity-name }}
           apple-team-id: ${{ inputs.apple-team-id }}
           setup-target: ${{ inputs.setup-target }}
           make-args: ${{ inputs.make-args }}
@@ -643,6 +654,7 @@ jobs:
           import-signing-cert: ${{ inputs.import-signing-cert }}
           install-provisioning-profile: ${{ inputs.install-provisioning-profile }}
           signing-identity-name: ${{ inputs.signing-identity-name }}
+          release-signing-identity-name: ${{ inputs.release-signing-identity-name }}
           apple-team-id: ${{ inputs.apple-team-id }}
           setup-target: ${{ inputs.setup-target }}
           make-args: ${{ inputs.make-args }}
