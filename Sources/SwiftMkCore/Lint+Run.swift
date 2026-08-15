@@ -28,10 +28,11 @@ extension Lint {
         return false
       }
     }
-    for tool in ["swiftlint", "periphery", "osv-scanner"]
+    for tool in ["swiftlint", "osv-scanner"]
     where Shell.sh("command -v \(tool)").status != 0 {
       Shell.run("brew", ["install", tool])
     }
+    guard Periphery.resolveBin() else { return false }
     return Swiftcheck.resolveBin()
   }
 

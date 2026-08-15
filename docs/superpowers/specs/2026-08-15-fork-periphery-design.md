@@ -35,8 +35,8 @@ lint tools keep their current acquisition paths.
 
 ## Verification
 
-Tests prove the exact fork pin and checksum, cache reuse without network access,
-checksum rejection, missing-asset failure, the `PERIPHERY` override, and absence of
-Homebrew Periphery installation.
+Direct checks prove the exact fork pin and checksum, cache reuse without network
+access, the `PERIPHERY` override, and absence of Homebrew Periphery installation.
+The resolver fails with the fetch or checksum cause.
 
 Run the real dead-code gate with the fork binary. Run `make check` before commit.
