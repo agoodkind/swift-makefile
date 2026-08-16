@@ -306,10 +306,18 @@ enum LintPolicy {
     let config = Env.get("SWIFT_MK_PERIPHERY_CONFIG", ".make/periphery.yml")
     let args = Env.words(
       Env.get("PERIPHERY_ARGS", "scan --config \(config) --strict"))
+    guard let periphery = Periphery.preparedBin() else {
+      let message = "periphery: pinned executable unavailable"
+      Output.error(message)
+      GateStatus.last = Lint.deadcodeHardFailStatus
+      Capture.write(DeadcodeScan.packageScanLabel + "\n" + message + "\n", to: raw)
+      Capture.write("", to: findingsPath)
+      return false
+    }
     Output.log(DeadcodeScan.packageScanLabel)
     let result = BuildLock.withLock {
       Shell.runForwardingAndCapturing(
-        Env.get("PERIPHERY", "periphery"), args, environment: Lint.lintEnvironment())
+        periphery, args, environment: Lint.lintEnvironment())
     }
     GateStatus.last = result.status
     Capture.write(DeadcodeScan.packageScanLabel + "\n" + result.combined, to: raw)
