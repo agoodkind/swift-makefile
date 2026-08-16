@@ -1,3 +1,6 @@
+# Editing this file runs the full gate rather than skipping, because the change
+# detector counts a composite action as automation alongside a workflow. A gate action
+# that could not exercise itself first ran for real in consumers, after merge.
 name: CI gate
 description: Run the shared Verify or Extra Targets gate.
 
