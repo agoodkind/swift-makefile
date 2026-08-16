@@ -76,9 +76,16 @@ struct UpdateStatus: ParsableCommand {
 // MARK: - VerifyReleaseCommand
 
 struct VerifyReleaseCommand: ParsableCommand {
+  /// The executable a caller that names no other one expects to find and run.
+  ///
+  /// A consumer ships its own products, so the check finds and runs whichever
+  /// executable that consumer names. Defaulting to this engine's own binary keeps
+  /// a caller that verifies a swift-mk release working without the option.
+  static let defaultBinary = "swift-mk"
+
   static let configuration = CommandConfiguration(
     commandName: "verify-release",
-    abstract: "Verify a published swift-mk release asset."
+    abstract: "Verify a published release asset."
   )
 
   @Option(name: .long, help: "GitHub repository in owner/name form.")
@@ -89,6 +96,11 @@ struct VerifyReleaseCommand: ParsableCommand {
 
   @Option(name: .customLong("asset"), help: "Release asset name to verify.")
   var assetName: String
+
+  @Option(
+    name: .long,
+    help: "Executable to find inside the asset and run; defaults to swift-mk.")
+  var binary = VerifyReleaseCommand.defaultBinary
 
   @Option(
     name: .customLong("team-id"),
@@ -114,7 +126,7 @@ struct VerifyReleaseCommand: ParsableCommand {
       }
       let config = UpdateConfig(
         repo: repo,
-        binary: "swift-mk",
+        binary: binary,
         teamID: teamID,
         currentVersion: tag,
         assetName: assetName,
