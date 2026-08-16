@@ -57,7 +57,10 @@ extension CiChanged {
   private static let buildGateFamilies: Set<GateFamily> = [.build]
   private static let lintGateFamilies: Set<GateFamily> = [.lint]
   static let allGateFamilies: Set<GateFamily> = [.build, .lint]
-  private static let githubWorkflowComponentCount = 2
+  /// The directories under `.github` that hold CI automation. A composite action counts
+  /// beside a workflow, because a job runs whatever the action it calls does.
+  private static let githubAutomationDirectories: Set<String> = ["actions", "workflows"]
+  private static let githubAutomationComponentCount = 2
   private static let shaCharacterCount = 40
   private static let nameStatusMinimumFields = 2
 
@@ -517,7 +520,7 @@ extension CiChanged {
       return true
     }
     let components = (path as NSString).pathComponents
-    if isGitHubWorkflowPath(components) {
+    if isGitHubAutomationPath(components) {
       return true
     }
     for component in components
@@ -532,14 +535,21 @@ extension CiChanged {
     return lintConfigBasenames.contains(basename)
   }
 
-  private static func isGitHubWorkflowPath(_ components: [String]) -> Bool {
-    guard components.count >= githubWorkflowComponentCount else {
+  /// Whether the path is automation that decides how CI builds, tests, and lints.
+  ///
+  /// A workflow and the composite actions it calls are the same kind of input: both
+  /// change what every job runs. Reading only workflows sent an edit to a gate action
+  /// down the documentation-skip path, so that change never ran the gate it edited and
+  /// first executed in consumers after merge.
+  private static func isGitHubAutomationPath(_ components: [String]) -> Bool {
+    guard components.count >= githubAutomationComponentCount else {
       return false
     }
-    for index in 0..<(components.count - 1) {
-      if components[index] == ".github", components[index + 1] == "workflows" {
-        return true
-      }
+    for index in 0..<(components.count - 1)
+    where components[index] == ".github"
+      && githubAutomationDirectories.contains(components[index + 1])
+    {
+      return true
     }
     return false
   }

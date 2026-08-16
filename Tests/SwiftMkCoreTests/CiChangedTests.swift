@@ -77,6 +77,26 @@ private let classifyCases: [ClassifyCase] = [
     ["/r/.github/workflows/_ci.yml"],
     allGateFamilies
   ),
+  // A composite action decides what every job runs, exactly as a workflow does. Reading
+  // only workflows sent a gate-action edit down the documentation-skip path, so the
+  // change never ran the gate it edited and first executed in consumers after merge.
+  graphCase(
+    "a composite action change feeds build and lint",
+    ["/r/.github/actions/ci-gate/action.yml"],
+    allGateFamilies
+  ),
+  graphCase(
+    "a script beside a composite action feeds build and lint",
+    ["/r/.github/actions/setup-build-env/scripts/toolchain.sh"],
+    allGateFamilies
+  ),
+  // Only the automation directories count. A pull request template is documentation and
+  // must keep skipping, so widening the rule to all of .github would be too much.
+  graphCase(
+    "another file under .github still skips",
+    ["/r/.github/PULL_REQUEST_TEMPLATE.md"],
+    noGateFamilies
+  ),
   graphCase(
     "an xcode project change feeds build and lint",
     ["/r/App.xcodeproj/project.pbxproj"],
