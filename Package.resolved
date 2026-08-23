@@ -1,5 +1,5 @@
 {
-  "originHash" : "3bf052b9c6c63ddb64c76d2337e1279928e3d98040fcb5fed6397a705f221011",
+  "originHash" : "0efe1acb5769a1f8386dd4d53024ab3cc200f475a63f8a66505c347e194f8157",
   "pins" : [
     {
       "identity" : "aexml",
@@ -35,15 +35,6 @@
       "state" : {
         "revision" : "06f8a460a66f813758d22f09025d85df45450a63",
         "version" : "2.5.1"
-      }
-    },
-    {
-      "identity" : "opentracing-objc",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/undefinedlabs/opentracing-objc",
-      "state" : {
-        "revision" : "18c1a35ca966236cee0c5a714a51a73ff33384c1",
-        "version" : "0.5.2"
       }
     },
     {
@@ -280,21 +271,12 @@
       }
     },
     {
-      "identity" : "thrift-swift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/undefinedlabs/Thrift-Swift",
-      "state" : {
-        "revision" : "18ff09e6b30e589ed38f90a1af23e193b8ecef8e",
-        "version" : "1.1.2"
-      }
-    },
-    {
       "identity" : "xcodeproj",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/tuist/XcodeProj.git",
       "state" : {
-        "revision" : "3259a01e7193d55174c2f370d72e3ff4c277d8fd",
-        "version" : "9.15.0"
+        "revision" : "cfc3234fa2a60babbd26712ac0dec0d44734c019",
+        "version" : "9.16.0"
       }
     }
   ],
