@@ -114,6 +114,13 @@ public enum Lint {
     rawPath: String, findingsPath: String, onlyRules: [String], context: PathContext
   ) {
     Output.debug("swiftlint: capturing findings (only: \(onlyRules.joined(separator: ",")))")
+    guard LintResources.ensure(context: context) else {
+      Output.log("swiftlint: FAILED")
+      Output.log("  Could not materialize SwiftLint config from git identity")
+      Capture.write("swiftlint: git identity missing\n", to: rawPath)
+      GateStatus.last = 1
+      return
+    }
     let flags = Env.words(
       Env.get("SWIFTLINT_FLAGS", "--config .make/swiftlint.yml --reporter xcode"))
     let invocation = SwiftlintCapture.invocation(onlyRules: onlyRules, flags: flags)
@@ -144,6 +151,11 @@ public enum Lint {
   @discardableResult
   public static func runSwiftlint(context: PathContext) -> Bool {
     Capture.ensureMakeDir()
+    guard LintResources.ensure(context: context) else {
+      Output.log("swiftlint: FAILED")
+      Output.log("  Could not materialize SwiftLint config from git identity")
+      return false
+    }
     Output.debug("swiftlint: running gate")
     let raw = ".make/swiftlint.raw.out"
     let findings = captureSwiftlintStructured(rawPath: raw, onlyRules: [], context: context)
@@ -434,6 +446,20 @@ private enum SwiftlintCapture {
   static func capture(rawPath: String, onlyRules: [String], context: PathContext) -> [Finding] {
     Output.debug(
       "swiftlint: capturing structured findings (only: \(onlyRules.joined(separator: ",")))")
+    guard LintResources.ensure(context: context) else {
+      Output.error("swiftlint: could not materialize SwiftLint config from git identity")
+      GateStatus.last = 1
+      return [
+        Finding(
+          tool: "swiftlint",
+          ruleId: "file_header",
+          file: "",
+          line: 0,
+          column: 0,
+          severity: .error,
+          message: "Could not materialize SwiftLint config from git identity")
+      ]
+    }
     Capture.write("", to: rawPath)
     let invocation = invocation(onlyRules: onlyRules, flags: structuredFlags())
     var captured: [Finding] = []

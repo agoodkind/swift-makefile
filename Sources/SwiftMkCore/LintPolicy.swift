@@ -188,6 +188,11 @@ enum LintPolicy {
     baselinePath: String,
     context: PathContext
   ) -> Bool {
+    guard LintResources.ensure(context: context) else {
+      Output.log("\(name): FAILED")
+      Output.log("  Could not materialize SwiftLint config from git identity")
+      return false
+    }
     Output.debug("\(name): running over \(sources.count) owned source(s)")
     let executable = Env.get("SWIFTLINT", "swiftlint")
     let config = Env.get("SWIFT_MK_SWIFTLINT_CONFIG", ".make/swiftlint.yml")

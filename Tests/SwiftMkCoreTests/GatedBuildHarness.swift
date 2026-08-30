@@ -131,6 +131,16 @@ enum GatedBuildHarness {
     if runGit.status != 0 {
       Output.error("test: git init failed in \(root): \(runGit.combined)")
     }
+    let nameResult = Shell.run(
+      "git", ["-C", root, "config", "user.name", "Test User"])
+    if nameResult.status != 0 {
+      Output.error("test: git config user.name failed in \(root): \(nameResult.combined)")
+    }
+    let emailResult = Shell.run(
+      "git", ["-C", root, "config", "user.email", "test@example.com"])
+    if emailResult.status != 0 {
+      Output.error("test: git config user.email failed in \(root): \(emailResult.combined)")
+    }
     _ = Shell.run("git", ["-C", root, "add", "-A"])
 
     try body(
@@ -145,7 +155,20 @@ enum GatedBuildHarness {
     try manager.createDirectory(
       atPath: paths.root + "/Sources", withIntermediateDirectories: true)
     try manager.createDirectory(atPath: paths.binDir, withIntermediateDirectories: true)
-    try "// fake source\nlet appValue = 1\n".write(
+    try """
+      //
+      //  App.swift
+      //  App
+      //
+      //  Created by Test User <test@example.com> on 2026-08-30.
+      //  Copyright © 2026, all rights reserved.
+      //
+
+      public enum App {
+        public static let ready = true
+      }
+
+      """.write(
       toFile: paths.root + "/Sources/App.swift", atomically: true, encoding: .utf8)
     // packageManifest declares a target covering Sources so the coverage gate sees
     // App.swift as package-scanned, the way a real consumer's package covers its
