@@ -41,8 +41,10 @@ enum Periphery {
   }
 
   private static func supportsPinnedRelease() -> Bool {
-    #if os(macOS) && arch(arm64)
-      return true
+    #if os(macOS)
+      var arm64 = Int32(0)
+      var size = MemoryLayout<Int32>.size
+      return sysctlbyname("hw.optional.arm64", &arm64, &size, nil, 0) == 0 && arm64 == 1
     #else
       return false
     #endif
