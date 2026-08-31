@@ -191,6 +191,8 @@ enum LintPolicy {
     guard LintResources.ensure(context: context) else {
       Output.log("\(name): FAILED")
       Output.log("  Could not materialize SwiftLint config from git identity")
+      GateStatus.last = 1
+      Baseline.recordFailedGate(name)
       return false
     }
     Output.debug("\(name): running over \(sources.count) owned source(s)")

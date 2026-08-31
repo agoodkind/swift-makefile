@@ -118,6 +118,7 @@ public enum Lint {
       Output.log("swiftlint: FAILED")
       Output.log("  Could not materialize SwiftLint config from git identity")
       Capture.write("swiftlint: git identity missing\n", to: rawPath)
+      Capture.write("", to: findingsPath)
       GateStatus.last = 1
       return
     }
@@ -154,6 +155,8 @@ public enum Lint {
     guard LintResources.ensure(context: context) else {
       Output.log("swiftlint: FAILED")
       Output.log("  Could not materialize SwiftLint config from git identity")
+      GateStatus.last = 1
+      Baseline.recordFailedGate("swiftlint")
       return false
     }
     Output.debug("swiftlint: running gate")
@@ -185,6 +188,13 @@ public enum Lint {
   public static func runComplexity(context: PathContext) -> Bool {
     Capture.ensureMakeDir()
     Output.debug("lint-complexity: running gate")
+    guard LintResources.ensure(context: context) else {
+      Output.log("lint-complexity: FAILED")
+      Output.log("  Could not materialize SwiftLint config from git identity")
+      GateStatus.last = 1
+      Baseline.recordFailedGate("lint-complexity")
+      return false
+    }
     let raw = ".make/lint-complexity.raw.out"
     let findings = captureSwiftlintStructured(
       rawPath: raw,
@@ -449,16 +459,7 @@ private enum SwiftlintCapture {
     guard LintResources.ensure(context: context) else {
       Output.error("swiftlint: could not materialize SwiftLint config from git identity")
       GateStatus.last = 1
-      return [
-        Finding(
-          tool: "swiftlint",
-          ruleId: "file_header",
-          file: "",
-          line: 0,
-          column: 0,
-          severity: .error,
-          message: "Could not materialize SwiftLint config from git identity")
-      ]
+      return []
     }
     Capture.write("", to: rawPath)
     let invocation = invocation(onlyRules: onlyRules, flags: structuredFlags())
