@@ -89,7 +89,9 @@ func ensureWritesConfigsIntoAFreshCheckout() throws {
 
   let ok = LintResources.ensure(
     context: PathContext(pwd: checkout + "/", cwd: checkout + "/"),
-    gitEnvironment: gitEnvironment)
+    gitEnvironment: gitEnvironment,
+    githubActions: "",
+    githubRunId: "")
   #expect(ok)
   #expect(manager.fileExists(atPath: checkout + "/.make/swiftlint.yml"))
   #expect(manager.fileExists(atPath: checkout + "/.make/swift-format.json"))
@@ -123,7 +125,9 @@ func ensureFailsWhenGitIdentityIsMissing() throws {
 
   let ok = LintResources.ensure(
     context: PathContext(pwd: checkout + "/", cwd: checkout + "/"),
-    gitEnvironment: isolatedGitEnvironment(in: repo))
+    gitEnvironment: isolatedGitEnvironment(in: repo),
+    githubActions: "",
+    githubRunId: "")
   #expect(!ok)
   #expect(!manager.fileExists(atPath: checkout + "/.make/swiftlint.yml"))
 }
