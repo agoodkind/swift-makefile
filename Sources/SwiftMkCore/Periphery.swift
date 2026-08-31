@@ -40,6 +40,14 @@ enum Periphery {
     "\(cacheDirectory())/periphery"
   }
 
+  private static func supportsPinnedRelease() -> Bool {
+    #if os(macOS) && arch(arm64)
+      return true
+    #else
+      return false
+    #endif
+  }
+
   private static func configuredBin() -> String? {
     let configured = Env.get("PERIPHERY")
     if configured.isEmpty || configured == "periphery" {
@@ -90,6 +98,10 @@ enum Periphery {
         return nil
       }
       return configured
+    }
+    guard supportsPinnedRelease() else {
+      Output.error("periphery: \(releaseTag) supports arm64 macOS only")
+      return nil
     }
 
     let output = outputPath()
