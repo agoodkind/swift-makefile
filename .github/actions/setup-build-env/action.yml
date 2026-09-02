@@ -69,6 +69,49 @@ runs:
             # SwiftPM clones dependencies out-of-tree, which bypasses actions/checkout's
             # repo-local auth. Global auth avoids GitHub's unauthenticated 403 rate limit.
             git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
+
+            # The rewrite above carries the token in the URL, so no credential
+            # helper is needed to authenticate. Leaving the helper on is not
+            # merely redundant, it hangs the build: git's osxkeychain helper
+            # stores the rewritten credential as a github.com internet password,
+            # and SwiftPM looks that item up before downloading any binary
+            # artifact. Reading it makes securityd decrypt it, which never
+            # returns on a runner with nothing to answer the unlock, so the
+            # resolve blocks on "Downloading binary artifact" until the job hits
+            # its own limit.
+            #
+            # An empty value resets git's helper list, so the system gitconfig's
+            # osxkeychain entry stops applying. Items an earlier step already
+            # wrote are removed too, because SwiftPM blocks on whichever item it
+            # finds rather than on one this action wrote.
+            git config --global credential.helper ""
+            if [ "$(uname -s)" = "Darwin" ]; then
+                while security delete-internet-password -s github.com >/dev/null 2>&1; do
+                    printf 'removed a stored github.com keychain credential\n'
+                done
+            fi
+        fi
+
+    # Two lines, always on. The stall above took a stack sample to diagnose
+    # because nothing in the log said whether a blocking credential was present.
+    # Reading keychain attributes never decrypts an item, so this cannot block
+    # the way SwiftPM's own lookup does.
+    - name: Report the credential state SwiftPM will see
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        if [ "$(uname -s)" != "Darwin" ]; then
+            printf 'credential-state: not macOS, no keychain lookup applies\n'
+            exit 0
+        fi
+
+        printf 'credential-state: helpers=[%s]\n' \
+            "$(git config --get-all credential.helper 2>/dev/null | tr '\n' ' ')"
+        if security find-internet-password -s github.com >/dev/null 2>&1; then
+            printf 'credential-state: a github.com keychain item is present, so a SwiftPM binary-artifact download will block on it\n'
+        else
+            printf 'credential-state: no github.com keychain item, so SwiftPM has nothing to block on\n'
         fi
 
     - name: Resolve dependency hash
