@@ -19,12 +19,12 @@ import Foundation
 /// Resolves the pinned free, offline Periphery fork into the shared engine cache.
 enum Periphery {
   static let repository = "agoodkind/periphery"
-  static let revision = "fbf5d84ce1383e6afa05c35dd9a76be7a26b48d8"
-  static let releaseTag = "3.8.0-agoodkind.1"
-  static let assetName = "periphery-3.8.0.zip"
-  static let assetSHA256 = "07d4e286e31dd79164df39097e0b59f533c94badbe18158464a455ea88a166d7"
-  static let binarySHA256 = "043b2c2ff7589b87f2b30c6c9b91e8d9b8e5c6c3cd03d2e3395960e00d53e9b5"
-  private static let expectedVersion = "3.8.0"
+  static let revision = "bca88e7a7a026b2c69680a932e1513ea32e5d738"
+  static let releaseTag = "3.8.0-agoodkind.2"
+  static let assetName = "periphery-3.8.0-agoodkind.2-macos-arm64.zip"
+  static let assetSHA256 = "5edb9c7e66474cf82cd7edc5eb842e3d64209402df4249a37cd00fe5bfcc71d9"
+  static let binarySHA256 = "9481e34970169d29776725a67007f87762530594762b620e2295425dad270b12"
+  private static let expectedVersion = "3.8.0-agoodkind.2"
 
   static func cacheBaseDirectory() -> String {
     let home = Env.get("HOME", FileManager.default.homeDirectoryForCurrentUser.path)
@@ -38,6 +38,16 @@ enum Periphery {
 
   private static func outputPath() -> String {
     "\(cacheDirectory())/periphery"
+  }
+
+  private static func supportsPinnedRelease() -> Bool {
+    #if os(macOS)
+      var arm64 = Int32(0)
+      var size = MemoryLayout<Int32>.size
+      return sysctlbyname("hw.optional.arm64", &arm64, &size, nil, 0) == 0 && arm64 == 1
+    #else
+      return false
+    #endif
   }
 
   private static func configuredBin() -> String? {
@@ -91,6 +101,10 @@ enum Periphery {
       }
       return configured
     }
+    guard supportsPinnedRelease() else {
+      Output.error("periphery: \(releaseTag) supports arm64 macOS only")
+      return nil
+    }
 
     let output = outputPath()
     if FileManager.default.fileExists(atPath: cacheDirectory()) {
@@ -109,6 +123,7 @@ enum Periphery {
     let base = cacheBaseDirectory()
     let stage = "\(base)/.\(releaseTag).\(UUID().uuidString)"
     let archive = "\(stage)/\(assetName)"
+    let extractedDirectory = "\(stage)/periphery-\(releaseTag)"
     let url =
       "https://github.com/\(repository)/releases/download/\(releaseTag)/\(assetName)"
 
@@ -147,11 +162,12 @@ enum Periphery {
       Output.error("periphery: extraction failed: \(extract.combined)")
       return nil
     }
-    let stagedBinary = "\(stage)/periphery"
+    let stagedBinary = "\(extractedDirectory)/periphery"
     guard verifyBinary(stagedBinary) else { return nil }
 
     do {
-      try manager.moveItem(atPath: stage, toPath: cacheDirectory())
+      try manager.removeItem(atPath: archive)
+      try manager.moveItem(atPath: extractedDirectory, toPath: cacheDirectory())
     } catch {
       Output.error("periphery: could not publish cache entry: \(error)")
       return nil
