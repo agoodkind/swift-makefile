@@ -195,8 +195,8 @@ public enum LintResources {
   // MARK: Interpolation
 
   public enum InterpolationError: Error {
-    case utf8EncodingFailed
     case disabledRulesSectionMissing
+    case utf8EncodingFailed
   }
 
   /// Rewrite a SwiftLint YAML template so `file_header` is disabled and its
@@ -267,7 +267,7 @@ public enum LintResources {
     var skipping = false
     for line in yaml.split(separator: "\n", omittingEmptySubsequences: false) {
       let text = String(line)
-      if !skipping && text == "file_header:" {
+      if !skipping, text == "file_header:" {
         skipping = true
         continue
       }

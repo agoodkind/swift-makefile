@@ -160,7 +160,7 @@ func swiftlintYAMLDisablingFileHeaderRemovesPatternAndDisablesRule() throws {
   let bundled = try #require(
     LintResources.bundledData(resourceName: "swiftlint", resourceExtension: "yml"))
   let yamlData = try LintResources.swiftlintYAMLDisablingFileHeader(bundled)
-  let yaml = String(decoding: yamlData, as: UTF8.self)
+  let yaml = try #require(String(bytes: yamlData, encoding: .utf8))
   #expect(yaml.contains("disabled_rules:\n  - file_header\n"))
   #expect(!yaml.contains("file_header:\n"))
   #expect(!yaml.contains("required_pattern:"))
@@ -175,7 +175,7 @@ func interpolatedFileHeaderMatchesGitIdentityAndRejectsAgents() throws {
     LintResources.bundledData(resourceName: "swiftlint", resourceExtension: "yml"))
   let yamlData = try LintResources.interpolatedSwiftlintYAML(
     template: bundled, identity: identity)
-  let yaml = String(decoding: yamlData, as: UTF8.self)
+  let yaml = try #require(String(bytes: yamlData, encoding: .utf8))
   #expect(!yaml.contains("[^<\\n]+"))
   #expect(!yaml.contains("[[GIT_USER_NAME]]"))
   #expect(yaml.contains("Created by Test User <test@example\\.com>"))
@@ -195,6 +195,8 @@ func interpolatedFileHeaderMatchesGitIdentityAndRejectsAgents() throws {
 
 // MARK: - Header pattern helpers
 
+private let yamlRequiredPatternIndentCount = 4
+
 private func requiredPattern(from yaml: String) throws -> String {
   var collecting = false
   var lines: [String] = []
@@ -206,7 +208,7 @@ private func requiredPattern(from yaml: String) throws -> String {
     }
     if collecting {
       if text.hasPrefix("    ") {
-        lines.append(String(text.dropFirst(4)))
+        lines.append(String(text.dropFirst(yamlRequiredPatternIndentCount)))
         continue
       }
       if text.isEmpty {
@@ -221,6 +223,8 @@ private func requiredPattern(from yaml: String) throws -> String {
   }
   return pattern
 }
+
+// MARK: - PatternExtractError
 
 private enum PatternExtractError: Error {
   case empty

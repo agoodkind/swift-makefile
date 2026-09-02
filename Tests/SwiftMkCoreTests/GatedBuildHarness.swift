@@ -156,19 +156,19 @@ enum GatedBuildHarness {
       atPath: paths.root + "/Sources", withIntermediateDirectories: true)
     try manager.createDirectory(atPath: paths.binDir, withIntermediateDirectories: true)
     try """
-      //
-      //  App.swift
-      //  App
-      //
-      //  Created by Test User <test@example.com> on 2026-08-30.
-      //  Copyright © 2026, all rights reserved.
-      //
+    //
+    //  App.swift
+    //  App
+    //
+    //  Created by Test User <test@example.com> on 2026-08-30.
+    //  Copyright © 2026, all rights reserved.
+    //
 
-      public enum App {
-        public static let ready = true
-      }
+    public enum App {
+      public static let ready = true
+    }
 
-      """.write(
+    """.write(
       toFile: paths.root + "/Sources/App.swift", atomically: true, encoding: .utf8)
     // packageManifest declares a target covering Sources so the coverage gate sees
     // App.swift as package-scanned, the way a real consumer's package covers its

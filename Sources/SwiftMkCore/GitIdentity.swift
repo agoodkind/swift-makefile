@@ -35,17 +35,18 @@ public struct GitIdentity: Equatable, Sendable {
     environment: [String: String] = [:]
   ) -> Result<GitIdentity, LoadFailure> {
     Output.debug("git-identity: reading user.name and user.email in \(directory)")
-    let name = configValue("user.name", directory: directory, environment: environment)
-    let email = configValue("user.email", directory: directory, environment: environment)
-    if name.isEmpty {
+    let configuredName = configValue("user.name", directory: directory, environment: environment)
+    let configuredEmail = configValue(
+      "user.email", directory: directory, environment: environment)
+    if configuredName.isEmpty {
       Output.error("git-identity: git config user.name is empty")
       return .failure(.missingName)
     }
-    if email.isEmpty {
+    if configuredEmail.isEmpty {
       Output.error("git-identity: git config user.email is empty")
       return .failure(.missingEmail)
     }
-    return .success(GitIdentity(name: name, email: email))
+    return .success(GitIdentity(name: configuredName, email: configuredEmail))
   }
 
   /// Unescaped tokens for Xcode FILEHEADER templates.
