@@ -66,28 +66,37 @@ runs:
             # Mask the token first so a later git error that echoes the rewritten
             # URL cannot disclose it in the run log.
             echo "::add-mask::${TOKEN}"
-            # SwiftPM clones dependencies out-of-tree, which bypasses actions/checkout's
-            # repo-local auth. Global auth avoids GitHub's unauthenticated 403 rate limit.
-            git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
+
+            # Everything below is job-scoped through GIT_CONFIG_*, which git reads
+            # with the same precedence as `-c` and therefore last, and which child
+            # processes inherit. The account's own config is shared: a pool runner
+            # hosts several job slots from one home, so a token written there would
+            # be readable by a concurrent job and would outlive this one.
+            #
+            # SwiftPM clones dependencies out-of-tree, which bypasses
+            # actions/checkout's repo-local auth, and an unauthenticated clone hits
+            # GitHub's 403 rate limit. The rewrite carries the token instead.
+            git_config_entries=0
+            add_git_config_entry() {
+                {
+                    printf 'GIT_CONFIG_KEY_%s=%s\n' "${git_config_entries}" "$1"
+                    printf 'GIT_CONFIG_VALUE_%s=%s\n' "${git_config_entries}" "$2"
+                } >> "${GITHUB_ENV}"
+                git_config_entries=$(( git_config_entries + 1 ))
+            }
+
+            add_git_config_entry \
+                "url.https://x-access-token:${TOKEN}@github.com/.insteadOf" \
+                "https://github.com/"
 
             # The token rides in the URL, so a credential helper is unnecessary
-            # here and actively harmful: osxkeychain stores the rewritten
-            # credential, and SwiftPM's lookup for it before a binary-artifact
-            # download blocks forever in securityd, which cannot prompt for an
-            # unlock on a runner. Only macOS has that failure, so only macOS
-            # turns the helper off.
-            #
-            # Job-scoped through GIT_CONFIG_*, which git reads with the same
-            # precedence as `-c` and therefore last: an empty value there
-            # discards every helper configured before it. Writing the reset to
-            # the account's own config would outlive this job and strip the
-            # helper from every later job sharing that home on the pool.
+            # and actively harmful: osxkeychain stores the rewritten credential,
+            # and SwiftPM's lookup for it before a binary-artifact download blocks
+            # forever in securityd, which cannot prompt for an unlock on a runner.
+            # Only macOS has that failure. An empty value discards every helper
+            # configured before it.
             if [ "$(uname -s)" = "Darwin" ]; then
-                {
-                    printf 'GIT_CONFIG_COUNT=1\n'
-                    printf 'GIT_CONFIG_KEY_0=credential.helper\n'
-                    printf 'GIT_CONFIG_VALUE_0=\n'
-                } >> "${GITHUB_ENV}"
+                add_git_config_entry credential.helper ""
 
                 # An earlier job may already have stored one, and SwiftPM blocks
                 # on whichever item it finds. Scoped to the x-access-token
@@ -99,6 +108,8 @@ runs:
                     printf 'removed a stored github.com keychain credential\n'
                 done
             fi
+
+            printf 'GIT_CONFIG_COUNT=%s\n' "${git_config_entries}" >> "${GITHUB_ENV}"
         fi
 
     # Reading attributes never decrypts an item, so this cannot block the way

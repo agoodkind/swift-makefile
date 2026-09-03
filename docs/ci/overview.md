@@ -68,11 +68,13 @@ The cancelled run stays cancelled and does not auto-recover. A new push re-trigg
 
 The automatic rerun in `ci-infra-retry.yml` is disabled. A cancelled run carries no signal for who cancelled it, so the auto-rerun could not tell a human GitHub-UI cancel from a pool-watchdog infra cancel and reran manual cancels. The workflow keeps only a `workflow_dispatch` trigger, so it never auto-reruns; re-enable the `workflow_run` trigger once an infra-vs-manual cancel signal exists.
 
-## The build environment stores no github.com credential of its own
+## Git authentication stays inside the job
 
-The build environment authenticates github.com clones by rewriting the URL to carry the token, and on macOS it leaves no credential helper active for the job. Both halves matter. SwiftPM asks the keychain for a github.com credential before it downloads a binary artifact, and reading a stored item makes securityd decrypt it. A runner has nothing to answer the unlock that decryption can require, so the call never returns and the resolve blocks on `Downloading binary artifact` until the job reaches its own limit. Turning the helper off leaves that lookup nothing to find.
+The build environment authenticates github.com clones by rewriting the URL to carry the token, and on macOS it also leaves no credential helper active. Both halves matter. SwiftPM asks the keychain for a github.com credential before it downloads a binary artifact, and reading a stored item makes securityd decrypt it. A runner has nothing to answer the unlock that decryption can require, so the call never returns and the resolve blocks on `Downloading binary artifact` until the job reaches its own limit. Turning the helper off leaves that lookup nothing to find.
 
-The helper reset applies to the job rather than the account, and the cleanup removes only the `x-access-token` entry the rewrite itself produces. A pool runner hosts several job slots from one home, so a credential belonging to a co-tenant or to a person is left alone. An unrelated stored github.com credential can therefore still stall a resolve, which is what the diagnostic below exists to surface.
+Both settings are job-scoped environment entries rather than writes to the account's git configuration, and child processes inherit them, which is how a SwiftPM clone sees them. A pool runner hosts several job slots from one home, so a token written to that shared configuration would be readable by a concurrent job and would outlive the job that wrote it.
+
+One step is still destructive: the keychain cleanup removes the `x-access-token` entry, and it cannot tell which job stored it. A concurrent slot authenticating under that same conventional account name loses its credential. Nothing else is touched, so a credential under any other account survives and can still stall a resolve, which is what the diagnostic below surfaces.
 
 A warm dependency cache hides the whole failure, because a resolve that downloads no artifact performs no credential lookup. That is why it appears only after a cache expires, on a job that had passed for months.
 
