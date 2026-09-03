@@ -77,7 +77,10 @@ runs:
             # unlock on a runner. An empty value resets the helper list, so the
             # system gitconfig entry stops applying. SwiftPM blocks on whichever
             # item it finds, so an item written earlier is removed too.
-            git config --global credential.helper ""
+            # --replace-all, because a persistent runner's global config can
+            # already hold several helper values, and assigning one value over
+            # many fails.
+            git config --global --replace-all credential.helper ""
             if [ "$(uname -s)" = "Darwin" ]; then
                 while security delete-internet-password -s github.com >/dev/null 2>&1; do
                     printf 'removed a stored github.com keychain credential\n'
