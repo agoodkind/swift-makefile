@@ -76,7 +76,16 @@ runs:
             # SwiftPM clones dependencies out-of-tree, which bypasses
             # actions/checkout's repo-local auth, and an unauthenticated clone hits
             # GitHub's 403 rate limit. The rewrite carries the token instead.
-            git_config_entries=0
+            # Append after whatever the caller already set, rather than from 0.
+            # Starting at 0 would overwrite a caller's own entry and then shrink
+            # GIT_CONFIG_COUNT past it, silently dropping configuration another
+            # private host or policy depends on. A non-numeric inherited value
+            # would make git ignore every entry, so it is treated as absent.
+            git_config_entries="${GIT_CONFIG_COUNT:-0}"
+            case "${git_config_entries}" in
+                ''|*[!0-9]*) git_config_entries=0 ;;
+            esac
+
             add_git_config_entry() {
                 {
                     printf 'GIT_CONFIG_KEY_%s=%s\n' "${git_config_entries}" "$1"

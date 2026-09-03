@@ -70,7 +70,7 @@ The automatic rerun in `ci-infra-retry.yml` is disabled. A cancelled run carries
 
 ## Git authentication stays inside the job
 
-The build environment authenticates github.com clones by rewriting the URL to carry the token, and on macOS it also leaves no credential helper active. Both halves matter. SwiftPM asks the keychain for a github.com credential before it downloads a binary artifact, and reading a stored item makes securityd decrypt it. A runner has nothing to answer the unlock that decryption can require, so the call never returns and the resolve blocks on `Downloading binary artifact` until the job reaches its own limit. Turning the helper off leaves that lookup nothing to find.
+The build environment authenticates github.com clones by rewriting the URL to carry the token, and on macOS it also leaves no credential helper active. Both halves matter. SwiftPM asks the keychain for a github.com credential before it downloads a binary artifact, and reading a stored item makes securityd decrypt it. A runner has nothing to answer the unlock that decryption can require, so the call never returns and the resolve blocks on `Downloading binary artifact` until the job reaches its own limit. Turning the helper off stops this job storing such an item; an item an earlier job already stored is removed separately, as described below.
 
 Both settings are job-scoped environment entries rather than writes to the account's git configuration, and child processes inherit them, which is how a SwiftPM clone sees them. A pool runner hosts several job slots from one home, so a token written to that shared configuration would be readable by a concurrent job and would outlive the job that wrote it.
 
