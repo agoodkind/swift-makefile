@@ -96,15 +96,15 @@ on:
       apple-team-id:
         type: string
         default: ""
-      # Asset to smoke-verify after publish: the smoke job downloads it and runs
+      # Asset to verify after publish: the post-publish job downloads it and runs
       # the swift-mk verify-release check (staple, codesign, team id, then runs
-      # the binary and asserts the tag). Empty skips the smoke. The caller names
+      # the binary and asserts the tag). Empty skips the check. The caller names
       # its own asset so this reusable workflow stays generic instead of pinning
       # one repo's artifact.
       smoke-asset:
         type: string
         default: ""
-      # Executable the smoke finds inside the asset and runs. A consumer ships its
+      # Executable the check finds inside the asset and runs. A consumer ships its
       # own products, so it names the one that reports a version. Empty runs the
       # engine's own binary, which is what a swift-mk release asset carries.
       smoke-binary:
@@ -159,6 +159,19 @@ on:
       # _plan-runners.yml. Absent, the capacity check runs tokenless against the
       # public endpoint.
       LOCAL_POOL_CAPACITY_TOKEN:
+        required: false
+      # Slots a caller maps its own secrets into for its post-publish command.
+      # The names carry no meaning here on purpose: a caller decides what each
+      # slot holds and its command reads them back, so a consumer's secrets stay
+      # its own and this workflow never names them. Values pass through
+      # unchanged, so the runner's log redaction still matches them.
+      POST_PUBLISH_SECRET_1:
+        required: false
+      POST_PUBLISH_SECRET_2:
+        required: false
+      POST_PUBLISH_SECRET_3:
+        required: false
+      POST_PUBLISH_SECRET_4:
         required: false
 
 env:
@@ -795,8 +808,8 @@ jobs:
           SWIFT_MK_DIST_DIR: ${{ inputs.dist-dir }}
         run: make release-publish
 
-  smoke:
-    name: Smoke
+  post-publish:
+    name: Post-publish
     needs: [meta, publish, plan-runners]
     if: ${{ !inputs.ephemeral && (inputs.smoke-asset != '' || inputs.post-publish-command != '') }}
     # Routed like the build rather than pinned to inputs.runner, so this job takes
@@ -807,7 +820,7 @@ jobs:
       contents: read
     env:
       # Require a team id too: verify-release --require-signature checks the
-      # Developer ID team, so without apple-team-id the smoke would pass
+      # Developer ID team, so without apple-team-id the check would pass
       # --require-signature but no --team-id and fail the missing-team-id guard.
       REQUIRE_SIGNATURE: ${{ inputs.notarize && inputs.apple-team-id != '' && secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' && secrets.APPLE_NOTARY_KEY_BASE64 != '' }}
     steps:
@@ -846,7 +859,7 @@ jobs:
         shell: bash
         env:
           # verify-release authenticates GitHub API calls with GH_TOKEN, so a
-          # private repo resolves and the smoke avoids the unauthenticated rate
+          # private repo resolves and the check avoids the unauthenticated rate
           # limit. Set it explicitly on the step rather than rely on inheritance.
           GH_TOKEN: ${{ github.token }}
           RELEASE_REPO: ${{ github.repository }}
@@ -902,17 +915,17 @@ jobs:
         with:
           node-version: ${{ inputs.post-publish-node-version }}
 
-      # The command is consumer-authored and runs with the caller's secrets in
-      # SWIFT_MK_SECRETS, a JSON object keyed by secret name. Naming individual
-      # secrets here would make the engine carry a consumer's vocabulary, and a
-      # reusable workflow cannot declare secrets it does not know. Actions masks
-      # these values in logs, and the variable is scoped to this step alone.
       - name: Run the consumer's post-publish command
         if: ${{ inputs.post-publish-command != '' }}
         shell: bash
         working-directory: ${{ inputs.post-publish-working-directory || github.workspace }}
         env:
-          SWIFT_MK_SECRETS: ${{ toJSON(secrets) }}
+          POST_PUBLISH_SECRET_1: ${{ secrets.POST_PUBLISH_SECRET_1 }}
+          POST_PUBLISH_SECRET_2: ${{ secrets.POST_PUBLISH_SECRET_2 }}
+          POST_PUBLISH_SECRET_3: ${{ secrets.POST_PUBLISH_SECRET_3 }}
+          POST_PUBLISH_SECRET_4: ${{ secrets.POST_PUBLISH_SECRET_4 }}
+          # Read-only: the job grants contents: read, so a command that writes to
+          # the release needs a token of its own in one of the slots above.
           GH_TOKEN: ${{ github.token }}
           GH_REPOSITORY: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.meta.outputs.release_tag }}

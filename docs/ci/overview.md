@@ -10,11 +10,13 @@ The reusable release workflow defaults `release-on-merge` to `manual`, so a main
 
 ## Post-publish work
 
-The engine runs a consumer's post-publish command on the macOS job that follows publication. Work depending on a published release cannot start before that release exists, and a consumer that already runs a post-publish check gets this work on the same runner rather than a second one.
+One macOS job runs after publication, and it carries both the release verification and whatever command the consumer supplies. Work depending on a published release cannot start before that release exists, so a consumer that wants both gets them on one runner rather than two.
 
-The command is consumer-authored and the engine does not read it. It runs against the released commit rather than the workflow ref, so a promoted candidate is described by its own sources. The release tag and track arrive as environment variables, alongside a read-only token. The runner label comes from the capacity check made before the build, so this work lands wherever that decision sent the build rather than on a runner chosen when it starts.
+The command is consumer-authored and the engine does not read it. It runs against the released commit rather than the workflow ref, so a promoted candidate is described by its own sources. The release tag and track arrive as environment variables, alongside a read-only token.
 
-A consumer that sets only a post-publish command and no post-publish check creates this macOS job where it would otherwise not exist, which costs a runner rather than saving one.
+A consumer's secrets stay its own. The caller maps them into numbered slots, and its command reads them back, so the engine never names a consumer's secret and passes each value through unchanged, which keeps the runner's log redaction matching.
+
+The runner label comes from the capacity check made before the build, so this work lands wherever that decision sent the build rather than on a runner chosen when it starts. Two consequences follow. A consumer that supplies only a command and no verification asset creates this job where it would otherwise not exist, which costs a runner rather than saving one. A job that strands on the pool trips the watchdog, and since the release has already published, the run reports cancelled with the command never run.
 
 ## One macOS job per pull request
 
