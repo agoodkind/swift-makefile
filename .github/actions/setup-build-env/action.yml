@@ -76,16 +76,23 @@ runs:
             # SwiftPM clones dependencies out-of-tree, which bypasses
             # actions/checkout's repo-local auth, and an unauthenticated clone hits
             # GitHub's 403 rate limit. The rewrite carries the token instead.
-            # Append after whatever the caller already set, rather than from 0.
-            # Starting at 0 would overwrite a caller's own entry and then shrink
-            # GIT_CONFIG_COUNT past it, silently dropping configuration another
-            # private host or policy depends on. A non-numeric inherited value
-            # would make git ignore every entry, so it is treated as absent.
-            git_config_entries="${GIT_CONFIG_COUNT:-0}"
-            case "${git_config_entries}" in
-                ''|*[!0-9]*) git_config_entries=0 ;;
+            #
+            # A caller's own entries are preserved, and the two settings sit on
+            # opposite sides of them because git resolves them by opposite rules.
+            # Competing insteadOf rules of equal length resolve to the first, so
+            # the rewrite goes ahead of a caller's identical github.com rule or it
+            # is ignored and private clones fail. An empty credential.helper
+            # discards every helper before it, so the reset goes last.
+            #
+            # 10# forces base ten: a digits-only inherited value with a leading
+            # zero, such as 08, is otherwise read as octal and aborts the step.
+            inherited_entries="${GIT_CONFIG_COUNT:-0}"
+            case "${inherited_entries}" in
+                ''|*[!0-9]*) inherited_entries=0 ;;
+                *) inherited_entries=$(( 10#${inherited_entries} )) ;;
             esac
 
+            git_config_entries=0
             add_git_config_entry() {
                 {
                     printf 'GIT_CONFIG_KEY_%s=%s\n' "${git_config_entries}" "$1"
@@ -98,12 +105,25 @@ runs:
                 "url.https://x-access-token:${TOKEN}@github.com/.insteadOf" \
                 "https://github.com/"
 
+            # Shift the caller's entries up to sit after the rewrite. Their
+            # values are read from this step's own environment, which still holds
+            # what the caller set, since a GITHUB_ENV write only reaches later
+            # steps.
+            inherited_index=0
+            while [ "${inherited_index}" -lt "${inherited_entries}" ]; do
+                eval "inherited_key=\${GIT_CONFIG_KEY_${inherited_index}:-}"
+                eval "inherited_value=\${GIT_CONFIG_VALUE_${inherited_index}:-}"
+                if [ -n "${inherited_key}" ]; then
+                    add_git_config_entry "${inherited_key}" "${inherited_value}"
+                fi
+                inherited_index=$(( inherited_index + 1 ))
+            done
+
             # The token rides in the URL, so a credential helper is unnecessary
             # and actively harmful: osxkeychain stores the rewritten credential,
             # and SwiftPM's lookup for it before a binary-artifact download blocks
             # forever in securityd, which cannot prompt for an unlock on a runner.
-            # Only macOS has that failure. An empty value discards every helper
-            # configured before it.
+            # Only macOS has that failure.
             if [ "$(uname -s)" = "Darwin" ]; then
                 add_git_config_entry credential.helper ""
 
