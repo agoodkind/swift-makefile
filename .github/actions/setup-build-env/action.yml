@@ -74,17 +74,26 @@ runs:
             # here and actively harmful: osxkeychain stores the rewritten
             # credential, and SwiftPM's lookup for it before a binary-artifact
             # download blocks forever in securityd, which cannot prompt for an
-            # unlock on a runner. An empty value resets the helper list, so the
-            # system gitconfig entry stops applying. SwiftPM blocks on whichever
-            # item it finds, so an item written earlier is removed too.
-            # --replace-all, because a persistent runner's global config can
-            # already hold several helper values, and assigning one value over
-            # many fails.
-            git config --global --replace-all credential.helper ""
-            # Scoped to the x-access-token account the rewrite above produces:
-            # the pool runs two slots from one home, so deleting every github.com
-            # credential would take a co-tenant's or a human's along with it.
+            # unlock on a runner. Only macOS has that failure, so only macOS
+            # turns the helper off.
+            #
+            # Job-scoped through GIT_CONFIG_*, which git reads with the same
+            # precedence as `-c` and therefore last: an empty value there
+            # discards every helper configured before it. Writing the reset to
+            # the account's own config would outlive this job and strip the
+            # helper from every later job sharing that home on the pool.
             if [ "$(uname -s)" = "Darwin" ]; then
+                {
+                    printf 'GIT_CONFIG_COUNT=1\n'
+                    printf 'GIT_CONFIG_KEY_0=credential.helper\n'
+                    printf 'GIT_CONFIG_VALUE_0=\n'
+                } >> "${GITHUB_ENV}"
+
+                # An earlier job may already have stored one, and SwiftPM blocks
+                # on whichever item it finds. Scoped to the x-access-token
+                # account the rewrite above produces, since the pool runs two
+                # slots from one home and deleting every github.com credential
+                # would take a co-tenant's or a human's along with it.
                 while security delete-internet-password \
                     -a x-access-token -s github.com >/dev/null 2>&1; do
                     printf 'removed a stored github.com keychain credential\n'
@@ -104,23 +113,25 @@ runs:
             exit 0
         fi
 
-        # Report the effective list, not the raw one. The system gitconfig's
-        # osxkeychain entry stays visible after the global reset, so a raw dump
-        # reads as though the helper is still active. An empty value discards
-        # every helper configured before it, which is what the reset relies on.
-        effective_helpers=""
+        # Whether a helper survives, never which one. A helper can be an inline
+        # shell command carrying a credential, so its value must not reach the
+        # log. Count rather than name: an empty value discards every helper
+        # configured before it, so a raw list would read as though a reset
+        # helper were still active.
+        helper_count=0
+        helper_value=""
         while IFS= read -r helper_value || [ -n "${helper_value}" ]; do
             if [ -z "${helper_value}" ]; then
-                effective_helpers=""
+                helper_count=0
             else
-                effective_helpers="${effective_helpers}${helper_value} "
+                helper_count=$(( helper_count + 1 ))
             fi
         done < <(git config --get-all credential.helper 2>/dev/null || true)
 
-        if [ -z "${effective_helpers}" ]; then
+        if [ "${helper_count}" -eq 0 ]; then
             printf 'credential-state: no credential helper is active\n'
         else
-            printf 'credential-state: active helpers=[%s]\n' "${effective_helpers% }"
+            printf 'credential-state: %s credential helper(s) active\n' "${helper_count}"
         fi
         if security find-internet-password -s github.com >/dev/null 2>&1; then
             printf 'credential-state: a github.com keychain item is present, so a SwiftPM binary-artifact download will block on it\n'
