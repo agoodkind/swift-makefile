@@ -100,8 +100,24 @@ runs:
             exit 0
         fi
 
-        printf 'credential-state: helpers=[%s]\n' \
-            "$(git config --get-all credential.helper 2>/dev/null | tr '\n' ' ')"
+        # Report the effective list, not the raw one. The system gitconfig's
+        # osxkeychain entry stays visible after the global reset, so a raw dump
+        # reads as though the helper is still active. An empty value discards
+        # every helper configured before it, which is what the reset relies on.
+        effective_helpers=""
+        while IFS= read -r helper_value || [ -n "${helper_value}" ]; do
+            if [ -z "${helper_value}" ]; then
+                effective_helpers=""
+            else
+                effective_helpers="${effective_helpers}${helper_value} "
+            fi
+        done < <(git config --get-all credential.helper 2>/dev/null || true)
+
+        if [ -z "${effective_helpers}" ]; then
+            printf 'credential-state: no credential helper is active\n'
+        else
+            printf 'credential-state: active helpers=[%s]\n' "${effective_helpers% }"
+        fi
         if security find-internet-password -s github.com >/dev/null 2>&1; then
             printf 'credential-state: a github.com keychain item is present, so a SwiftPM binary-artifact download will block on it\n'
         else
