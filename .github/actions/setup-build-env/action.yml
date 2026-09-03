@@ -92,11 +92,21 @@ runs:
                 *) inherited_entries=$(( 10#${inherited_entries} )) ;;
             esac
 
+            # A git config value may contain newlines, and a plain KEY=VALUE line
+            # would turn the remainder into separate environment records, so every
+            # value is written in the heredoc form with a delimiter it cannot
+            # contain.
             git_config_entries=0
             add_git_config_entry() {
+                local delimiter
+                delimiter="ghaenv_${RANDOM}${RANDOM}_${git_config_entries}"
                 {
-                    printf 'GIT_CONFIG_KEY_%s=%s\n' "${git_config_entries}" "$1"
-                    printf 'GIT_CONFIG_VALUE_%s=%s\n' "${git_config_entries}" "$2"
+                    printf 'GIT_CONFIG_KEY_%s<<%s\n' "${git_config_entries}" "${delimiter}"
+                    printf '%s\n' "$1"
+                    printf '%s\n' "${delimiter}"
+                    printf 'GIT_CONFIG_VALUE_%s<<%s\n' "${git_config_entries}" "${delimiter}"
+                    printf '%s\n' "$2"
+                    printf '%s\n' "${delimiter}"
                 } >> "${GITHUB_ENV}"
                 git_config_entries=$(( git_config_entries + 1 ))
             }
@@ -111,8 +121,12 @@ runs:
             # steps.
             inherited_index=0
             while [ "${inherited_index}" -lt "${inherited_entries}" ]; do
-                eval "inherited_key=\${GIT_CONFIG_KEY_${inherited_index}:-}"
-                eval "inherited_value=\${GIT_CONFIG_VALUE_${inherited_index}:-}"
+                # Indirect expansion rather than eval, so a value never reaches
+                # the parser.
+                inherited_key_name="GIT_CONFIG_KEY_${inherited_index}"
+                inherited_value_name="GIT_CONFIG_VALUE_${inherited_index}"
+                inherited_key="${!inherited_key_name-}"
+                inherited_value="${!inherited_value_name-}"
                 if [ -n "${inherited_key}" ]; then
                     add_git_config_entry "${inherited_key}" "${inherited_value}"
                 fi
