@@ -81,8 +81,12 @@ runs:
             # already hold several helper values, and assigning one value over
             # many fails.
             git config --global --replace-all credential.helper ""
+            # Scoped to the x-access-token account the rewrite above produces:
+            # the pool runs two slots from one home, so deleting every github.com
+            # credential would take a co-tenant's or a human's along with it.
             if [ "$(uname -s)" = "Darwin" ]; then
-                while security delete-internet-password -s github.com >/dev/null 2>&1; do
+                while security delete-internet-password \
+                    -a x-access-token -s github.com >/dev/null 2>&1; do
                     printf 'removed a stored github.com keychain credential\n'
                 done
             fi
