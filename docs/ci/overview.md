@@ -68,13 +68,15 @@ The cancelled run stays cancelled and does not auto-recover. A new push re-trigg
 
 The automatic rerun in `ci-infra-retry.yml` is disabled. A cancelled run carries no signal for who cancelled it, so the auto-rerun could not tell a human GitHub-UI cancel from a pool-watchdog infra cancel and reran manual cancels. The workflow keeps only a `workflow_dispatch` trigger, so it never auto-reruns; re-enable the `workflow_run` trigger once an infra-vs-manual cancel signal exists.
 
-## SwiftPM must find no stored github.com credential
+## The build environment stores no github.com credential of its own
 
-The build environment authenticates github.com clones by rewriting the URL to carry the token, and it leaves no credential helper active. Both halves matter. SwiftPM asks the keychain for a github.com credential before it downloads any binary artifact, and reading a stored item makes securityd decrypt it. A runner has nothing to answer the unlock that decryption can require, so the call never returns and the resolve blocks on `Downloading binary artifact` until the job reaches its own limit. Clearing the helper leaves nothing for that lookup to find, and any item an earlier step already stored is removed for the same reason.
+The build environment authenticates github.com clones by rewriting the URL to carry the token, and on macOS it leaves no credential helper active for the job. Both halves matter. SwiftPM asks the keychain for a github.com credential before it downloads a binary artifact, and reading a stored item makes securityd decrypt it. A runner has nothing to answer the unlock that decryption can require, so the call never returns and the resolve blocks on `Downloading binary artifact` until the job reaches its own limit. Turning the helper off leaves that lookup nothing to find.
 
-A warm dependency cache hides this completely, because a resolve that downloads no artifact performs no credential lookup. That is why the failure appears only after a cache expires, on a job that had passed for months.
+The helper reset applies to the job rather than the account, and the cleanup removes only the `x-access-token` entry the rewrite itself produces. A pool runner hosts several job slots from one home, so a credential belonging to a co-tenant or to a person is left alone. An unrelated stored github.com credential can therefore still stall a resolve, which is what the diagnostic below exists to surface.
 
-Setup reports the credential state on every macOS run, naming the active helpers and whether a github.com item is present. Those two lines are always on, since the alternative is reading a stack sample to learn why a job produced no output for hours.
+A warm dependency cache hides the whole failure, because a resolve that downloads no artifact performs no credential lookup. That is why it appears only after a cache expires, on a job that had passed for months.
+
+Setup reports the credential state on every macOS run: how many credential helpers survive, and whether a github.com item is present. Helper values never reach the log, since a helper can be an inline command carrying a credential. Those lines are always on, because the alternative is reading a stack sample to learn why a job produced no output for hours.
 
 ## Opt-in CI diagnostics
 

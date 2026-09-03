@@ -134,9 +134,9 @@ runs:
             printf 'credential-state: %s credential helper(s) active\n' "${helper_count}"
         fi
         if security find-internet-password -s github.com >/dev/null 2>&1; then
-            printf 'credential-state: a github.com keychain item is present, so a SwiftPM binary-artifact download will block on it\n'
+            printf 'credential-state: a github.com keychain item is present; a resolve that downloads a SwiftPM binary artifact can block on it\n'
         else
-            printf 'credential-state: no github.com keychain item, so SwiftPM has nothing to block on\n'
+            printf 'credential-state: no github.com keychain item to block a SwiftPM binary-artifact download\n'
         fi
 
     - name: Resolve dependency hash
