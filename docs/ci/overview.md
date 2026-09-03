@@ -8,6 +8,12 @@ A consumer calls [_ci.yml](../../.github/workflows/_ci.yml), which runs Verify a
 
 The reusable release workflow defaults `release-on-merge` to `manual`, so a main-branch push does not publish. A consumer sets it to `prerelease` or `stable` to opt into publishing after a merge. Manual dispatch selects a release track. A stable dispatch with no source override releases the selected workflow ref.
 
+## Post-publish work
+
+The engine runs a consumer's post-publish command after the publish step, on a macOS runner the release already holds. Work that depends on the published release cannot start before it exists, and giving that work its own job would take a second macOS runner to wait.
+
+The command is consumer-authored and the engine does not read it. The release tag and track arrive as their own environment variables, and the caller's secrets arrive as a JSON object in `SWIFT_MK_SECRETS` keyed by secret name, since a reusable workflow cannot declare secrets it does not know. Actions masks those values in logs and the variable is scoped to the one step. Routing follows the same capacity check the build uses, so the work takes the pool or a hosted runner depending on which is free.
+
 ## One macOS job per pull request
 
 A consumer that sets `release-dry-run` runs its signed release stages inside Verify instead of in a second macOS job. Verify then runs four stages on one runner: the verify build, the tests against that build, the source-only quality gates, and the signed release build with notarization and stapling. The release build replays the compilation cache the verify build just filled on the same machine. Two separate jobs could not do that, because each one read the cross-run cache before the other had saved.

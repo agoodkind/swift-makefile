@@ -116,6 +116,19 @@ on:
       timeout-minutes:
         type: number
         default: 45
+      # Work a consumer runs after its release is published, on a macOS runner
+      # this workflow already holds. Work that depends on the published release
+      # cannot start before it exists, and its own job would take a second macOS
+      # runner to wait. The engine runs the command and reads none of it.
+      post-publish-command:
+        type: string
+        default: ""
+      post-publish-working-directory:
+        type: string
+        default: ""
+      post-publish-node-version:
+        type: string
+        default: ""
     outputs:
       release-tag:
         value: ${{ jobs.meta.outputs.release_tag }}
@@ -784,9 +797,11 @@ jobs:
 
   smoke:
     name: Smoke
-    needs: [meta, publish]
-    if: ${{ !inputs.ephemeral && inputs.smoke-asset != '' }}
-    runs-on: ${{ inputs.runner }}
+    needs: [meta, publish, plan-runners]
+    if: ${{ !inputs.ephemeral && (inputs.smoke-asset != '' || inputs.post-publish-command != '') }}
+    # Routed like the build rather than pinned to inputs.runner, so this job takes
+    # whichever of the pool or a hosted runner the capacity check selected.
+    runs-on: ${{ needs.plan-runners.outputs.build_label }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
@@ -823,6 +838,7 @@ jobs:
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
 
       - name: Verify published release
+        if: ${{ inputs.smoke-asset != '' }}
         shell: bash
         env:
           # verify-release authenticates GitHub API calls with GH_TOKEN, so a
@@ -874,3 +890,31 @@ jobs:
             attempt=$((attempt + 1))
             sleep 15
           done
+
+      # Opt-in, because the pool image carries no node and the engine should not
+      # assume a post-publish command wants any particular runtime.
+      - uses: actions/setup-node@v7
+        if: ${{ inputs.post-publish-command != '' && inputs.post-publish-node-version != '' }}
+        with:
+          node-version: ${{ inputs.post-publish-node-version }}
+
+      # The command is consumer-authored and runs with the caller's secrets in
+      # SWIFT_MK_SECRETS, a JSON object keyed by secret name. Naming individual
+      # secrets here would make the engine carry a consumer's vocabulary, and a
+      # reusable workflow cannot declare secrets it does not know. Actions masks
+      # these values in logs, and the variable is scoped to this step alone.
+      - name: Run the consumer's post-publish command
+        if: ${{ inputs.post-publish-command != '' }}
+        shell: bash
+        working-directory: ${{ inputs.post-publish-working-directory || github.workspace }}
+        env:
+          SWIFT_MK_SECRETS: ${{ toJSON(secrets) }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.meta.outputs.release_tag }}
+          RELEASE_TRACK: ${{ needs.meta.outputs.release_track }}
+          POST_PUBLISH_COMMAND: ${{ inputs.post-publish-command }}
+        run: |
+          set -euo pipefail
+
+          bash -c "${POST_PUBLISH_COMMAND}"
