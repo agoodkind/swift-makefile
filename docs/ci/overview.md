@@ -10,9 +10,11 @@ The reusable release workflow defaults `release-on-merge` to `manual`, so a main
 
 ## Post-publish work
 
-The engine runs a consumer's post-publish command after the publish step, on a macOS runner the release already holds. Work that depends on the published release cannot start before it exists, and giving that work its own job would take a second macOS runner to wait.
+The engine runs a consumer's post-publish command on the macOS job that follows publication. Work depending on a published release cannot start before that release exists, and a consumer that already runs a post-publish check gets this work on the same runner rather than a second one.
 
-The command is consumer-authored and the engine does not read it. The release tag and track arrive as their own environment variables, and the caller's secrets arrive as a JSON object in `SWIFT_MK_SECRETS` keyed by secret name, since a reusable workflow cannot declare secrets it does not know. Actions masks those values in logs and the variable is scoped to the one step. Routing follows the same capacity check the build uses, so the work takes the pool or a hosted runner depending on which is free.
+The command is consumer-authored and the engine does not read it. It runs against the released commit rather than the workflow ref, so a promoted candidate is described by its own sources. The release tag and track arrive as environment variables, alongside a read-only token. The runner label comes from the capacity check made before the build, so this work lands wherever that decision sent the build rather than on a runner chosen when it starts.
+
+A consumer that sets only a post-publish command and no post-publish check creates this macOS job where it would otherwise not exist, which costs a runner rather than saving one.
 
 ## One macOS job per pull request
 

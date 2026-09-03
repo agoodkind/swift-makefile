@@ -811,9 +811,13 @@ jobs:
       # --require-signature but no --team-id and fail the missing-team-id guard.
       REQUIRE_SIGNATURE: ${{ inputs.notarize && inputs.apple-team-id != '' && secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' && secrets.APPLE_NOTARY_KEY_BASE64 != '' }}
     steps:
+      # The released commit, not the workflow ref. A stable promotion releases a
+      # candidate tag's commit, so a post-publish command reading this tree would
+      # otherwise run against different sources than the release it describes.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ref: ${{ needs.meta.outputs.source_sha }}
 
       - name: Setup Swift build env
         if: github.repository == 'agoodkind/swift-makefile'
@@ -917,4 +921,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          bash -c "${POST_PUBLISH_COMMAND}"
+          # -e and pipefail on the inner shell, because shell options do not
+          # cross an exec: without them a consumer's `a; b` reports green when
+          # a fails. -u is left off, since a command may legitimately reference
+          # an unset variable.
+          bash -eo pipefail -c "${POST_PUBLISH_COMMAND}"
