@@ -63,40 +63,25 @@ runs:
         set -euo pipefail
 
         if [ -n "${TOKEN}" ]; then
-            # Mask the token first so a later git error that echoes the rewritten
-            # URL cannot disclose it in the run log.
             echo "::add-mask::${TOKEN}"
-
-            # The current rewrite precedes included account configuration, so an
-            # equal stale rewrite cannot win. The account files remain unchanged.
-            umask 077
-            job_git_config="$(mktemp "${RUNNER_TEMP}/swift-mk-gitconfig.XXXXXX")"
-            git config --file "${job_git_config}" \
-                "url.https://x-access-token:${TOKEN}@github.com/.insteadOf" \
-                "https://github.com/"
-            if [[ "${GIT_CONFIG_GLOBAL+x}" == "x" ]]; then
-                if [[ -n "${GIT_CONFIG_GLOBAL}" ]]; then
-                    caller_global_git_config="${GIT_CONFIG_GLOBAL}"
-                    if [[ "${caller_global_git_config}" != /* ]]; then
-                        caller_global_git_config="${PWD}/${caller_global_git_config}"
-                    fi
-                    git config --file "${job_git_config}" --add \
-                        include.path "${caller_global_git_config}"
-                fi
-            else
-                git config --file "${job_git_config}" --add \
-                    include.path "${XDG_CONFIG_HOME:-${HOME}/.config}/git/config"
-                git config --file "${job_git_config}" --add \
-                    include.path "${HOME}/.gitconfig"
-            fi
-            printf 'GIT_CONFIG_GLOBAL=%s\n' "${job_git_config}" >> "${GITHUB_ENV}"
-
-            # This entry reaches later steps without changing account config.
-            # Existing job-scoped entries retain their indexes.
+            authorization="$(printf 'x-access-token:%s' "${TOKEN}" | base64 | tr -d '\n')"
+            echo "::add-mask::${authorization}"
             git_config_index=$(( 10#${GIT_CONFIG_COUNT:-0} ))
             {
-                # The URL carries the token. A helper would store it, and SwiftPM
-                # can then block while securityd waits for an unlock prompt.
+                # An empty HTTP header clears earlier GitHub headers. The next
+                # entry authenticates clones without changing any config file.
+                printf 'GIT_CONFIG_KEY_%s=http.https://github.com/.extraheader\n' \
+                    "${git_config_index}"
+                printf 'GIT_CONFIG_VALUE_%s=\n' "${git_config_index}"
+                git_config_index=$(( git_config_index + 1 ))
+                printf 'GIT_CONFIG_KEY_%s=http.https://github.com/.extraheader\n' \
+                    "${git_config_index}"
+                printf 'GIT_CONFIG_VALUE_%s=AUTHORIZATION: basic %s\n' \
+                    "${git_config_index}" "${authorization}"
+                git_config_index=$(( git_config_index + 1 ))
+
+                # SwiftPM cannot block on the macOS keychain when Git has no
+                # credential helper for GitHub.
                 printf 'GIT_CONFIG_KEY_%s=credential.https://github.com.helper\n' \
                     "${git_config_index}"
                 printf 'GIT_CONFIG_VALUE_%s=\n' "${git_config_index}"
