@@ -866,7 +866,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          swift_mk="${HOME}/.swift-mk-ci-toolchain/swift-mk"
           verify_args=(
             verify-release
             --repo "${RELEASE_REPO}"
@@ -894,7 +893,7 @@ jobs:
           attempt=1
           max_attempts=5
           while true; do
-            if "${swift_mk}" "${verify_args[@]}"; then
+            if "${SWIFT_MK_BIN}" "${verify_args[@]}"; then
               exit 0
             fi
             if [[ "${attempt}" -ge "${max_attempts}" ]]; then
