@@ -72,17 +72,9 @@ The cancelled run stays cancelled and does not auto-recover. A new push re-trigg
 
 The automatic rerun in `ci-infra-retry.yml` is disabled. A cancelled run carries no signal for who cancelled it, so the auto-rerun could not tell a human GitHub-UI cancel from a pool-watchdog infra cancel and reran manual cancels. The workflow keeps only a `workflow_dispatch` trigger, so it never auto-reruns; re-enable the `workflow_run` trigger once an infra-vs-manual cancel signal exists.
 
-## Git authentication stays inside the job
+## Prevent keychain credential stalls
 
-The build environment authenticates github.com clones by rewriting the URL to carry the token, and on macOS it also leaves no credential helper active. Both halves matter. SwiftPM asks the keychain for a github.com credential before it downloads a binary artifact, and reading a stored item makes securityd decrypt it. A runner has nothing to answer the unlock that decryption can require, so the call never returns and the resolve blocks on `Downloading binary artifact` until the job reaches its own limit. Turning the helper off stops this job storing such an item; an item an earlier job already stored is removed separately, as described below.
-
-Both settings are job-scoped environment entries rather than writes to the account's git configuration, and child processes inherit them, which is how a SwiftPM clone sees them. A pool runner hosts several job slots from one home, so a token written to that shared configuration would be readable by a concurrent job and would outlive the job that wrote it.
-
-One step is still destructive: the keychain cleanup removes the `x-access-token` entry, and it cannot tell which job stored it. A concurrent slot authenticating under that same conventional account name loses its credential. Nothing else is touched, so a credential under any other account survives and can still stall a resolve, which is what the diagnostic below surfaces.
-
-A warm dependency cache hides the whole failure, because a resolve that downloads no artifact performs no credential lookup. That is why it appears only after a cache expires, on a job that had passed for months.
-
-Setup reports the credential state on every macOS run: how many credential helpers survive, and whether a github.com item is present. Helper values never reach the log, since a helper can be an inline command carrying a credential. Those lines are always on, because the alternative is reading a stack sample to learn why a job produced no output for hours.
+SwiftPM can block while reading an `x-access-token` item from the macOS keychain before downloading a binary artifact. The build environment disables credential helpers for later steps, reports the effective helper count, and fails if that stale item remains.
 
 ## Opt-in CI diagnostics
 
