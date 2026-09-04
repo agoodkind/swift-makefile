@@ -95,11 +95,25 @@ runs:
             # A git config value may contain newlines, and a plain KEY=VALUE line
             # would turn the remainder into separate environment records, so every
             # value is written in the heredoc form with a delimiter it cannot
-            # contain.
+            # contain, checked rather than assumed.
             git_config_entries=0
             add_git_config_entry() {
-                local delimiter
+                local delimiter attempt
+                # Redraw until the delimiter appears in neither the key nor the
+                # value, rather than assuming a random draw cannot collide. A
+                # collision would end the heredoc early and leave a malformed
+                # entry.
+                attempt=0
                 delimiter="ghaenv_${RANDOM}${RANDOM}_${git_config_entries}"
+                while [ "$1" != "${1#*"${delimiter}"}" ] \
+                    || [ "$2" != "${2#*"${delimiter}"}" ]; do
+                    attempt=$(( attempt + 1 ))
+                    if [ "${attempt}" -gt 100 ]; then
+                        printf 'setup-build-env: no usable heredoc delimiter\n' >&2
+                        return 1
+                    fi
+                    delimiter="ghaenv_${RANDOM}${RANDOM}_${attempt}_${git_config_entries}"
+                done
                 {
                     printf 'GIT_CONFIG_KEY_%s<<%s\n' "${git_config_entries}" "${delimiter}"
                     printf '%s\n' "$1"
