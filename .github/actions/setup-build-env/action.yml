@@ -69,16 +69,20 @@ runs:
 
             # The current rewrite precedes included account configuration, so an
             # equal stale rewrite cannot win. The account files remain unchanged.
-            job_git_config="${RUNNER_TEMP}/swift-mk-gitconfig"
             umask 077
-            {
-                printf '[url "https://x-access-token:%s@github.com/"]\n' "${TOKEN}"
-                printf '    insteadOf = https://github.com/\n'
-                printf '[include]\n'
-                printf '    path = %s/git/config\n' "${XDG_CONFIG_HOME:-${HOME}/.config}"
-                printf '[include]\n'
-                printf '    path = %s/.gitconfig\n' "${HOME}"
-            } > "${job_git_config}"
+            job_git_config="$(mktemp "${RUNNER_TEMP}/swift-mk-gitconfig.XXXXXX")"
+            git config --file "${job_git_config}" \
+                "url.https://x-access-token:${TOKEN}@github.com/.insteadOf" \
+                "https://github.com/"
+            if [[ -n "${GIT_CONFIG_GLOBAL:-}" ]]; then
+                git config --file "${job_git_config}" --add \
+                    include.path "${GIT_CONFIG_GLOBAL}"
+            else
+                git config --file "${job_git_config}" --add \
+                    include.path "${XDG_CONFIG_HOME:-${HOME}/.config}/git/config"
+                git config --file "${job_git_config}" --add \
+                    include.path "${HOME}/.gitconfig"
+            fi
             printf 'GIT_CONFIG_GLOBAL=%s\n' "${job_git_config}" >> "${GITHUB_ENV}"
 
             # This entry reaches later steps without changing account config.
