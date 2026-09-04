@@ -96,15 +96,15 @@ on:
       apple-team-id:
         type: string
         default: ""
-      # Asset to smoke-verify after publish: the smoke job downloads it and runs
+      # Asset to verify after publish: the post-publish job downloads it and runs
       # the swift-mk verify-release check (staple, codesign, team id, then runs
-      # the binary and asserts the tag). Empty skips the smoke. The caller names
+      # the binary and asserts the tag). Empty skips the check. The caller names
       # its own asset so this reusable workflow stays generic instead of pinning
       # one repo's artifact.
       smoke-asset:
         type: string
         default: ""
-      # Executable the smoke finds inside the asset and runs. A consumer ships its
+      # Executable the check finds inside the asset and runs. A consumer ships its
       # own products, so it names the one that reports a version. Empty runs the
       # engine's own binary, which is what a swift-mk release asset carries.
       smoke-binary:
@@ -116,6 +116,19 @@ on:
       timeout-minutes:
         type: number
         default: 45
+      post-publish-timeout-minutes:
+        type: number
+        default: 45
+      # Work a consumer runs after its release is published. Empty skips it.
+      post-publish-command:
+        type: string
+        default: ""
+      post-publish-working-directory:
+        type: string
+        default: ""
+      post-publish-node-version:
+        type: string
+        default: ""
     outputs:
       release-tag:
         value: ${{ jobs.meta.outputs.release_tag }}
@@ -146,6 +159,15 @@ on:
       # _plan-runners.yml. Absent, the capacity check runs tokenless against the
       # public endpoint.
       LOCAL_POOL_CAPACITY_TOKEN:
+        required: false
+      # The caller assigns meaning to these neutral secret slots.
+      POST_PUBLISH_SECRET_1:
+        required: false
+      POST_PUBLISH_SECRET_2:
+        required: false
+      POST_PUBLISH_SECRET_3:
+        required: false
+      POST_PUBLISH_SECRET_4:
         required: false
 
 env:
@@ -637,7 +659,7 @@ jobs:
           CODE_SIGN_KEYCHAIN: ${{ steps.cert-local.outputs.keychain || steps.cert-remote.outputs.keychain }}
           TEAM_ID: ${{ inputs.apple-team-id }}
           PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile.outputs.profile-specifier }}
-          RELEASE_TAG: ${{ needs.meta.outputs.tag }}
+          RELEASE_TAG: ${{ needs.meta.outputs.release_tag }}
           RELEASE_TRACK: ${{ needs.meta.outputs.release_track }}
           RELEASE_SOURCE_SHA: ${{ needs.meta.outputs.source_sha }}
           ARTIFACT_VERSION: ${{ needs.meta.outputs.artifact_version }}
@@ -782,23 +804,29 @@ jobs:
           SWIFT_MK_DIST_DIR: ${{ inputs.dist-dir }}
         run: make release-publish
 
-  smoke:
-    name: Smoke
-    needs: [meta, publish]
-    if: ${{ !inputs.ephemeral && inputs.smoke-asset != '' }}
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: ${{ inputs.timeout-minutes }}
+  post-publish:
+    name: Post-publish
+    needs: [meta, publish, plan-runners]
+    if: ${{ !inputs.ephemeral && (inputs.smoke-asset != '' || inputs.post-publish-command != '') }}
+    # Routed like the build rather than pinned to inputs.runner, so this job takes
+    # whichever of the pool or a hosted runner the capacity check selected.
+    runs-on: ${{ needs.plan-runners.outputs.build_label }}
+    timeout-minutes: ${{ inputs.post-publish-timeout-minutes }}
     permissions:
       contents: read
     env:
       # Require a team id too: verify-release --require-signature checks the
-      # Developer ID team, so without apple-team-id the smoke would pass
+      # Developer ID team, so without apple-team-id the check would pass
       # --require-signature but no --team-id and fail the missing-team-id guard.
       REQUIRE_SIGNATURE: ${{ inputs.notarize && inputs.apple-team-id != '' && secrets.APPLE_DEVELOPER_ID_P12_BASE64 != '' && secrets.APPLE_NOTARY_KEY_BASE64 != '' }}
     steps:
+      # The released commit, not the workflow ref. A stable promotion releases a
+      # candidate tag's commit, so a post-publish command reading this tree would
+      # otherwise run against different sources than the release it describes.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ref: ${{ needs.meta.outputs.source_sha }}
 
       - name: Setup Swift build env
         if: github.repository == 'agoodkind/swift-makefile'
@@ -823,14 +851,15 @@ jobs:
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
 
       - name: Verify published release
+        if: ${{ inputs.smoke-asset != '' }}
         shell: bash
         env:
           # verify-release authenticates GitHub API calls with GH_TOKEN, so a
-          # private repo resolves and the smoke avoids the unauthenticated rate
+          # private repo resolves and the check avoids the unauthenticated rate
           # limit. Set it explicitly on the step rather than rely on inheritance.
           GH_TOKEN: ${{ github.token }}
           RELEASE_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ needs.meta.outputs.tag }}
+          RELEASE_TAG: ${{ needs.meta.outputs.release_tag }}
           RELEASE_ASSET: ${{ inputs.smoke-asset }}
           RELEASE_BINARY: ${{ inputs.smoke-binary }}
           RELEASE_TEAM_ID: ${{ inputs.apple-team-id }}
@@ -874,3 +903,35 @@ jobs:
             attempt=$((attempt + 1))
             sleep 15
           done
+
+      # Opt-in, because the pool image carries no node and the engine should not
+      # assume a post-publish command wants any particular runtime.
+      - uses: actions/setup-node@v7
+        if: ${{ inputs.post-publish-command != '' && inputs.post-publish-node-version != '' }}
+        with:
+          node-version: ${{ inputs.post-publish-node-version }}
+
+      - name: Run the consumer's post-publish command
+        if: ${{ inputs.post-publish-command != '' }}
+        shell: bash
+        working-directory: ${{ inputs.post-publish-working-directory || github.workspace }}
+        env:
+          POST_PUBLISH_SECRET_1: ${{ secrets.POST_PUBLISH_SECRET_1 }}
+          POST_PUBLISH_SECRET_2: ${{ secrets.POST_PUBLISH_SECRET_2 }}
+          POST_PUBLISH_SECRET_3: ${{ secrets.POST_PUBLISH_SECRET_3 }}
+          POST_PUBLISH_SECRET_4: ${{ secrets.POST_PUBLISH_SECRET_4 }}
+          # Read-only: the job grants contents: read, so a command that writes to
+          # the release needs a token of its own in one of the slots above.
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.meta.outputs.release_tag }}
+          RELEASE_TRACK: ${{ needs.meta.outputs.release_track }}
+          POST_PUBLISH_COMMAND: ${{ inputs.post-publish-command }}
+        run: |
+          set -euo pipefail
+
+          # -e and pipefail on the inner shell, because shell options do not
+          # cross an exec: without them a consumer's `a; b` reports green when
+          # a fails. -u is left off, since a command may legitimately reference
+          # an unset variable.
+          bash -eo pipefail -c "${POST_PUBLISH_COMMAND}"
