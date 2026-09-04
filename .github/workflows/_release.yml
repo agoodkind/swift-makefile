@@ -116,10 +116,7 @@ on:
       timeout-minutes:
         type: number
         default: 45
-      # Work a consumer runs after its release is published, on a macOS runner
-      # this workflow already holds. Work that depends on the published release
-      # cannot start before it exists, and its own job would take a second macOS
-      # runner to wait. The engine runs the command and reads none of it.
+      # Work a consumer runs after its release is published. Empty skips it.
       post-publish-command:
         type: string
         default: ""
@@ -160,11 +157,7 @@ on:
       # public endpoint.
       LOCAL_POOL_CAPACITY_TOKEN:
         required: false
-      # Slots a caller maps its own secrets into for its post-publish command.
-      # The names carry no meaning here on purpose: a caller decides what each
-      # slot holds and its command reads them back, so a consumer's secrets stay
-      # its own and this workflow never names them. Values pass through
-      # unchanged, so the runner's log redaction still matches them.
+      # The caller assigns meaning to these neutral secret slots.
       POST_PUBLISH_SECRET_1:
         required: false
       POST_PUBLISH_SECRET_2:
