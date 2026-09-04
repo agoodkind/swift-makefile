@@ -223,6 +223,8 @@ require_value(
     "${{ needs.meta.outputs.release_tag }}",
     "release verification tag",
 )
+abort "release workflow contract: release verification ignores SWIFT_MK_BIN" unless
+  verify_release_step.fetch("run").include?('"${SWIFT_MK_BIN}" "${verify_args[@]}"')
 setup_node_step = post_publish_steps.find { |step| step["uses"] == "actions/setup-node@v7" }
 require_value(
     setup_node_step.fetch("if"),
