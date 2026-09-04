@@ -69,7 +69,7 @@ runs:
 
             # These entries reach later steps without writing the shared account
             # configuration. Existing job-scoped entries retain their indexes.
-            git_config_index="${GIT_CONFIG_COUNT:-0}"
+            git_config_index=$(( 10#${GIT_CONFIG_COUNT:-0} ))
             {
                 printf 'GIT_CONFIG_KEY_%s=url.https://x-access-token:%s@github.com/.insteadOf\n' \
                     "${git_config_index}" "${TOKEN}"
