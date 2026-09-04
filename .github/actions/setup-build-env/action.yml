@@ -67,27 +67,21 @@ runs:
             # URL cannot disclose it in the run log.
             echo "::add-mask::${TOKEN}"
 
-            # SwiftPM clones dependencies out-of-tree, which bypasses
-            # actions/checkout's repo-local auth. Global auth avoids GitHub's
-            # unauthenticated 403 rate limit.
-            git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
-
-            # The token rides in the URL, so a credential helper adds nothing and
-            # costs everything: osxkeychain stores the rewritten credential, and
-            # SwiftPM's lookup for it before a binary-artifact download blocks
-            # forever in securityd, which cannot prompt for an unlock on a runner.
-            #
-            # Appended as a GIT_CONFIG_ entry rather than written to the account's
-            # config, which a pool runner's other job slots share and which would
-            # keep the reset after this job ends. Git reads these at `-c`
-            # precedence, so appending puts the empty value last, and an empty
-            # value discards every helper set before it.
-            helper_index="${GIT_CONFIG_COUNT:-0}"
+            # These entries reach later steps without writing the shared account
+            # configuration. Existing job-scoped entries retain their indexes.
+            git_config_index="${GIT_CONFIG_COUNT:-0}"
             {
+                printf 'GIT_CONFIG_KEY_%s=url.https://x-access-token:%s@github.com/.insteadOf\n' \
+                    "${git_config_index}" "${TOKEN}"
+                printf 'GIT_CONFIG_VALUE_%s=https://github.com/\n' "${git_config_index}"
+                git_config_index=$(( git_config_index + 1 ))
+
+                # The URL carries the token. A helper would store it, and SwiftPM
+                # can then block while securityd waits for an unlock prompt.
                 printf 'GIT_CONFIG_KEY_%s=credential.https://github.com.helper\n' \
-                    "${helper_index}"
-                printf 'GIT_CONFIG_VALUE_%s=\n' "${helper_index}"
-                printf 'GIT_CONFIG_COUNT=%s\n' "$(( helper_index + 1 ))"
+                    "${git_config_index}"
+                printf 'GIT_CONFIG_VALUE_%s=\n' "${git_config_index}"
+                printf 'GIT_CONFIG_COUNT=%s\n' "$(( git_config_index + 1 ))"
             } >> "${GITHUB_ENV}"
 
         fi
