@@ -67,15 +67,24 @@ runs:
             # URL cannot disclose it in the run log.
             echo "::add-mask::${TOKEN}"
 
-            # These entries reach later steps without writing the shared account
-            # configuration. Existing job-scoped entries retain their indexes.
+            # The current rewrite precedes included account configuration, so an
+            # equal stale rewrite cannot win. The account files remain unchanged.
+            job_git_config="${RUNNER_TEMP}/swift-mk-gitconfig"
+            umask 077
+            {
+                printf '[url "https://x-access-token:%s@github.com/"]\n' "${TOKEN}"
+                printf '    insteadOf = https://github.com/\n'
+                printf '[include]\n'
+                printf '    path = %s/git/config\n' "${XDG_CONFIG_HOME:-${HOME}/.config}"
+                printf '[include]\n'
+                printf '    path = %s/.gitconfig\n' "${HOME}"
+            } > "${job_git_config}"
+            printf 'GIT_CONFIG_GLOBAL=%s\n' "${job_git_config}" >> "${GITHUB_ENV}"
+
+            # This entry reaches later steps without changing account config.
+            # Existing job-scoped entries retain their indexes.
             git_config_index=$(( 10#${GIT_CONFIG_COUNT:-0} ))
             {
-                printf 'GIT_CONFIG_KEY_%s=url.https://x-access-token:%s@github.com/.insteadOf\n' \
-                    "${git_config_index}" "${TOKEN}"
-                printf 'GIT_CONFIG_VALUE_%s=https://github.com/\n' "${git_config_index}"
-                git_config_index=$(( git_config_index + 1 ))
-
                 # The URL carries the token. A helper would store it, and SwiftPM
                 # can then block while securityd waits for an unlock prompt.
                 printf 'GIT_CONFIG_KEY_%s=credential.https://github.com.helper\n' \
