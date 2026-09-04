@@ -656,7 +656,7 @@ jobs:
           CODE_SIGN_KEYCHAIN: ${{ steps.cert-local.outputs.keychain || steps.cert-remote.outputs.keychain }}
           TEAM_ID: ${{ inputs.apple-team-id }}
           PROVISIONING_PROFILE_SPECIFIER: ${{ steps.profile.outputs.profile-specifier }}
-          RELEASE_TAG: ${{ needs.meta.outputs.tag }}
+          RELEASE_TAG: ${{ needs.meta.outputs.release_tag }}
           RELEASE_TRACK: ${{ needs.meta.outputs.release_track }}
           RELEASE_SOURCE_SHA: ${{ needs.meta.outputs.source_sha }}
           ARTIFACT_VERSION: ${{ needs.meta.outputs.artifact_version }}
