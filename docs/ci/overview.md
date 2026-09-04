@@ -74,7 +74,7 @@ The automatic rerun in `ci-infra-retry.yml` is disabled. A cancelled run carries
 
 ## Prevent keychain credential stalls
 
-SwiftPM can block while reading an `x-access-token` item from the macOS keychain before downloading a binary artifact. The build environment disables credential helpers for later steps, reports the effective helper count, and fails if that stale item remains.
+SwiftPM can block while reading an `x-access-token` item from the macOS keychain before downloading a binary artifact. The build environment disables the github.com credential helper for later steps, reports whether one remains active, and fails if that stale item remains.
 
 ## Opt-in CI diagnostics
 

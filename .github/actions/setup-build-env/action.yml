@@ -84,7 +84,8 @@ runs:
             # value discards every helper set before it.
             helper_index="${GIT_CONFIG_COUNT:-0}"
             {
-                printf 'GIT_CONFIG_KEY_%s=credential.helper\n' "${helper_index}"
+                printf 'GIT_CONFIG_KEY_%s=credential.https://github.com.helper\n' \
+                    "${helper_index}"
                 printf 'GIT_CONFIG_VALUE_%s=\n' "${helper_index}"
                 printf 'GIT_CONFIG_COUNT=%s\n' "$(( helper_index + 1 ))"
             } >> "${GITHUB_ENV}"
@@ -98,24 +99,10 @@ runs:
       run: |
         set -euo pipefail
 
-        # Whether a helper survives, never which one. A helper can be an inline
-        # shell command carrying a credential, so its value must not reach the
-        # log. Count rather than name: an empty value discards every helper
-        # configured before it, so a raw list would read as though a reset helper
-        # were still active.
-        helper_count=0
-        while IFS= read -r helper_value; do
-            if [ -z "${helper_value}" ]; then
-                helper_count=0
-            else
-                helper_count=$(( helper_count + 1 ))
-            fi
-        done < <(git config --get-all credential.helper)
-
-        if [ "${helper_count}" -eq 0 ]; then
-            printf 'credential-state: no credential helper is active\n'
+        if [[ -z "$(git config --get-urlmatch credential.helper https://github.com)" ]]; then
+            printf 'credential-state: no github.com credential helper is active\n'
         else
-            printf 'credential-state: %s credential helper(s) active\n' "${helper_count}"
+            printf 'credential-state: a github.com credential helper is active\n'
         fi
         if security find-internet-password \
             -a x-access-token -s github.com >/dev/null 2>&1; then
