@@ -63,110 +63,31 @@ runs:
         set -euo pipefail
 
         if [ -n "${TOKEN}" ]; then
-            # Mask the token first so a later git error that echoes the rewritten
-            # URL cannot disclose it in the run log.
             echo "::add-mask::${TOKEN}"
+            authorization="$(printf 'x-access-token:%s' "${TOKEN}" | base64 | tr -d '\n')"
+            echo "::add-mask::${authorization}"
+            git_config_index=$(( 10#${GIT_CONFIG_COUNT:-0} ))
+            {
+                # An empty HTTP header clears earlier GitHub headers. The next
+                # entry authenticates clones without changing any config file.
+                printf 'GIT_CONFIG_KEY_%s=http.https://github.com/.extraheader\n' \
+                    "${git_config_index}"
+                printf 'GIT_CONFIG_VALUE_%s=\n' "${git_config_index}"
+                git_config_index=$(( git_config_index + 1 ))
+                printf 'GIT_CONFIG_KEY_%s=http.https://github.com/.extraheader\n' \
+                    "${git_config_index}"
+                printf 'GIT_CONFIG_VALUE_%s=AUTHORIZATION: basic %s\n' \
+                    "${git_config_index}" "${authorization}"
+                git_config_index=$(( git_config_index + 1 ))
 
-            # Everything below is job-scoped through GIT_CONFIG_*, which git reads
-            # with the same precedence as `-c` and therefore last, and which child
-            # processes inherit. The account's own config is shared: a pool runner
-            # hosts several job slots from one home, so a token written there would
-            # be readable by a concurrent job and would outlive this one.
-            #
-            # SwiftPM clones dependencies out-of-tree, which bypasses
-            # actions/checkout's repo-local auth, and an unauthenticated clone hits
-            # GitHub's 403 rate limit. The rewrite carries the token instead.
-            #
-            # A caller's own entries are preserved, and the two settings sit on
-            # opposite sides of them because git resolves them by opposite rules.
-            # Competing insteadOf rules of equal length resolve to the first, so
-            # the rewrite goes ahead of a caller's identical github.com rule or it
-            # is ignored and private clones fail. An empty credential.helper
-            # discards every helper before it, so the reset goes last.
-            #
-            # 10# forces base ten: a digits-only inherited value with a leading
-            # zero, such as 08, is otherwise read as octal and aborts the step.
-            inherited_entries="${GIT_CONFIG_COUNT:-0}"
-            case "${inherited_entries}" in
-                ''|*[!0-9]*) inherited_entries=0 ;;
-                *) inherited_entries=$(( 10#${inherited_entries} )) ;;
-            esac
+                # SwiftPM cannot block on the macOS keychain when Git has no
+                # credential helper for GitHub.
+                printf 'GIT_CONFIG_KEY_%s=credential.https://github.com.helper\n' \
+                    "${git_config_index}"
+                printf 'GIT_CONFIG_VALUE_%s=\n' "${git_config_index}"
+                printf 'GIT_CONFIG_COUNT=%s\n' "$(( git_config_index + 1 ))"
+            } >> "${GITHUB_ENV}"
 
-            # A git config value may contain newlines, and a plain KEY=VALUE line
-            # would turn the remainder into separate environment records, so every
-            # value is written in the heredoc form with a delimiter it cannot
-            # contain, checked rather than assumed.
-            git_config_entries=0
-            add_git_config_entry() {
-                local delimiter attempt
-                # Redraw until the delimiter appears in neither the key nor the
-                # value, rather than assuming a random draw cannot collide. A
-                # collision would end the heredoc early and leave a malformed
-                # entry.
-                attempt=0
-                delimiter="ghaenv_${RANDOM}${RANDOM}_${git_config_entries}"
-                while [ "$1" != "${1#*"${delimiter}"}" ] \
-                    || [ "$2" != "${2#*"${delimiter}"}" ]; do
-                    attempt=$(( attempt + 1 ))
-                    if [ "${attempt}" -gt 100 ]; then
-                        printf 'setup-build-env: no usable heredoc delimiter\n' >&2
-                        return 1
-                    fi
-                    delimiter="ghaenv_${RANDOM}${RANDOM}_${attempt}_${git_config_entries}"
-                done
-                {
-                    printf 'GIT_CONFIG_KEY_%s<<%s\n' "${git_config_entries}" "${delimiter}"
-                    printf '%s\n' "$1"
-                    printf '%s\n' "${delimiter}"
-                    printf 'GIT_CONFIG_VALUE_%s<<%s\n' "${git_config_entries}" "${delimiter}"
-                    printf '%s\n' "$2"
-                    printf '%s\n' "${delimiter}"
-                } >> "${GITHUB_ENV}"
-                git_config_entries=$(( git_config_entries + 1 ))
-            }
-
-            add_git_config_entry \
-                "url.https://x-access-token:${TOKEN}@github.com/.insteadOf" \
-                "https://github.com/"
-
-            # Shift the caller's entries up to sit after the rewrite. Their
-            # values are read from this step's own environment, which still holds
-            # what the caller set, since a GITHUB_ENV write only reaches later
-            # steps.
-            inherited_index=0
-            while [ "${inherited_index}" -lt "${inherited_entries}" ]; do
-                # Indirect expansion rather than eval, so a value never reaches
-                # the parser.
-                inherited_key_name="GIT_CONFIG_KEY_${inherited_index}"
-                inherited_value_name="GIT_CONFIG_VALUE_${inherited_index}"
-                inherited_key="${!inherited_key_name-}"
-                inherited_value="${!inherited_value_name-}"
-                if [ -n "${inherited_key}" ]; then
-                    add_git_config_entry "${inherited_key}" "${inherited_value}"
-                fi
-                inherited_index=$(( inherited_index + 1 ))
-            done
-
-            # The token rides in the URL, so a credential helper is unnecessary
-            # and actively harmful: osxkeychain stores the rewritten credential,
-            # and SwiftPM's lookup for it before a binary-artifact download blocks
-            # forever in securityd, which cannot prompt for an unlock on a runner.
-            # Only macOS has that failure.
-            if [ "$(uname -s)" = "Darwin" ]; then
-                add_git_config_entry credential.helper ""
-
-                # An earlier job may already have stored one, and SwiftPM blocks
-                # on whichever item it finds. Scoped to the x-access-token
-                # account the rewrite above produces, since the pool runs two
-                # slots from one home and deleting every github.com credential
-                # would take a co-tenant's or a human's along with it.
-                while security delete-internet-password \
-                    -a x-access-token -s github.com >/dev/null 2>&1; do
-                    printf 'removed a stored github.com keychain credential\n'
-                done
-            fi
-
-            printf 'GIT_CONFIG_COUNT=%s\n' "${git_config_entries}" >> "${GITHUB_ENV}"
         fi
 
     # Reading attributes never decrypts an item, so this cannot block the way
@@ -176,36 +97,31 @@ runs:
       run: |
         set -euo pipefail
 
-        if [ "$(uname -s)" != "Darwin" ]; then
-            printf 'credential-state: not macOS, no keychain lookup applies\n'
-            exit 0
-        fi
-
-        # Whether a helper survives, never which one. A helper can be an inline
-        # shell command carrying a credential, so its value must not reach the
-        # log. Count rather than name: an empty value discards every helper
-        # configured before it, so a raw list would read as though a reset
-        # helper were still active.
-        helper_count=0
-        helper_value=""
-        while IFS= read -r helper_value || [ -n "${helper_value}" ]; do
-            if [ -z "${helper_value}" ]; then
-                helper_count=0
+        if github_helper="$(git config --get-urlmatch credential.helper https://github.com)"; then
+            if [[ -z "${github_helper}" ]]; then
+                printf 'credential-state: no github.com credential helper is active\n'
             else
-                helper_count=$(( helper_count + 1 ))
+                printf 'credential-state: a github.com credential helper is active\n'
             fi
-        done < <(git config --get-all credential.helper 2>/dev/null || true)
-
-        if [ "${helper_count}" -eq 0 ]; then
-            printf 'credential-state: no credential helper is active\n'
         else
-            printf 'credential-state: %s credential helper(s) active\n' "${helper_count}"
+            helper_status=$?
+            if [[ "${helper_status}" -eq 1 ]]; then
+                printf 'credential-state: no github.com credential helper is active\n'
+            else
+                exit "${helper_status}"
+            fi
         fi
-        if security find-internet-password -s github.com >/dev/null 2>&1; then
-            printf 'credential-state: a github.com keychain item is present; a resolve that downloads a SwiftPM binary artifact can block on it\n'
+        if security find-internet-password \
+            -a x-access-token -s github.com >/dev/null; then
+            printf 'credential-state: stale x-access-token keychain item found\n' >&2
+            exit 1
         else
-            printf 'credential-state: no github.com keychain item to block a SwiftPM binary-artifact download\n'
+            keychain_status=$?
+            if [[ "${keychain_status}" -ne 44 ]]; then
+                exit "${keychain_status}"
+            fi
         fi
+        printf 'credential-state: no x-access-token keychain item\n'
 
     - name: Resolve dependency hash
       id: dependency-hash
