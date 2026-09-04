@@ -10,7 +10,7 @@ The reusable release workflow defaults `release-on-merge` to `manual`, so a main
 
 ## Post-publish work
 
-After publication, one routed macOS job can verify the release artifact and run a consumer command against the released commit. The command receives `RELEASE_TAG`, `RELEASE_TRACK`, `GH_REPOSITORY`, `GH_TOKEN`, and `POST_PUBLISH_SECRET_1` through `POST_PUBLISH_SECRET_4`.
+After publication, one routed macOS job can verify the release artifact and run a consumer command against the released commit. The command receives `RELEASE_TAG`, `RELEASE_TRACK`, `GH_REPOSITORY`, `GH_TOKEN`, and `POST_PUBLISH_SECRET_1` through `POST_PUBLISH_SECRET_4`. The `post-publish-timeout-minutes` input caps this job independently.
 
 ## One macOS job per pull request
 

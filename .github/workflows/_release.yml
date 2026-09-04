@@ -116,6 +116,9 @@ on:
       timeout-minutes:
         type: number
         default: 45
+      post-publish-timeout-minutes:
+        type: number
+        default: 45
       # Work a consumer runs after its release is published. Empty skips it.
       post-publish-command:
         type: string
@@ -808,7 +811,7 @@ jobs:
     # Routed like the build rather than pinned to inputs.runner, so this job takes
     # whichever of the pool or a hosted runner the capacity check selected.
     runs-on: ${{ needs.plan-runners.outputs.build_label }}
-    timeout-minutes: ${{ inputs.timeout-minutes }}
+    timeout-minutes: ${{ inputs.post-publish-timeout-minutes }}
     permissions:
       contents: read
     env:
@@ -856,7 +859,7 @@ jobs:
           # limit. Set it explicitly on the step rather than rely on inheritance.
           GH_TOKEN: ${{ github.token }}
           RELEASE_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ needs.meta.outputs.tag }}
+          RELEASE_TAG: ${{ needs.meta.outputs.release_tag }}
           RELEASE_ASSET: ${{ inputs.smoke-asset }}
           RELEASE_BINARY: ${{ inputs.smoke-binary }}
           RELEASE_TEAM_ID: ${{ inputs.apple-team-id }}

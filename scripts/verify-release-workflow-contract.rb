@@ -175,6 +175,84 @@ publish_step = find_step(publish_job.fetch("steps"), "Publish release")
 require_value(publish_step.dig("env", "RELEASE_SOURCE_SHA"), "${{ needs.meta.outputs.source_sha }}", "publish source SHA")
 require_value(publish_step.dig("env", "RELEASE_TRACK"), "${{ needs.meta.outputs.release_track }}", "publish release track")
 
+post_publish_inputs = {
+    "post-publish-command" => "",
+    "post-publish-working-directory" => "",
+    "post-publish-node-version" => "",
+    "post-publish-timeout-minutes" => 45,
+}
+post_publish_inputs.each do |name, default|
+    require_value(workflow_inputs.dig(name, "default"), default, "#{name} default")
+end
+
+post_publish_secrets = triggers.dig("workflow_call", "secrets")
+expected_post_publish_secrets = (1..4).map { |index| "POST_PUBLISH_SECRET_#{index}" }
+expected_post_publish_secrets.each do |name|
+    require_value(post_publish_secrets.dig(name, "required"), false, "#{name} requirement")
+end
+
+post_publish_job = workflow.dig("jobs", "post-publish")
+require_value(post_publish_job.fetch("name"), "Post-publish", "post-publish job name")
+require_value(post_publish_job.fetch("needs"), ["meta", "publish", "plan-runners"], "post-publish needs")
+require_value(
+    post_publish_job.fetch("if"),
+    "${{ !inputs.ephemeral && (inputs.smoke-asset != '' || inputs.post-publish-command != '') }}",
+    "post-publish gate",
+)
+require_value(
+    post_publish_job.fetch("runs-on"),
+    "${{ needs.plan-runners.outputs.build_label }}",
+    "post-publish runner",
+)
+require_value(
+    post_publish_job.fetch("timeout-minutes"),
+    "${{ inputs.post-publish-timeout-minutes }}",
+    "post-publish timeout",
+)
+post_publish_steps = post_publish_job.fetch("steps")
+post_publish_checkout = post_publish_steps.find { |step| step["uses"] == "actions/checkout@v7" }
+require_value(
+    post_publish_checkout.dig("with", "ref"),
+    "${{ needs.meta.outputs.source_sha }}",
+    "post-publish source checkout",
+)
+verify_release_step = find_step(post_publish_steps, "Verify published release")
+require_value(verify_release_step.fetch("if"), "${{ inputs.smoke-asset != '' }}", "release verification gate")
+require_value(
+    verify_release_step.dig("env", "RELEASE_TAG"),
+    "${{ needs.meta.outputs.release_tag }}",
+    "release verification tag",
+)
+setup_node_step = post_publish_steps.find { |step| step["uses"] == "actions/setup-node@v7" }
+require_value(
+    setup_node_step.fetch("if"),
+    "${{ inputs.post-publish-command != '' && inputs.post-publish-node-version != '' }}",
+    "post-publish node gate",
+)
+post_publish_step = find_step(post_publish_steps, "Run the consumer's post-publish command")
+require_value(post_publish_step.fetch("if"), "${{ inputs.post-publish-command != '' }}", "post-publish command gate")
+require_value(
+    post_publish_step.fetch("working-directory"),
+    "${{ inputs.post-publish-working-directory || github.workspace }}",
+    "post-publish working directory",
+)
+require_value(
+    post_publish_step.dig("env", "RELEASE_TAG"),
+    "${{ needs.meta.outputs.release_tag }}",
+    "post-publish release tag",
+)
+require_value(
+    post_publish_step.dig("env", "RELEASE_TRACK"),
+    "${{ needs.meta.outputs.release_track }}",
+    "post-publish release track",
+)
+expected_post_publish_secrets.each do |name|
+    require_value(post_publish_step.dig("env", name), "${{ secrets.#{name} }}", "#{name} mapping")
+end
+abort "release workflow contract: post-publish command does not preserve shell failures" unless
+  post_publish_step.fetch("run").include?('bash -eo pipefail -c "${POST_PUBLISH_COMMAND}"')
+require_value(workflow.dig("jobs", "smoke"), nil, "separate smoke job")
+
 caller_path = File.join(repository_root, ".github/workflows/release.yml")
 caller = YAML.load_file(caller_path)
 caller_triggers = caller["on"] || caller.fetch(true)
