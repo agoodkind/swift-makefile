@@ -74,9 +74,15 @@ runs:
             git config --file "${job_git_config}" \
                 "url.https://x-access-token:${TOKEN}@github.com/.insteadOf" \
                 "https://github.com/"
-            if [[ -n "${GIT_CONFIG_GLOBAL:-}" ]]; then
-                git config --file "${job_git_config}" --add \
-                    include.path "${GIT_CONFIG_GLOBAL}"
+            if [[ "${GIT_CONFIG_GLOBAL+x}" == "x" ]]; then
+                if [[ -n "${GIT_CONFIG_GLOBAL}" ]]; then
+                    caller_global_git_config="${GIT_CONFIG_GLOBAL}"
+                    if [[ "${caller_global_git_config}" != /* ]]; then
+                        caller_global_git_config="${PWD}/${caller_global_git_config}"
+                    fi
+                    git config --file "${job_git_config}" --add \
+                        include.path "${caller_global_git_config}"
+                fi
             else
                 git config --file "${job_git_config}" --add \
                     include.path "${XDG_CONFIG_HOME:-${HOME}/.config}/git/config"
@@ -106,15 +112,29 @@ runs:
       run: |
         set -euo pipefail
 
-        if [[ -z "$(git config --get-urlmatch credential.helper https://github.com)" ]]; then
-            printf 'credential-state: no github.com credential helper is active\n'
+        if github_helper="$(git config --get-urlmatch credential.helper https://github.com)"; then
+            if [[ -z "${github_helper}" ]]; then
+                printf 'credential-state: no github.com credential helper is active\n'
+            else
+                printf 'credential-state: a github.com credential helper is active\n'
+            fi
         else
-            printf 'credential-state: a github.com credential helper is active\n'
+            helper_status=$?
+            if [[ "${helper_status}" -eq 1 ]]; then
+                printf 'credential-state: no github.com credential helper is active\n'
+            else
+                exit "${helper_status}"
+            fi
         fi
         if security find-internet-password \
-            -a x-access-token -s github.com >/dev/null 2>&1; then
+            -a x-access-token -s github.com >/dev/null; then
             printf 'credential-state: stale x-access-token keychain item found\n' >&2
             exit 1
+        else
+            keychain_status=$?
+            if [[ "${keychain_status}" -ne 44 ]]; then
+                exit "${keychain_status}"
+            fi
         fi
         printf 'credential-state: no x-access-token keychain item\n'
 
