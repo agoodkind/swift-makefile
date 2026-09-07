@@ -96,11 +96,8 @@ on:
       apple-team-id:
         type: string
         default: ""
-      # Asset to verify after publish: the post-publish job downloads it and runs
-      # the swift-mk verify-release check (staple, codesign, team id, then runs
-      # the binary and asserts the tag). Empty skips the check. The caller names
-      # its own asset so this reusable workflow stays generic instead of pinning
-      # one repo's artifact.
+      # Asset to verify after publish. __ARTIFACT_VERSION__ is replaced with the
+      # resolved artifact version. Empty skips the check.
       smoke-asset:
         type: string
         default: ""
@@ -860,17 +857,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.meta.outputs.release_tag }}
-          RELEASE_ASSET: ${{ inputs.smoke-asset }}
+          RELEASE_ASSET_TEMPLATE: ${{ inputs.smoke-asset }}
+          ARTIFACT_VERSION: ${{ needs.meta.outputs.artifact_version }}
           RELEASE_BINARY: ${{ inputs.smoke-binary }}
           RELEASE_TEAM_ID: ${{ inputs.apple-team-id }}
         run: |
           set -euo pipefail
 
+          release_asset="${RELEASE_ASSET_TEMPLATE//__ARTIFACT_VERSION__/${ARTIFACT_VERSION}}"
           verify_args=(
             verify-release
             --repo "${RELEASE_REPO}"
             --tag "${RELEASE_TAG}"
-            --asset "${RELEASE_ASSET}"
+            --asset "${release_asset}"
           )
           # Only pass --binary when the caller named one, so a caller that ships a
           # swift-mk asset keeps the command's own default instead of an empty name
