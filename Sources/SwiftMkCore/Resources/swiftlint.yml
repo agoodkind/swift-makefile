@@ -59,7 +59,7 @@ file_header:
     \/\/  [^\n]+\.swift
     \/\/  [^\n]+
     \/\/
-    \/\/  Created by [^<\n]+ <[^>\n]+> on [^\n]+\.
+    \/\/  Created by [[GIT_USER_NAME]] <[[GIT_USER_EMAIL]]> on [^\n]+\.
     \/\/  Copyright © \d{4}, all rights reserved\.
     \/\/
 
