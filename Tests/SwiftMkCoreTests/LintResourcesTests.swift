@@ -193,6 +193,51 @@ func interpolatedFileHeaderMatchesGitIdentityAndRejectsAgents() throws {
   #expect(matchCount(expression, in: alex) == 0)
 }
 
+// MARK: - LintResourcesConfigPathTests
+
+/// `ensure` reads `SWIFT_MK_SWIFTLINT_CONFIG` from the process environment, so this
+/// suite is nested under `EnvironmentSerialized` and restores the key it sets.
+extension EnvironmentSerialized {
+  @Suite enum LintResourcesConfigPathTests {
+    private static let configKey = "SWIFT_MK_SWIFTLINT_CONFIG"
+
+    /// A sub-package built through `make -C <dir>` keeps `SWIFT_MK_ROOT` at the
+    /// top-level checkout while `swiftlint --config` reads the sub-package's own
+    /// path, so the rendered YAML must land at the configured path rather than
+    /// under the root.
+    @Test
+    static func ensureRendersSwiftlintYAMLAtTheConfiguredPath() throws {
+      try TestGlobalLock.withLock {
+        let manager = FileManager.default
+        let root = NSTemporaryDirectory() + "swiftmk-resources-cfg-" + UUID().uuidString
+        let subPackage = root + "/subpackage"
+        try manager.createDirectory(atPath: subPackage, withIntermediateDirectories: true)
+        defer { removeTemporary(root) }
+        let repo = URL(fileURLWithPath: root, isDirectory: true)
+        try initGitRepo(repo, name: "Test User", email: "test@example.com")
+
+        let saved = Environment.snapshot([configKey])
+        defer { saved.restore() }
+        setenv(configKey, ".make/swiftlint.yml", 1)
+
+        let ok = LintResources.ensure(
+          context: PathContext(pwd: subPackage + "/", cwd: root + "/"),
+          gitEnvironment: isolatedGitEnvironment(in: repo),
+          githubActions: "",
+          githubRunId: "")
+
+        #expect(ok)
+        let written = try String(
+          contentsOf: URL(fileURLWithPath: subPackage + "/.make/swiftlint.yml"),
+          encoding: .utf8)
+        #expect(written.contains("Created by Test User <test@example\\.com>"))
+        #expect(!written.contains("[[GIT_USER_NAME]]"))
+        #expect(!manager.fileExists(atPath: root + "/.make/swiftlint.yml"))
+      }
+    }
+  }
+}
+
 // MARK: - Header pattern helpers
 
 private let yamlRequiredPatternIndentCount = 4

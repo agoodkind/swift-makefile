@@ -140,8 +140,10 @@ public enum LintResources {
   // MARK: Materialize
 
   /// Write every shipped config into the checkout rooted at `context.cwd` when it
-  /// is missing or its bytes differ from the bytes that should be on disk. The
-  /// SwiftLint YAML is interpolated from git identity first; a missing identity
+  /// is missing or its bytes differ from the bytes that should be on disk, except
+  /// the SwiftLint YAML, which lands at `SWIFT_MK_SWIFTLINT_CONFIG` when that is
+  /// set (see `destinationURL`). The SwiftLint YAML is interpolated from git
+  /// identity first; a missing identity
   /// fails the write and does not emit the wildcard author pattern, except in
   /// GitHub Actions where `file_header` is disabled. Other configs stay
   /// byte-identical to the bundle. Returns true when every shipped config is
@@ -185,15 +187,44 @@ public enum LintResources {
       } else {
         data = bundled
       }
-      var destination = root
-      for component in resource.destinationComponents {
-        destination = destination.appendingPathComponent(component)
-      }
+      let destination = destinationURL(for: resource, root: root, context: context)
       if !writeIfChanged(data, to: destination) {
         allPresent = false
       }
     }
     return allPresent
+  }
+
+  /// Where one shipped config is written.
+  ///
+  /// The SwiftLint YAML lands at `SWIFT_MK_SWIFTLINT_CONFIG` relative to the
+  /// process working directory, because that is the file the gate passes to
+  /// `swiftlint --config`. A sub-package built through `make -C <dir>` keeps
+  /// `SWIFT_MK_ROOT` at the top-level checkout, so writing under `context.cwd`
+  /// would render the top-level config and leave the sub-package reading the
+  /// raw template the `swift.mk` fetch copied, with its `[[GIT_USER_NAME]]`
+  /// placeholders that no file header can match. Every other config is not a
+  /// template, so it stays at its fixed checkout-relative destination.
+  private static func destinationURL(
+    for resource: Resource,
+    root: URL,
+    context: PathContext
+  ) -> URL {
+    if resource.interpolatesGitIdentity {
+      let configured = Env.get("SWIFT_MK_SWIFTLINT_CONFIG")
+      if !configured.isEmpty {
+        if configured.hasPrefix("/") {
+          return URL(fileURLWithPath: configured)
+        }
+        let workingDirectory = URL(fileURLWithPath: context.pwd, isDirectory: true)
+        return workingDirectory.appendingPathComponent(configured)
+      }
+    }
+    var destination = root
+    for component in resource.destinationComponents {
+      destination = destination.appendingPathComponent(component)
+    }
+    return destination
   }
 
   /// Write `data` to `destination` only when the file is absent or its bytes
