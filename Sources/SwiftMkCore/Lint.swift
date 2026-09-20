@@ -280,8 +280,8 @@ public enum Lint {
     guard !compileFlags.isEmpty else {
       return args
     }
-    // Periphery builds the package during its scan. Use the native backend to avoid the
-    // SDK stat-cache failure that affects other cached builds.
+    // Periphery builds the package during its scan. Use the native backend because the
+    // default Swift Build backend reports a missing SDK stat cache for cached builds.
     compileFlags.append(contentsOf: ["--build-system", "native"])
     if let passthroughIndex = args.firstIndex(of: "--") {
       args.insert(contentsOf: compileFlags, at: args.index(after: passthroughIndex))

@@ -22,7 +22,7 @@ export TRACEPARENT TRACE_ID SPAN_ID SWIFT_MK_TRACE_ID SWIFT_MK_SPAN_ID
 SWIFT_MK_DISABLE_AUTO_RESOLVE := $(shell test "$(shell uname -s)" = Darwin && printf '%s' '--disable-automatic-resolution')
 
 # The default Swift Build backend reports a missing SDK stat cache when
-# compilation caching is enabled. The native backend completes the same builds.
+# compilation caching is enabled. The native backend completes the same cached builds.
 SWIFT_MK_BUILD_SYSTEM := --build-system native
 
 ROOT_ARGS := \
