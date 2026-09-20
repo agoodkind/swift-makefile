@@ -53,25 +53,18 @@ enum SwiftlintCapture {
     Output.debug(
       "swiftlint: capturing structured findings (only: \(onlyRules.joined(separator: ",")))")
     guard LintResources.ensure(context: context) else {
-      Output.error("swiftlint: could not materialize SwiftLint config from git identity")
+      // Setup failed, so the linter never ran. Report a finding no baseline matches
+      // rather than an empty list, which a baseline write would record as clean.
+      let message = "swiftlint: could not materialize SwiftLint config from git identity"
+      Output.error(message)
       GateStatus.last = 1
-      return []
+      Capture.write(message + "\n", to: rawPath)
+      return [configUnavailableFinding(message)]
     }
     Capture.write("", to: rawPath)
     let invocation = invocation(onlyRules: onlyRules, flags: structuredFlags())
-    var captured: [Finding] = []
-    var decodeError: Error?
-    do {
-      captured = try FindingsSource.swiftlint(
-        executable: invocation.executable,
-        arguments: invocation.arguments,
-        environment: invocation.environment
-      )
-    } catch {
-      decodeError = error
-      Output.error(
-        "swiftlint: \(error); failing the gate rather than passing on undecodable output")
-    }
+    // One swiftlint run produces the findings, the gate status, and the raw capture,
+    // so all three describe the same invocation and the linter does no duplicate work.
     let result = Shell.run(
       invocation.executable,
       invocation.arguments + ["--reporter", "json"],
@@ -79,6 +72,15 @@ enum SwiftlintCapture {
     )
     GateStatus.last = result.status
     Capture.write(result.combined, to: rawPath)
+    var captured: [Finding] = []
+    var decodeError: Error?
+    do {
+      captured = try FindingsSource.decodeSwiftlintJSON(result.stdout)
+    } catch {
+      decodeError = error
+      Output.error(
+        "swiftlint: \(error); failing the gate rather than passing on undecodable output")
+    }
 
     let normalized = captured.map { normalize($0, context: context) }
     let excluded = applyExclude(normalized)
@@ -91,6 +93,18 @@ enum SwiftlintCapture {
       findings.append(undecodableFinding(decodeError))
     }
     return findings
+  }
+
+  private static func configUnavailableFinding(_ message: String) -> Finding {
+    Finding(
+      tool: "swiftlint",
+      ruleId: "config-unavailable",
+      file: "",
+      line: 0,
+      column: 0,
+      severity: .error,
+      message: message
+    )
   }
 
   private static func undecodableFinding(_ error: Error) -> Finding {
