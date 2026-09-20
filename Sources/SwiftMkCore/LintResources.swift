@@ -68,12 +68,46 @@ public enum LintResources {
 
   // MARK: Bundled bytes
 
+  /// Locates the class's own bundle for `resourceBundle`.
+  private final class BundleFinder {}
+
+  /// The SwiftPM resource bundle for this module, or nil when it is not beside the
+  /// running executable. `Bundle.module` calls `fatalError` in that case, which
+  /// aborts the whole gate run, so this resolves the same candidate directories and
+  /// reports the absence instead.
+  private static let resourceBundle: Bundle? = {
+    let bundleName = "swift-makefile_SwiftMkCore.bundle"
+    let finderBundle = Bundle(for: BundleFinder.self)
+    let candidateDirectories: [URL?] = [
+      Bundle.main.resourceURL,
+      finderBundle.resourceURL,
+      Bundle.main.bundleURL,
+      finderBundle.bundleURL.deletingLastPathComponent(),
+      Bundle.main.executableURL?.deletingLastPathComponent(),
+    ]
+    for directory in candidateDirectories {
+      guard let candidate = directory?.appendingPathComponent(bundleName) else {
+        continue
+      }
+      if let bundle = Bundle(url: candidate) {
+        return bundle
+      }
+    }
+    return nil
+  }()
+
   /// The bundled bytes of a shipped config, or nil when the resource is missing
   /// from the bundle. Exposed so the drift test can compare them to the repo's
   /// root config files.
   public static func bundledData(resourceName: String, resourceExtension: String) -> Data? {
+    guard let bundle = resourceBundle else {
+      Output.error(
+        "lint-resources: the swift-mk resource bundle is not beside the running "
+          + "executable, so \(resourceName).\(resourceExtension) cannot be read")
+      return nil
+    }
     guard
-      let url = Bundle.module.url(
+      let url = bundle.url(
         forResource: resourceName, withExtension: resourceExtension)
     else {
       return nil
@@ -220,7 +254,7 @@ public enum LintResources {
     gitEnvironment: [String: String],
     githubActions: String,
     githubRunId: String
-  ) -> Result<Data, GitIdentity.LoadFailure> {
+  ) -> Result<Data, Error> {
     if Build.isGitHubActionsCI(githubActions: githubActions, githubRunId: githubRunId) {
       do {
         let disabled = try swiftlintYAMLDisablingFileHeader(bundled)
@@ -228,7 +262,7 @@ public enum LintResources {
         return .success(disabled)
       } catch {
         Output.error("lint-resources: could not disable SwiftLint file_header: \(error)")
-        return .failure(.missingName)
+        return .failure(error)
       }
     }
     let directory = checkoutDirectory(context.cwd)
@@ -245,7 +279,7 @@ public enum LintResources {
         return .success(interpolated)
       } catch {
         Output.error("lint-resources: could not interpolate SwiftLint YAML: \(error)")
-        return .failure(.missingName)
+        return .failure(error)
       }
     }
   }
