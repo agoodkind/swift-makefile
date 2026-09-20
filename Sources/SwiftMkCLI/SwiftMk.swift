@@ -478,24 +478,18 @@ struct XcodeFileHeader: ParsableCommand {
   var outputDir: String?
 
   func run() throws {
-    let name = Self.gitConfig("user.name")
-    let email = Self.gitConfig("user.email")
-    guard !name.isEmpty, !email.isEmpty else {
+    let directory = FileManager.default.currentDirectoryPath
+    switch GitIdentity.load(directory: directory) {
+    case .failure:
       Output.log(
         "xcode-file-header: no git identity (user.name/user.email); skipping")
       return
+    case .success(let identity):
+      let destination = outputDir ?? Self.defaultOutputDir()
+      let written = try Self.renderChangedTemplates(
+        templatesDir: templatesDir, outputDir: destination, values: identity.headerValues)
+      Output.info("xcode-file-header: \(written) file(s) updated in \(destination)")
     }
-    let values = ["GIT_USER_NAME": name, "GIT_USER_EMAIL": email]
-    let destination = outputDir ?? Self.defaultOutputDir()
-    let written = try Self.renderChangedTemplates(
-      templatesDir: templatesDir, outputDir: destination, values: values)
-    Output.info("xcode-file-header: \(written) file(s) updated in \(destination)")
-  }
-
-  private static func gitConfig(_ key: String) -> String {
-    Output.debug("xcode-file-header: reading git config \(key)")
-    return Shell.run("git", ["config", key]).stdout
-      .trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
   private static func defaultOutputDir() -> String {

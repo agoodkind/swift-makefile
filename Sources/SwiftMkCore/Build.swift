@@ -32,7 +32,15 @@ public enum Build {
     if skipInlineGates == "1" {
       return false
     }
-    return !(githubActions == "true" && !githubRunId.isEmpty)
+    return !isGitHubActionsCI(githubActions: githubActions, githubRunId: githubRunId)
+  }
+
+  /// A GitHub Actions job sets `GITHUB_ACTIONS=true` and a non-empty
+  /// `GITHUB_RUN_ID`. Hosted runners do not set `git config user.name` or
+  /// `user.email`. actions/checkout ADR 0153 records that the service provides
+  /// no default identity.
+  public static func isGitHubActionsCI(githubActions: String, githubRunId: String) -> Bool {
+    githubActions == "true" && !githubRunId.isEmpty
   }
 
   /// Run the lint gates once, then the configured build command with its output
