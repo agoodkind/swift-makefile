@@ -154,6 +154,42 @@ enum ToolchainBuildScriptTests {
     }
   }
 
+  @Test
+  static func buildScriptCopiesResourceBundlesBesideTheBinary() throws {
+    // Bundle.module resolves a module's resource bundle relative to the running
+    // executable, so a binary copied out of the build directory without its
+    // bundles cannot read the configs it ships. The fake build emits a bundle
+    // next to the binary it produces; the script must copy both.
+    try runBuildScript(
+      fakeSwift: """
+        #!/usr/bin/env bash
+        script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        bin_dir="${script_dir}/show-bin-path-output"
+        mkdir -p "${bin_dir}"
+        for arg in "$@"; do
+            if [[ "${arg}" == "--show-bin-path" ]]; then
+                printf "%s\\n" "${bin_dir}"
+                exit 0
+            fi
+        done
+        printf 'binary\\n' > "${bin_dir}/swift-mk"
+        chmod +x "${bin_dir}/swift-mk"
+        mkdir -p "${bin_dir}/swift-makefile_SwiftMkCore.bundle"
+        printf 'resource\\n' > "${bin_dir}/swift-makefile_SwiftMkCore.bundle/swiftlint.yml"
+        exit 0
+        """
+    ) { result, outputPath in
+      #expect(result.status == 0)
+      let outputDirectory = (outputPath as NSString).deletingLastPathComponent
+      let copiedResource =
+        outputDirectory + "/swift-makefile_SwiftMkCore.bundle/swiftlint.yml"
+      #expect(FileManager.default.fileExists(atPath: copiedResource))
+      let contents = try String(
+        contentsOf: URL(fileURLWithPath: copiedResource), encoding: .utf8)
+      #expect(contents == "resource\n")
+    }
+  }
+
   private static func dependencyHash(for packageDirectory: URL) throws -> String {
     let scriptPath = repoRoot().appendingPathComponent("scripts/swift-mk-build.sh").path
     let command =

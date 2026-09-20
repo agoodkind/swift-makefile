@@ -252,13 +252,11 @@ swift_mk_resolve_bin() {
     if [[ -f "${key_path}" ]]; then
         stored_key=$(cat "${key_path}")
     fi
-    # Reuse the existing binary only when it is executable, its stored content key
-    # matches the freshly computed one, and its resource bundle sits beside it;
-    # otherwise rebuild (which rewrites both). A binary cached by an earlier version
-    # of this script has a matching key but no bundle, and the configs it ships
-    # cannot be read without one.
-    if [[ -x "${output_path}" && "${stored_key}" == "${computed_key}" ]] &&
-        [[ -d "$(dirname "${output_path}")/swift-makefile_SwiftMkCore.bundle" ]]; then
+    # Reuse the existing binary only when it is executable and its stored content key
+    # matches the freshly computed one; otherwise rebuild (which rewrites the key).
+    # The key folds this script's own bytes, so a binary cached before the resource
+    # bundles were copied beside it carries a different key and rebuilds.
+    if [[ -x "${output_path}" && "${stored_key}" == "${computed_key}" ]]; then
         return
     fi
     swift_mk_build_from_repo
