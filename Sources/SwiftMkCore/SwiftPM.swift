@@ -324,7 +324,16 @@ public enum SwiftPM {
   /// `SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED` flag is YES.
   static func cacheArguments() -> [String] {
     var args = Env.words(Env.get("SWIFT_MK_SWIFTPM_CACHE_ARGS"))
-    args.append(contentsOf: compileCacheArguments())
+    let compileFlags = compileCacheArguments()
+    args.append(contentsOf: compileFlags)
+    if !compileFlags.isEmpty {
+      // Compilation caching runs on the native build system. The Swift Build backend
+      // deletes and regenerates the SDK stat cache under the scratch path while the
+      // same build compiles, and `-cache-compile-job` makes every frontend job read
+      // that file, so the jobs running in that window fail with
+      // "stat cache file ... not found".
+      args.append(contentsOf: ["--build-system", "native"])
+    }
     return args
   }
 

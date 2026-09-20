@@ -21,14 +21,20 @@ export TRACEPARENT TRACE_ID SPAN_ID SWIFT_MK_TRACE_ID SWIFT_MK_SPAN_ID
 # On Darwin, refuse to rewrite the committed macOS lockfile during build and test.
 SWIFT_MK_DISABLE_AUTO_RESOLVE := $(shell test "$(shell uname -s)" = Darwin && printf '%s' '--disable-automatic-resolution')
 
+# Pin every `swift build` and `swift test` here to the native build system. The Swift
+# Build backend deletes and regenerates the SDK stat cache under .build/out while the
+# same build compiles, and `-cache-compile-job` makes every frontend job read that
+# file, so the jobs that run in the gap fail with "stat cache file ... not found".
+SWIFT_MK_BUILD_SYSTEM := --build-system native
+
 ROOT_ARGS := \
 	SWIFT_MK_DEV_DIR='$(CURDIR)' \
 	SWIFT_MK_MODULES='swift-build.mk swift-release.mk' \
 	SWIFT_MK_RELEASE_BUILD_CMD='bash scripts/release-build.sh' \
-	SWIFT_BUILD_CMD='swift build $(SWIFT_MK_DISABLE_AUTO_RESOLVE) --product swift-mk-render' \
-	SWIFT_TEST_CMD='swift test $(SWIFT_MK_DISABLE_AUTO_RESOLVE)' \
-	SWIFT_VERIFY_BUILD_CMD='swift build $(SWIFT_MK_DISABLE_AUTO_RESOLVE) --configuration release --build-tests -Xswiftc -enable-testing' \
-	SWIFT_VERIFY_TEST_CMD='swift test $(SWIFT_MK_DISABLE_AUTO_RESOLVE) --configuration release --skip-build --no-parallel' \
+	SWIFT_BUILD_CMD='swift build $(SWIFT_MK_DISABLE_AUTO_RESOLVE) $(SWIFT_MK_BUILD_SYSTEM) --product swift-mk-render' \
+	SWIFT_TEST_CMD='swift test $(SWIFT_MK_DISABLE_AUTO_RESOLVE) $(SWIFT_MK_BUILD_SYSTEM)' \
+	SWIFT_VERIFY_BUILD_CMD='swift build $(SWIFT_MK_DISABLE_AUTO_RESOLVE) $(SWIFT_MK_BUILD_SYSTEM) --configuration release --build-tests -Xswiftc -enable-testing' \
+	SWIFT_VERIFY_TEST_CMD='swift test $(SWIFT_MK_DISABLE_AUTO_RESOLVE) $(SWIFT_MK_BUILD_SYSTEM) --configuration release --skip-build --no-parallel' \
 	SWIFT_FORMAT_TARGETS='Package.swift Sources Tests' \
 	SWIFTLINT_TARGETS='Package.swift Sources Tests' \
 	PERIPHERY_ARGS='scan --config .periphery.yml --exclude-tests' \
@@ -42,10 +48,10 @@ CHECK_ARGS := \
 	SWIFT_MK_ROOT='$(CURDIR)' \
 	SWIFT_MK_DEV_DIR='$(CURDIR)' \
 	SWIFT_MK_MODULES=swift-build.mk \
-	SWIFT_BUILD_CMD='swift build --product swiftcheck-extra' \
-	SWIFT_TEST_CMD='swift test' \
-	SWIFT_VERIFY_BUILD_CMD='swift build --configuration release --build-tests -Xswiftc -enable-testing' \
-	SWIFT_VERIFY_TEST_CMD='swift test --configuration release --skip-build --no-parallel' \
+	SWIFT_BUILD_CMD='swift build $(SWIFT_MK_BUILD_SYSTEM) --product swiftcheck-extra' \
+	SWIFT_TEST_CMD='swift test $(SWIFT_MK_BUILD_SYSTEM)' \
+	SWIFT_VERIFY_BUILD_CMD='swift build $(SWIFT_MK_BUILD_SYSTEM) --configuration release --build-tests -Xswiftc -enable-testing' \
+	SWIFT_VERIFY_TEST_CMD='swift test $(SWIFT_MK_BUILD_SYSTEM) --configuration release --skip-build --no-parallel' \
 	SWIFT_FORMAT_TARGETS='Package.swift Sources Tests' \
 	SWIFTLINT_TARGETS='Package.swift Sources Tests' \
 	SWIFT_MK_SWIFTLINT_CONFIG='.make/swiftlint.yml' \

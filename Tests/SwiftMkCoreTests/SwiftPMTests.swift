@@ -103,6 +103,10 @@ enum SwiftPMTests {
       "-Xswiftc", "-cache-compile-job",
       "-Xswiftc", "-cas-path",
       "-Xswiftc", "/tmp/x",
+      // Compilation caching runs on the native build system: the Swift Build backend
+      // deletes and regenerates the SDK stat cache that every cached frontend job
+      // reads, and the jobs running in that window fail.
+      "--build-system", "native",
     ]
     let suffix = Array(args.suffix(expected.count))
     #expect(suffix == expected, "expected compile-cache flags at end of \(args)")
