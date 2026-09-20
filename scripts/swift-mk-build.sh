@@ -141,6 +141,9 @@ swift_mk_build_from_repo() {
     local bin_dir_output
     local bin_dir_status
     local bin_path
+    local bundle_path
+    local bundle_name
+    local output_dir
     local scratch_path
     local content_key
     local -a resolve_flags
@@ -191,8 +194,23 @@ swift_mk_build_from_repo() {
         return 1
     fi
     bin_path="${bin_dir}/swift-mk"
+    output_dir="$(dirname "${output_path}")"
     cp "${bin_path}" "${output_path}"
     chmod +x "${output_path}"
+    # SwiftPM writes each module's resource bundle next to the binary in the build
+    # directory, and Bundle.module resolves those bundles relative to the running
+    # executable. Copy them beside the cached binary, or a gate that reads an
+    # engine-owned config (the SwiftLint template) finds no bundle and fails.
+    shopt -s nullglob
+    for bundle_path in "${bin_dir}"/*.bundle; do
+        bundle_name="$(basename "${bundle_path}")"
+        if [[ -z "${bundle_name}" ]]; then
+            continue
+        fi
+        rm -rf "${output_dir:?}/${bundle_name}"
+        cp -R "${bundle_path}" "${output_dir}/${bundle_name}"
+    done
+    shopt -u nullglob
     # A copied arm64 binary can carry a stale linker signature and a provenance
     # xattr that make the kernel kill it on launch ("Killed: 9"). Clear the xattrs
     # and re-sign ad-hoc so the cached binary runs.
@@ -234,9 +252,13 @@ swift_mk_resolve_bin() {
     if [[ -f "${key_path}" ]]; then
         stored_key=$(cat "${key_path}")
     fi
-    # Reuse the existing binary only when it is executable and its stored content key
-    # matches the freshly computed one; otherwise rebuild (which rewrites the key).
-    if [[ -x "${output_path}" && "${stored_key}" == "${computed_key}" ]]; then
+    # Reuse the existing binary only when it is executable, its stored content key
+    # matches the freshly computed one, and its resource bundle sits beside it;
+    # otherwise rebuild (which rewrites both). A binary cached by an earlier version
+    # of this script has a matching key but no bundle, and the configs it ships
+    # cannot be read without one.
+    if [[ -x "${output_path}" && "${stored_key}" == "${computed_key}" ]] &&
+        [[ -d "$(dirname "${output_path}")/swift-makefile_SwiftMkCore.bundle" ]]; then
         return
     fi
     swift_mk_build_from_repo
