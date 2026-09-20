@@ -63,13 +63,65 @@ runs:
         set -euo pipefail
 
         if [ -n "${TOKEN}" ]; then
-            # Mask the token first so a later git error that echoes the rewritten
-            # URL cannot disclose it in the run log.
             echo "::add-mask::${TOKEN}"
-            # SwiftPM clones dependencies out-of-tree, which bypasses actions/checkout's
-            # repo-local auth. Global auth avoids GitHub's unauthenticated 403 rate limit.
-            git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
+            authorization="$(printf 'x-access-token:%s' "${TOKEN}" | base64 | tr -d '\n')"
+            echo "::add-mask::${authorization}"
+            git_config_index=$(( 10#${GIT_CONFIG_COUNT:-0} ))
+            {
+                # An empty HTTP header clears earlier GitHub headers. The next
+                # entry authenticates clones without changing any config file.
+                printf 'GIT_CONFIG_KEY_%s=http.https://github.com/.extraheader\n' \
+                    "${git_config_index}"
+                printf 'GIT_CONFIG_VALUE_%s=\n' "${git_config_index}"
+                git_config_index=$(( git_config_index + 1 ))
+                printf 'GIT_CONFIG_KEY_%s=http.https://github.com/.extraheader\n' \
+                    "${git_config_index}"
+                printf 'GIT_CONFIG_VALUE_%s=AUTHORIZATION: basic %s\n' \
+                    "${git_config_index}" "${authorization}"
+                git_config_index=$(( git_config_index + 1 ))
+
+                # SwiftPM cannot block on the macOS keychain when Git has no
+                # credential helper for GitHub.
+                printf 'GIT_CONFIG_KEY_%s=credential.https://github.com.helper\n' \
+                    "${git_config_index}"
+                printf 'GIT_CONFIG_VALUE_%s=\n' "${git_config_index}"
+                printf 'GIT_CONFIG_COUNT=%s\n' "$(( git_config_index + 1 ))"
+            } >> "${GITHUB_ENV}"
+
         fi
+
+    # Reading attributes never decrypts an item, so this cannot block the way
+    # SwiftPM's own lookup does.
+    - name: Report the credential state SwiftPM will see
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        if github_helper="$(git config --get-urlmatch credential.helper https://github.com)"; then
+            if [[ -z "${github_helper}" ]]; then
+                printf 'credential-state: no github.com credential helper is active\n'
+            else
+                printf 'credential-state: a github.com credential helper is active\n'
+            fi
+        else
+            helper_status=$?
+            if [[ "${helper_status}" -eq 1 ]]; then
+                printf 'credential-state: no github.com credential helper is active\n'
+            else
+                exit "${helper_status}"
+            fi
+        fi
+        if security find-internet-password \
+            -a x-access-token -s github.com >/dev/null; then
+            printf 'credential-state: stale x-access-token keychain item found\n' >&2
+            exit 1
+        else
+            keychain_status=$?
+            if [[ "${keychain_status}" -ne 44 ]]; then
+                exit "${keychain_status}"
+            fi
+        fi
+        printf 'credential-state: no x-access-token keychain item\n'
 
     - name: Resolve dependency hash
       id: dependency-hash

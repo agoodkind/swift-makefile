@@ -8,6 +8,10 @@ A consumer calls [_ci.yml](../../.github/workflows/_ci.yml), which runs Verify a
 
 The reusable release workflow defaults `release-on-merge` to `manual`, so a main-branch push does not publish. A consumer sets it to `prerelease` or `stable` to opt into publishing after a merge. Manual dispatch selects a release track. A stable dispatch with no source override releases the selected workflow ref.
 
+## Post-publish work
+
+After publication, one routed macOS job can verify the release artifact and run a consumer command against the released commit. The command receives `RELEASE_TAG`, `RELEASE_TRACK`, `GH_REPOSITORY`, `GH_TOKEN`, and `POST_PUBLISH_SECRET_1` through `POST_PUBLISH_SECRET_4`. The `post-publish-timeout-minutes` input caps this job independently.
+
 ## One macOS job per pull request
 
 A consumer that sets `release-dry-run` runs its signed release stages inside Verify instead of in a second macOS job. Verify then runs four stages on one runner: the verify build, the tests against that build, the source-only quality gates, and the signed release build with notarization and stapling. The release build replays the compilation cache the verify build just filled on the same machine. Two separate jobs could not do that, because each one read the cross-run cache before the other had saved.
@@ -67,6 +71,10 @@ The broker handles normal overflow by reporting truthful capacity before a job r
 The cancelled run stays cancelled and does not auto-recover. A new push re-triggers CI once the pool is healthy, and the route jobs select the pool or hosted runner from current capacity.
 
 The automatic rerun in `ci-infra-retry.yml` is disabled. A cancelled run carries no signal for who cancelled it, so the auto-rerun could not tell a human GitHub-UI cancel from a pool-watchdog infra cancel and reran manual cancels. The workflow keeps only a `workflow_dispatch` trigger, so it never auto-reruns; re-enable the `workflow_run` trigger once an infra-vs-manual cancel signal exists.
+
+## Prevent keychain credential stalls
+
+SwiftPM can block while reading an `x-access-token` item from the macOS keychain before downloading a binary artifact. The build environment keeps GitHub authentication job-scoped, disables the github.com credential helper for later steps, reports whether one remains active, and fails if that stale item remains.
 
 ## Opt-in CI diagnostics
 
