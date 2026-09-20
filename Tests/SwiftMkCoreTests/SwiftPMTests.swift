@@ -103,6 +103,7 @@ enum SwiftPMTests {
       "-Xswiftc", "-cache-compile-job",
       "-Xswiftc", "-cas-path",
       "-Xswiftc", "/tmp/x",
+      "--build-system", "native",
     ]
     let suffix = Array(args.suffix(expected.count))
     #expect(suffix == expected, "expected compile-cache flags at end of \(args)")

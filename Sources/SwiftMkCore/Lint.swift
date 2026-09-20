@@ -276,10 +276,13 @@ public enum Lint {
   static func peripheryPackageScanArguments() -> [String] {
     var args = Env.words(
       Env.get("PERIPHERY_ARGS", "scan --config .make/periphery.yml --strict"))
-    let compileFlags = SwiftPM.compileCacheArguments()
+    var compileFlags = SwiftPM.compileCacheArguments()
     guard !compileFlags.isEmpty else {
       return args
     }
+    // Periphery builds the package during its scan. Use the native backend because the
+    // default Swift Build backend reports a missing SDK stat cache for cached builds.
+    compileFlags.append(contentsOf: ["--build-system", "native"])
     if let passthroughIndex = args.firstIndex(of: "--") {
       args.insert(contentsOf: compileFlags, at: args.index(after: passthroughIndex))
     } else {

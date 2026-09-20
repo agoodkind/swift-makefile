@@ -324,7 +324,11 @@ public enum SwiftPM {
   /// `SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED` flag is YES.
   static func cacheArguments() -> [String] {
     var args = Env.words(Env.get("SWIFT_MK_SWIFTPM_CACHE_ARGS"))
-    args.append(contentsOf: compileCacheArguments())
+    let compileFlags = compileCacheArguments()
+    args.append(contentsOf: compileFlags)
+    if !compileFlags.isEmpty {
+      args.append(contentsOf: ["--build-system", "native"])
+    }
     return args
   }
 
