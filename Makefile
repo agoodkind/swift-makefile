@@ -22,9 +22,12 @@ export TRACEPARENT TRACE_ID SPAN_ID SWIFT_MK_TRACE_ID SWIFT_MK_SPAN_ID
 SWIFT_MK_DISABLE_AUTO_RESOLVE := $(shell test "$(shell uname -s)" = Darwin && printf '%s' '--disable-automatic-resolution')
 
 # Pin every `swift build` and `swift test` here to the native build system. The Swift
-# Build backend deletes and regenerates the SDK stat cache under .build/out while the
-# same build compiles, and `-cache-compile-job` makes every frontend job read that
-# file, so the jobs that run in the gap fail with "stat cache file ... not found".
+# Build backend runs a ClangStatCache task on every build with no up-to-date check,
+# and `clang-stat-cache` rewrites the 15 MB SDK stat cache under .build/out in place
+# and non-atomically, taking about 40 seconds. `-cache-compile-job` makes every
+# swift-frontend job read that same file through `-Xcc -ivfsstatcache`. A frontend job
+# that opens it mid-rewrite reads an incomplete file and reports
+# "stat cache file ... not found". The native build system runs no ClangStatCache task.
 SWIFT_MK_BUILD_SYSTEM := --build-system native
 
 ROOT_ARGS := \

@@ -280,10 +280,11 @@ public enum Lint {
     guard !compileFlags.isEmpty else {
       return args
     }
-    // Periphery's scan builds the package itself, so it takes the same build system the
-    // engine's own builds take. The Swift Build backend deletes and regenerates the SDK
-    // stat cache that `-cache-compile-job` makes every frontend job read, and the jobs
-    // that run in that window fail with "stat cache file ... not found".
+    // Periphery's scan builds the package itself. That build takes the same build system
+    // the engine's own builds take. The Swift Build backend runs a ClangStatCache task on
+    // every build, and `clang-stat-cache` rewrites the SDK stat cache in place and
+    // non-atomically. `-cache-compile-job` makes every frontend job read that same file.
+    // A job that opens it mid-rewrite reports "stat cache file ... not found".
     compileFlags.append(contentsOf: ["--build-system", "native"])
     if let passthroughIndex = args.firstIndex(of: "--") {
       args.insert(contentsOf: compileFlags, at: args.index(after: passthroughIndex))

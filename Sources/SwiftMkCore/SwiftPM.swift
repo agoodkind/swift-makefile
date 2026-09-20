@@ -328,10 +328,12 @@ public enum SwiftPM {
     args.append(contentsOf: compileFlags)
     if !compileFlags.isEmpty {
       // Compilation caching runs on the native build system. The Swift Build backend
-      // deletes and regenerates the SDK stat cache under the scratch path while the
-      // same build compiles, and `-cache-compile-job` makes every frontend job read
-      // that file, so the jobs running in that window fail with
-      // "stat cache file ... not found".
+      // runs a ClangStatCache task on every build with no up-to-date check, and
+      // `clang-stat-cache` rewrites the 15 MB SDK stat cache under the scratch path in
+      // place and non-atomically. `-cache-compile-job` makes every frontend job read
+      // that same file through `-Xcc -ivfsstatcache`, so a job that opens it mid-rewrite
+      // reads an incomplete file and reports "stat cache file ... not found". The native
+      // build system runs no ClangStatCache task.
       args.append(contentsOf: ["--build-system", "native"])
     }
     return args
