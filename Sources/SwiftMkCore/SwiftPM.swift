@@ -327,8 +327,6 @@ public enum SwiftPM {
     let compileFlags = compileCacheArguments()
     args.append(contentsOf: compileFlags)
     if !compileFlags.isEmpty {
-      // The default Swift Build backend reports a missing SDK stat cache when
-      // compilation caching is enabled. The native backend completes the same cached builds.
       args.append(contentsOf: ["--build-system", "native"])
     }
     return args
