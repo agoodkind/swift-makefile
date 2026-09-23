@@ -24,8 +24,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/open-telemetry/opentelemetry-swift.git",
       "state" : {
-        "revision" : "9a6d6a8aed22c415bb1673206e337824635f818b",
-        "version" : "2.5.0"
+        "revision" : "aff36f00b0c6ea237a62057eee3ae0c28706ece8",
+        "version" : "2.5.1"
       }
     },
     {
@@ -35,15 +35,6 @@
       "state" : {
         "revision" : "06f8a460a66f813758d22f09025d85df45450a63",
         "version" : "2.5.1"
-      }
-    },
-    {
-      "identity" : "opentracing-objc",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/undefinedlabs/opentracing-objc",
-      "state" : {
-        "revision" : "18c1a35ca966236cee0c5a714a51a73ff33384c1",
-        "version" : "0.5.2"
       }
     },
     {
@@ -277,15 +268,6 @@
       "state" : {
         "revision" : "b5544ba79a70a0cb3563e75bf26dc198d6b40ed3",
         "version" : "1.7.4"
-      }
-    },
-    {
-      "identity" : "thrift-swift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/undefinedlabs/Thrift-Swift",
-      "state" : {
-        "revision" : "18ff09e6b30e589ed38f90a1af23e193b8ecef8e",
-        "version" : "1.1.2"
       }
     },
     {
