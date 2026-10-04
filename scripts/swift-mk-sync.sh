@@ -42,6 +42,7 @@ snapshot_clear_engine() {
         ! -name build.lock \
         ! -name swift-mk \
         ! -name swift-mk.key \
+        ! -name '*.bundle' \
         ! -name swift-mk-build \
         ! -name dev \
         ! -name .swift-mk-snapshot-ref \

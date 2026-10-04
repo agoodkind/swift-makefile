@@ -207,7 +207,7 @@ define _swift_mk_snapshot_commands
 	rm -rf .make.next .make.previous 2>>"$$stage_root/err" || { cat "$$stage_root/err" >&2 2>/dev/null || true; rm -rf "$$stage_root"; exit 1; }; \
 	mkdir -p .make.next || { rm -rf "$$stage_root"; exit 1; }; \
 	if [ -d .make ]; then \
-		find .make -mindepth 1 -maxdepth 1 \( -name logs -o -name build.lock -o -name swift-mk -o -name swift-mk.key -o -name swift-mk-build -o -name dev -o -name '*.log' \) -exec cp -R {} .make.next/ \; ; \
+		find .make -mindepth 1 -maxdepth 1 \( -name logs -o -name build.lock -o -name swift-mk -o -name swift-mk.key -o -name '*.bundle' -o -name swift-mk-build -o -name dev -o -name '*.log' \) -exec cp -R {} .make.next/ \; ; \
 	fi; \
 	if ! cp -R "$$stage_dir/." .make.next/ 2>>"$$stage_root/err"; then cat "$$stage_root/err" >&2 2>/dev/null || true; rm -rf .make.next "$$stage_root"; exit 1; fi; \
 	rm -rf "$$stage_root"; \
