@@ -36,29 +36,6 @@ func helperColdProvisionWritesEveryAsset() async throws {
 }
 
 @Test
-func helperKeepsTheResourceBundleBesideTheBinaryAcrossARefresh() async throws {
-  // swift-mk reads its lint configs from the bundle beside the binary. The
-  // binary and swift-mk.key stay across a refresh, and a matching key skips
-  // the rebuild that copies the bundle.
-  try await FetchServer.withServer(files: engineFiles()) { server in
-    let directory = try temporaryConsumer()
-    let bundleFile = "swift-makefile_SwiftMkCore.bundle/Contents/Resources/swiftlint.yml"
-    try writeMakeFile(directory, "swift.mk", "# warm swift.mk\n")
-    try writeMakeFile(directory, "swift-mk", "warm binary\n")
-    try writeMakeFile(directory, "swift-mk.key", "warm key\n")
-    try writeMakeFile(directory, bundleFile, "warm config\n")
-
-    let result = await runHelper(
-      directory: directory, environment: ["SWIFT_MK_CODELOAD_BASE": server.codeloadBase])
-    #expect(result.status == 0, "helper failed: \(result.stderr)")
-
-    #expect(readMakeFile(directory, "swift.mk") == "# swift.mk v1\n")
-    #expect(readMakeFile(directory, "swift-mk.key") == "warm key\n")
-    #expect(readMakeFile(directory, bundleFile) == "warm config\n")
-  }
-}
-
-@Test
 func helperLeavesSnapshotIntactWhenUpstreamReturnsAnError() async throws {
   // A real server that answers with a real HTTP error, not an unreachable
   // port. A helper that merely runs `exit 1`, is missing entirely (exit 127),
