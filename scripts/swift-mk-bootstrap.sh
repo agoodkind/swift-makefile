@@ -373,6 +373,7 @@ install_from_stage() {
         # a name added there belongs here too.
         if ! find "${MAKE_DIR}" -mindepth 1 -maxdepth 1 \
             \( -name logs -o -name build.lock -o -name swift-mk -o -name swift-mk.key \
+               -o -name '*.bundle' \
                -o -name swift-mk-build -o -name dev -o -name .swift-mk-snapshot-ref \
                -o -name .gate -o -name signing.xcconfig \
                -o -name swift.mk -o -name '*.log' \) -print0 \
