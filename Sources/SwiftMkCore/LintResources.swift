@@ -75,8 +75,9 @@ public enum LintResources {
   /// running executable. `Bundle.module` calls `fatalError` in that case, which
   /// aborts the whole gate run, so this resolves the same candidate directories and
   /// reports the absence instead.
+  private static let bundleName = "swift-makefile_SwiftMkCore.bundle"
+
   private static let resourceBundle: Bundle? = {
-    let bundleName = "swift-makefile_SwiftMkCore.bundle"
     let finderBundle = Bundle(for: BundleFinder.self)
     let candidateDirectories: [URL?] = [
       Bundle.main.resourceURL,
@@ -101,15 +102,16 @@ public enum LintResources {
   /// root config files.
   public static func bundledData(resourceName: String, resourceExtension: String) -> Data? {
     guard let bundle = resourceBundle else {
-      Output.error(
-        "lint-resources: the swift-mk resource bundle is not beside the running "
-          + "executable, so \(resourceName).\(resourceExtension) cannot be read")
+      Output.error(missingBundleMessage())
       return nil
     }
     guard
       let url = bundle.url(
         forResource: resourceName, withExtension: resourceExtension)
     else {
+      Output.error(
+        "lint-resources: \(resourceName).\(resourceExtension) is missing from "
+          + "\(bundle.bundlePath)")
       return nil
     }
     do {
@@ -119,6 +121,21 @@ public enum LintResources {
         "lint-resources: could not read bundled \(resourceName).\(resourceExtension): \(error)")
       return nil
     }
+  }
+
+  /// The error for a missing resource bundle: the expected path and the rebuild
+  /// step. `scripts/swift-mk-build.sh` rebuilds the binary and copies the bundle
+  /// when `swift-mk.key` is absent.
+  static func missingBundleMessage(
+    executableURL: URL? = Bundle.main.executableURL
+  ) -> String {
+    guard let directory = executableURL?.deletingLastPathComponent().path else {
+      return "lint-resources: missing folder \(bundleName), which stores the swift-mk "
+        + "lint configs. Rebuild swift-mk."
+    }
+    return "lint-resources: missing folder \(directory)/\(bundleName), which stores the "
+      + "swift-mk lint configs. Delete \(directory)/swift-mk.key and run make again to "
+      + "rebuild it."
   }
 
   /// Substitute regex-escaped git identity tokens into a SwiftLint YAML template.
@@ -155,6 +172,10 @@ public enum LintResources {
     githubActions: String = Env.get("GITHUB_ACTIONS"),
     githubRunId: String = Env.get("GITHUB_RUN_ID")
   ) -> Bool {
+    guard resourceBundle != nil else {
+      Output.error(missingBundleMessage())
+      return false
+    }
     let root = URL(fileURLWithPath: context.cwd, isDirectory: true)
     var allPresent = true
     for resource in resources {
@@ -163,9 +184,6 @@ public enum LintResources {
           resourceName: resource.resourceName,
           resourceExtension: resource.resourceExtension)
       else {
-        Output.error(
-          "lint-resources: bundled \(resource.resourceName).\(resource.resourceExtension) "
-            + "is unavailable")
         allPresent = false
         continue
       }
@@ -299,8 +317,6 @@ public enum LintResources {
     let directory = checkoutDirectory(context.cwd)
     switch GitIdentity.load(directory: directory, environment: gitEnvironment) {
     case .failure(let failure):
-      Output.error(
-        "lint-resources: cannot interpolate SwiftLint file_header from git config")
       return .failure(failure)
     case .success(let identity):
       do {

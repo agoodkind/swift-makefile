@@ -190,7 +190,7 @@ enum LintPolicy {
   ) -> Bool {
     guard LintResources.ensure(context: context) else {
       Output.log("\(name): FAILED")
-      Output.log("  Could not materialize SwiftLint config from git identity")
+      Output.log("  The SwiftLint config was not written. The error above states the cause.")
       GateStatus.last = 1
       Baseline.recordFailedGate(name)
       return false
