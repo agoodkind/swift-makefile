@@ -11,21 +11,7 @@ import SwiftMkRenderCore
 
 // MARK: - LintResources
 
-/// The gate configuration files swift-mk owns, shipped as SwiftPM resources and
-/// materialized into a checkout on demand.
-///
-/// The make path lands these in `.make/` (and the mise file under
-/// `.config/mise/conf.d/`) through `swift.mk`'s fetch. The decoupled in-process
-/// API has no make to fetch them, so it writes the same bundled bytes itself,
-/// which also makes a fresh checkout that has never run `make` work. Shipping the
-/// configs as engine-owned resources is what makes CI, make, and the API converge
-/// on the same files. The SwiftLint YAML is a template: `ensure` interpolates
-/// `git config user.name` and `user.email` into `file_header` before writing
-/// `.make/swiftlint.yml`. A GitHub Actions run disables `file_header` instead,
-/// because hosted runners do not set git identity.
 public enum LintResources {
-  /// One shipped config: the bundle resource that carries it and the
-  /// checkout-relative path it is written to.
   struct Resource {
     let resourceName: String
     let resourceExtension: String
@@ -33,11 +19,6 @@ public enum LintResources {
     let interpolatesGitIdentity: Bool
   }
 
-  /// Every shipped gate config and where it lands in a checkout. The destinations
-  /// mirror the `swift.mk` fetch targets exactly (`.make/swiftlint.yml`,
-  /// `.make/swift-format.json`, `.make/periphery.yml`, `.make/osv-scanner.toml`,
-  /// and the additive mise location), so the in-process path produces the same
-  /// files the make path does.
   static let resources: [Resource] = [
     Resource(
       resourceName: "swiftlint",
@@ -68,15 +49,11 @@ public enum LintResources {
 
   // MARK: Bundled bytes
 
-  /// Locates the class's own bundle for `resourceBundle`.
   private final class BundleFinder {}
 
-  /// The SwiftPM resource bundle for this module, or nil when it is not beside the
-  /// running executable. `Bundle.module` calls `fatalError` in that case, which
-  /// aborts the whole gate run, so this resolves the same candidate directories and
-  /// reports the absence instead.
   private static let bundleName = "swift-makefile_SwiftMkCore.bundle"
 
+  /// The lookup returns nil when the resource bundle is missing.
   private static let resourceBundle: Bundle? = {
     let finderBundle = Bundle(for: BundleFinder.self)
     let candidateDirectories: [URL?] = [
@@ -97,9 +74,6 @@ public enum LintResources {
     return nil
   }()
 
-  /// The bundled bytes of a shipped config, or nil when the resource is missing
-  /// from the bundle. Exposed so the drift test can compare them to the repo's
-  /// root config files.
   public static func bundledData(resourceName: String, resourceExtension: String) -> Data? {
     guard let bundle = resourceBundle else {
       Output.error(missingBundleMessage())
@@ -123,9 +97,6 @@ public enum LintResources {
     }
   }
 
-  /// The error for a missing resource bundle: the expected path and the rebuild
-  /// step. `scripts/swift-mk-build.sh` rebuilds the binary and copies the bundle
-  /// when `swift-mk.key` is absent.
   static func missingBundleMessage(
     executableURL: URL? = Bundle.main.executableURL
   ) -> String {
@@ -138,7 +109,6 @@ public enum LintResources {
       + "rebuild it."
   }
 
-  /// Substitute regex-escaped git identity tokens into a SwiftLint YAML template.
   public static func interpolatedSwiftlintYAML(
     template: Data,
     identity: GitIdentity
@@ -156,15 +126,10 @@ public enum LintResources {
 
   // MARK: Materialize
 
-  /// Write every shipped config into the checkout rooted at `context.cwd` when it
-  /// is missing or its bytes differ from the bytes that should be on disk, except
-  /// the SwiftLint YAML, which lands at `SWIFT_MK_SWIFTLINT_CONFIG` when that is
-  /// set (see `destinationURL`). The SwiftLint YAML is interpolated from git
-  /// identity first; a missing identity
-  /// fails the write and does not emit the wildcard author pattern, except in
-  /// GitHub Actions where `file_header` is disabled. Other configs stay
-  /// byte-identical to the bundle. Returns true when every shipped config is
-  /// present and current after the call.
+  /// ensure writes bundled configuration files that are missing or differ.
+  /// SwiftLint requires Git identity outside GitHub Actions. GitHub Actions
+  /// disables file_header instead. The function returns false if a resource
+  /// cannot be read, rendered, or written.
   @discardableResult
   public static func ensure(
     context: PathContext = .current(),
@@ -213,16 +178,8 @@ public enum LintResources {
     return allPresent
   }
 
-  /// Where one shipped config is written.
-  ///
-  /// The SwiftLint YAML lands at `SWIFT_MK_SWIFTLINT_CONFIG` relative to the
-  /// process working directory, because that is the file the gate passes to
-  /// `swiftlint --config`. A sub-package built through `make -C <dir>` keeps
-  /// `SWIFT_MK_ROOT` at the top-level checkout, so writing under `context.cwd`
-  /// would render the top-level config and leave the sub-package reading the
-  /// raw template the `swift.mk` fetch copied, with its `[[GIT_USER_NAME]]`
-  /// placeholders that no file header can match. Every other config is not a
-  /// template, so it stays at its fixed checkout-relative destination.
+  /// Relative SWIFT_MK_SWIFTLINT_CONFIG paths are resolved against context.pwd.
+  /// Other destinations are relative to context.cwd.
   private static func destinationURL(
     for resource: Resource,
     root: URL,
@@ -245,9 +202,6 @@ public enum LintResources {
     return destination
   }
 
-  /// Write `data` to `destination` only when the file is absent or its bytes
-  /// differ, so an unchanged config is not rewritten on every run. Returns true
-  /// when the file holds the intended bytes after the call.
   private static func writeIfChanged(_ data: Data, to destination: URL) -> Bool {
     if existingData(at: destination) == data {
       return true
@@ -265,8 +219,6 @@ public enum LintResources {
     }
   }
 
-  /// The bytes already at `destination`, or nil when the file is absent or
-  /// unreadable, so a fresh checkout simply gets the bundled copy written.
   private static func existingData(at destination: URL) -> Data? {
     do {
       return try Data(contentsOf: destination)
@@ -282,9 +234,6 @@ public enum LintResources {
     case utf8EncodingFailed
   }
 
-  /// Rewrite a SwiftLint YAML template so `file_header` is disabled and its
-  /// `required_pattern` is gone. CI uses this because hosted runners have no
-  /// git identity to interpolate.
   public static func swiftlintYAMLDisablingFileHeader(_ template: Data) throws -> Data {
     guard let templateText = String(data: template, encoding: .utf8) else {
       throw InterpolationError.utf8EncodingFailed
