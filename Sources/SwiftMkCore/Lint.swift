@@ -116,8 +116,8 @@ public enum Lint {
     Output.debug("swiftlint: capturing findings (only: \(onlyRules.joined(separator: ",")))")
     guard LintResources.ensure(context: context) else {
       Output.log("swiftlint: FAILED")
-      Output.log("  Could not materialize SwiftLint config from git identity")
-      Capture.write("swiftlint: git identity missing\n", to: rawPath)
+      Output.log("  The SwiftLint config was not written. The error above states the cause.")
+      Capture.write("swiftlint: the SwiftLint config was not written\n", to: rawPath)
       Capture.write("", to: findingsPath)
       GateStatus.last = 1
       return

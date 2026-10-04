@@ -39,11 +39,15 @@ public struct GitIdentity: Equatable, Sendable {
     let configuredEmail = configValue(
       "user.email", directory: directory, environment: environment)
     if configuredName.isEmpty {
-      Output.error("git-identity: git config user.name is empty")
+      Output.error(
+        "git-identity: git config user.name is not set in \(directory). The SwiftLint "
+          + "file header check needs it. Run: git config --global user.name \"<name>\"")
       return .failure(.missingName)
     }
     if configuredEmail.isEmpty {
-      Output.error("git-identity: git config user.email is empty")
+      Output.error(
+        "git-identity: git config user.email is not set in \(directory). The SwiftLint "
+          + "file header check needs it. Run: git config --global user.email \"<email>\"")
       return .failure(.missingEmail)
     }
     return .success(GitIdentity(name: configuredName, email: configuredEmail))

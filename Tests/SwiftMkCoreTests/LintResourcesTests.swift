@@ -78,6 +78,15 @@ func bundledConfigsMatchRootConfigsByteForByte() throws {
 }
 
 @Test
+func missingBundleMessageGivesTheExpectedFolderAndTheKeyToDelete() {
+  let message = LintResources.missingBundleMessage(
+    executableURL: URL(fileURLWithPath: "/work/app/.make/swift-mk"))
+  #expect(message.contains("/work/app/.make/swift-makefile_SwiftMkCore.bundle"))
+  #expect(message.contains("Delete /work/app/.make/swift-mk.key"))
+  #expect(!message.contains("\n"))
+}
+
+@Test
 func ensureWritesConfigsIntoAFreshCheckout() throws {
   let manager = FileManager.default
   let checkout = NSTemporaryDirectory() + "swiftmk-resources-" + UUID().uuidString
