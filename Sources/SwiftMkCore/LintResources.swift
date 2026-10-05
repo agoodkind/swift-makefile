@@ -178,7 +178,9 @@ public enum LintResources {
     return allPresent
   }
 
-  /// Relative SWIFT_MK_SWIFTLINT_CONFIG paths are resolved against context.pwd.
+  /// Relative SWIFT_MK_SWIFTLINT_CONFIG paths are resolved against context.pwd,
+  /// because the gate passes the same value to `swiftlint --config` and
+  /// swiftlint resolves it against the process working directory.
   /// Other destinations are relative to context.cwd.
   private static func destinationURL(
     for resource: Resource,
