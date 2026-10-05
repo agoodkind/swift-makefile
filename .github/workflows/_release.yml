@@ -703,7 +703,7 @@ jobs:
 
       - name: Generate SBOM
         if: inputs.sbom-subject-path != ''
-        uses: anchore/sbom-action@v0.24.2
+        uses: anchore/sbom-action@v0.24.3
         with:
           path: ${{ inputs.sbom-subject-path }}
           format: spdx-json
