@@ -4,37 +4,22 @@ set -eo pipefail
 SWIFT_MK_API_REPO="${SWIFT_MK_API_REPO:-agoodkind/swift-makefile}"
 SWIFT_MK_API_REF="${SWIFT_MK_API_REF:-main}"
 
-# Resolve the dev checkout to its physical path once, up front. SWIFT_MK_DEV_DIR
-# is often a symlink under .make/dev, and smoke-fetch wipes .make before it
-# extracts, so the symlink would be gone by the time the extract reads it. The
-# physical worktree path survives the wipe.
+# SWIFT_MK_DEV_DIR is often a symlink under .make/dev, and smoke_fetch deletes
+# .make before snapshot_extract reads the path. Resolve the physical path first.
 SWIFT_MK_DEV_DIR_REAL=""
 if [[ -n "${SWIFT_MK_DEV_DIR:-}" ]]; then
     SWIFT_MK_DEV_DIR_REAL="$(cd "${SWIFT_MK_DEV_DIR}" 2>/dev/null && pwd -P || true)"
 fi
 
-# Remove a prior snapshot's engine files from .make before laying down a new one, so
-# a ref change or a migration from the old per-file .make cannot leave an orphaned
-# source the new snapshot no longer defines (SwiftPM would then compile the orphan and
-# the build would break). Preserve the generated runtime files: the built binary and
-# its scratch and content key, the logs, the build lock, the dev symlinks, the
-# snapshot marker, and any *.log. Everything else in .make is engine content the
-# snapshot re-provides, so clearing it and re-extracting drops orphans while keeping
-# the runtime state a build depends on.
+# Deletes the engine files of the previous snapshot from .make. SwiftPM compiles
+# every source file under .make, including a file the new snapshot does not
+# contain. The function does not delete the files a build generates.
+# install_from_stage in scripts/swift-mk-bootstrap.sh preserves the same names.
 #
-# The gate proof is part of that runtime state, because a re-extract can happen in
-# the middle of a gated build: the build entry writes .make/.gate/stamp, the
-# consumer's generate step recurses into make, that run re-extracts, and clearing
-# the stamp made every later compile in the same build report no proof. Those
-# compiles then took the decoupled path and ran the hard gate on a release runner
-# that installs no lint tooling, so the release failed on missing binaries rather
-# than on a finding.
-#
-# The signing xcconfig is the same kind of state, written by the signing preflight
-# before the build and named by XCODE_XCCONFIG_FILE for the whole build. Losing it
-# mid-build leaves xcodebuild pointing at a path that no longer exists, so it
-# reports the file cannot be opened and then that every target needs a development
-# team, which reads as a signing misconfiguration rather than a deleted file.
+# .gate and signing.xcconfig are in the preserved names because a nested make
+# can extract a snapshot during a build. A gated build reads .make/.gate/stamp
+# at each compile. xcodebuild reads the path in XCODE_XCCONFIG_FILE for the
+# whole build.
 snapshot_clear_engine() {
     local make_dir="$1"
     find "${make_dir}" -mindepth 1 -maxdepth 1 \
@@ -53,14 +38,12 @@ snapshot_clear_engine() {
         -exec rm -rf {} +
 }
 
-# Extract the whole engine snapshot into .make so it becomes the flat SwiftPM
-# package the consumer builds. In dev-dir mode take the local working tree: stage
-# it into a throwaway index and archive that tree, so the extract includes a source
-# added on disk with no manifest to edit, drops a file removed on disk, and excludes
-# .git and the gitignored .make, all without touching the real index. Otherwise
-# download the pinned ref's archive from GitHub, gh first and a plain curl of the
-# public codeload archive as the fallback, so no auth is required. Either path clears
-# the prior snapshot's engine files first, then lands the same flat layout under .make.
+# Extracts the engine snapshot into .make, which is the SwiftPM package the
+# consumer builds. In dev-dir mode the source is the working tree of the dev
+# checkout: the function stages that tree in a temporary index and archives it,
+# and does not change the index of the checkout. Otherwise the function
+# downloads the archive of SWIFT_MK_API_REF with gh, or with curl from codeload
+# when gh fails.
 snapshot_extract() {
     local make_dir
     local dev_dir
@@ -89,8 +72,7 @@ snapshot_extract() {
 
     temp_dir="$(mktemp -d)"
     ok=""
-    # Internal override, in the same category as SWIFT_MK_API_REPO and
-    # SWIFT_MK_API_REF: tests point it at a local server, consumers never set it.
+    # Tests set SWIFT_MK_CODELOAD_BASE to a local server.
     codeload_base="${SWIFT_MK_CODELOAD_BASE:-https://codeload.github.com}"
     if command -v gh >/dev/null 2>&1 \
         && gh api "repos/${SWIFT_MK_API_REPO}/tarball/${SWIFT_MK_API_REF}" > "${temp_dir}/snapshot.tar.gz" 2>/dev/null \
@@ -110,14 +92,10 @@ snapshot_extract() {
     fi
     snapshot_clear_engine "${make_dir}"
     tar -xz --strip-components=1 -C "${make_dir}" -f "${temp_dir}/snapshot.tar.gz"
-    # The same three-field marker scripts/swift-mk-bootstrap.sh writes, so the two
-    # writers cannot disagree: swift.mk's SWIFT_MK_SNAPSHOT_CURRENT check reads
-    # this etag field, not the bare ref name the marker used to hold. The gh path
-    # above never writes a headers file, so awk's "cannot open file" is expected
-    # here, not a real failure; 2>/dev/null only silences its message, not its
-    # nonzero exit, and that exit would otherwise trip `set -e` through the
-    # pipeline (pipefail) on this assignment. `|| true` keeps a missing headers
-    # file resolving to an empty etag_value instead of aborting the function.
+    # The marker has the three fields that scripts/swift-mk-bootstrap.sh writes.
+    # SWIFT_MK_SNAPSHOT_CURRENT in swift.mk reads the etag field. The gh download
+    # writes no headers file; awk then exits nonzero, and `|| true` sets an empty
+    # etag_value under pipefail.
     etag_value=$(awk 'tolower($1) == "etag:" { print $2 }' "${temp_dir}/headers" 2>/dev/null | tr -d '\r' | tail -n 1) || true
     {
         printf 'ref=%s\n' "${SWIFT_MK_API_REF}"
@@ -144,11 +122,8 @@ smoke_fetch() {
     printf "smoke-fetch: OK (%s files extracted into .make/)\n" "${count_output}"
 }
 
-# Build the swiftcheck package from the freshly extracted tree so a snapshot that
-# is missing a swiftcheck source (a declared target source left out of the archive)
-# fails here instead of silently breaking a consumer's on-demand build on a clean
-# runner. SwiftPM validates every declared target's source directory at manifest
-# load, so a missing SwiftCheckCore or SwiftCheckCoreTests source fails the build.
+# Builds the swiftcheck package from the extracted tree. The build fails when
+# the snapshot lacks the source directory of a declared swiftcheck target.
 smoke_build_swiftcheck() {
     local package_path=".make/swiftcheck"
     local product="${SWIFTCHECK_EXTRA_BUILD_PRODUCT:-swiftcheck-extra}"
@@ -164,8 +139,8 @@ smoke_build_swiftcheck() {
     fi
 }
 
-# Only dispatch when executed directly, so a test can source this file to exercise a
-# single function (snapshot_clear_engine) without triggering the unknown-command exit.
+# A test sources this file to call snapshot_clear_engine. Dispatch a command
+# only when the file is executed.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     case "${1:-}" in
         update)
