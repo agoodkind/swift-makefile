@@ -110,7 +110,7 @@ public enum GateProof {
 
   // MARK: Diagnostics
 
-  /// `gate-proof probe` prints this line, with one field for each factor.
+  /// `gate-proof probe` prints gate authorization and source diagnostics.
   public static func probeReport(context: PathContext = .current()) -> String {
     guard let stamp = readStamp(context: context) else {
       return "gated=false reason=no-stamp"
@@ -287,6 +287,7 @@ public enum GateProof {
 
   /// A recursive sub-make for one build step exits before the later install step
   /// of the top-level `make deploy`. The anchor is the outermost `make`.
+  /// The helper returns nil when no ancestor runs `make` or `gmake`.
   static func outermostMakeAncestor() -> Int32? {
     var result: Int32?
     for pid in ancestorPids() {
@@ -368,7 +369,7 @@ extension GateProof {
       do {
         isDirectory = try item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory ?? false
       } catch {
-        // An entry that cannot be read is treated as a file.
+        // After a directory metadata error, sourceExtensions filters the entry.
         Output.warning("gate-proof: could not stat \(item.path) for directory check: \(error)")
       }
       if isDirectory {
@@ -418,8 +419,7 @@ extension GateProof {
 
   static let fnv1aPrime: UInt64 = 0x0000_0100_0000_01b3
 
-  /// FNV-1a is not a cryptographic hash. The digest detects a source change and is
-  /// not a security boundary.
+  /// FNV-1a is not a cryptographic hash. The digest is not a security boundary.
   static func fnv1aHex(_ text: String) -> String {
     var hash = fnv1aOffsetBasis
     for byte in text.utf8 {
