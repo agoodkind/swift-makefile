@@ -220,8 +220,7 @@ public enum Lint {
       Env.get("PERIPHERY_DEFAULT_EXCLUDE_PATHS"), Env.get("PERIPHERY_EXCLUDE_PATHS"))
   }
 
-  /// captureDeadcode returns nil when the Xcode scan does not run.
-  /// runDeadcode passes a returned index path to DeadcodeCoverageCompleteness.
+  /// The returned Xcode index path supports the coverage-completeness check.
   @discardableResult
   public static func captureDeadcode(
     rawPath: String,
@@ -257,8 +256,8 @@ public enum Lint {
     return indexStore
   }
 
-  // Append compile-cache flags after --, including when PERIPHERY_ARGS is set.
-  // Do not add flags when the compile cache is disabled.
+  // Periphery and product builds must use compatible module-cache settings.
+  // Include compile-cache flags even when PERIPHERY_ARGS overrides scan options.
   static func peripheryPackageScanArguments() -> [String] {
     var args = Env.words(
       Env.get("PERIPHERY_ARGS", "scan --config .make/periphery.yml --strict"))
@@ -299,16 +298,13 @@ public enum Lint {
     let findings = ".make/periphery.out"
     let indexStore = captureDeadcode(rawPath: raw, findingsPath: findings, context: context)
     let status = GateStatus.last
-    // Reject compile, index, and build failures before comparing the baseline. A
-    // compile error leaves a partial index, and periphery then reports referenced
-    // declarations as unused.
+    // A failed build can produce an incomplete index and false unused-code findings.
+    // Reject build failures before comparing findings with the baseline.
     if reportDeadcodeBuildFailure(rawPath: raw, status: status) {
       Baseline.recordFailedGate("lint-deadcode")
       return false
     }
-    // Coverage must include every Swift source file owned by the consumer. Without
-    // this check, Swift code only in Xcode targets is not scanned when the Xcode scan
-    // does not run.
+    // Package scans do not cover sources included only in Xcode targets.
     if case .incomplete(let message) = DeadcodeCoverageCompleteness.assert(
       xcodeIndexStorePath: indexStore, context: context)
     {

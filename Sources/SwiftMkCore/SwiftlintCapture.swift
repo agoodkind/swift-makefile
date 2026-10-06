@@ -53,7 +53,7 @@ enum SwiftlintCapture {
     Output.debug(
       "swiftlint: capturing structured findings (only: \(onlyRules.joined(separator: ",")))")
     guard LintResources.ensure(context: context) else {
-      // Report setup failure as a finding instead of returning an empty findings list.
+      // A setup failure must fail the gate even when no source findings exist.
       let message = "swiftlint: swift-mk could not write the SwiftLint configuration."
       Output.error(message)
       GateStatus.last = 1
@@ -84,8 +84,8 @@ enum SwiftlintCapture {
     let notIgnored = dropGitIgnored(excluded)
     var findings = applyLineRanges(notIgnored)
     if let decodeError {
-      // An undecodable result is unknown, not clean. Append the finding after the
-      // file and line-range filters, which would otherwise drop it.
+      // Append decoding failures after filters to prevent source exclusions from
+      // suppressing a failure to read the linter output.
       findings.append(undecodableFinding(decodeError))
     }
     return findings
