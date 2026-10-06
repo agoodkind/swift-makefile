@@ -16,9 +16,8 @@ import Foundation
 /// those tools from any other file.
 ///
 /// A bare `xcodebuild -scheme` without a container opens the app project and does
-/// not see an external SPM dependency that Tuist adds only to the workspace. Every
-/// xcodebuild invocation here passes `-workspace` for Tuist or `-project` for
-/// xcodegen.
+/// not see an external SPM dependency that Tuist adds only to the workspace. Build
+/// commands pass `-workspace` for Tuist or `-project` for xcodegen.
 public enum Toolchain {
   public enum Generator: String, Sendable {
     case tuist
@@ -102,9 +101,9 @@ public enum Toolchain {
     "OTHER_CODE_SIGN_FLAGS",
   ]
 
-  /// The CLI rejects a forbidden setting with this function before a build. The
+  /// Returns the first forbidden signing key in its original spelling, or nil. The
   /// function checks the keys of `extraSettings` and each `KEY=value` token in
-  /// `extraArguments`.
+  /// `extraArguments`. The CLI rejects a request with this function before a build.
   public static func forbiddenSigningSetting(in request: Request) -> String? {
     for key in request.extraSettings.keys.sorted()
     where forbiddenSigningSettingKeys.contains(key.uppercased()) {
@@ -510,6 +509,7 @@ extension Toolchain {
     return probedToolVersion("swift", ["--version"], fallback: "swift-unavailable")
   }
 
+  /// Cache keys depend on this trimming, which matches the output of shell `$(...)`.
   private static func probedToolVersion(
     _ command: String, _ arguments: [String], fallback: String
   ) -> String {
