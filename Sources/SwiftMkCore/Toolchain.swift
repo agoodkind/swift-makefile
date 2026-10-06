@@ -362,9 +362,13 @@ public enum Toolchain {
 extension Toolchain {
   static let sharedCacheDisableTokens: Set<String> = ["off", "none", "0", "disabled"]
 
-  /// Cache paths are separate from DerivedData, which coverage builds delete.
-  /// Pool builds use VM-local module and package caches while package checkouts
-  /// use the configured shared location.
+  /// Use a separate compilation cache path because coverage builds delete DerivedData.
+  /// Xcode defaults the store to <derivedDataPath>/CompilationCache.noindex.
+  /// SWIFT_MK_SPM_CACHE, SWIFT_MK_MODULE_CACHE, and SWIFT_MK_XCODE_CACHE_PATH
+  /// configure package checkout, module, and compilation cache paths, respectively.
+  /// A case-insensitive value of off, none, 0, or disabled omits that cache's argument.
+  /// With SWIFT_MK_POOL=1, package support and module caches use poolLocalCachePath.
+  /// Package checkouts use the configured shared location.
   static func sharedCacheArguments() -> [String] {
     var args: [String] = []
     let isPool = Env.get("SWIFT_MK_POOL") == "1"
@@ -395,6 +399,8 @@ extension Toolchain {
     return args
   }
 
+  /// Empty values select the default subdirectory under $HOME/Library/Caches/swift-mk.
+  /// Pass honorDisableToken: false for engine-owned caches without a consumer opt-out.
   /// With honorDisableToken false, disable tokens select the default cache path.
   /// This function does not create the directory.
   static func resolvedSharedCachePath(
