@@ -230,7 +230,8 @@ public enum Toolchain {
     return Shell.run("xcodebuild", arguments)
   }
 
-  /// Read destinations resolved by xcodebuild, including xcconfig settings.
+  /// xcodebuild resolves SUPPORTED_PLATFORMS from the consumer's xcconfig files.
+  /// The raw project file does not contain the resolved value.
   public static func showDestinations(
     container: String, isWorkspace: Bool, scheme: String
   ) -> Shell.Result {
@@ -474,7 +475,6 @@ extension Toolchain {
     return probedToolVersion("swift", ["--version"], fallback: "swift-unavailable")
   }
 
-  /// Trim surrounding whitespace before using tool output in cache keys.
   private static func probedToolVersion(
     _ command: String, _ arguments: [String], fallback: String
   ) -> String {
