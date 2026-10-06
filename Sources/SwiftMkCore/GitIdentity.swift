@@ -25,7 +25,9 @@ public struct GitIdentity: Equatable, Sendable {
     self.email = email
   }
 
-  /// Tests pass `environment` to hide the global gitconfig of the host.
+  /// Reads `user.name` and `user.email` from git config in `directory`, and returns a
+  /// failure when either value is empty. Tests pass `environment` to hide the global
+  /// gitconfig of the host.
   public static func load(
     directory: String,
     environment: [String: String] = [:]

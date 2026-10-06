@@ -84,7 +84,8 @@ enum SwiftlintCapture {
     let notIgnored = dropGitIgnored(excluded)
     var findings = applyLineRanges(notIgnored)
     if let decodeError {
-      // Do not exclude decode errors with file or line-range filters.
+      // An undecodable result is unknown, not clean. Append the finding after the
+      // file and line-range filters, which would otherwise drop it.
       findings.append(undecodableFinding(decodeError))
     }
     return findings

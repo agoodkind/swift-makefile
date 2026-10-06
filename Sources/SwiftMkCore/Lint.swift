@@ -299,12 +299,16 @@ public enum Lint {
     let findings = ".make/periphery.out"
     let indexStore = captureDeadcode(rawPath: raw, findingsPath: findings, context: context)
     let status = GateStatus.last
-    // Reject compile, index, and build failures before comparing the baseline.
+    // Reject compile, index, and build failures before comparing the baseline. A
+    // compile error leaves a partial index, and periphery then reports referenced
+    // declarations as unused.
     if reportDeadcodeBuildFailure(rawPath: raw, status: status) {
       Baseline.recordFailedGate("lint-deadcode")
       return false
     }
-    // Coverage must include every Swift source file owned by the consumer.
+    // Coverage must include every Swift source file owned by the consumer. Without
+    // this check, Swift code only in Xcode targets is not scanned when the Xcode scan
+    // does not run.
     if case .incomplete(let message) = DeadcodeCoverageCompleteness.assert(
       xcodeIndexStorePath: indexStore, context: context)
     {
