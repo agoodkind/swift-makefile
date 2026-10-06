@@ -64,28 +64,22 @@ ifneq ($(strip $(MAKECMDGOALS)),help)
 SWIFT_MK_BASE_URL ?= https://raw.githubusercontent.com/agoodkind/swift-makefile/main
 SWIFT_MK_API_REPO ?= agoodkind/swift-makefile
 SWIFT_MK_API_REF ?= main
-# Internal override, in the same category as SWIFT_MK_API_REPO and
-# SWIFT_MK_API_REF: tests point it at a local server, consumers never set it.
-# Matches the override scripts/swift-mk-bootstrap.sh and
-# scripts/swift-mk-sync.sh's snapshot_extract already carry, so the cold
-# in-Makefile fetch path below is exercisable the same way.
+# The download-host override permits local-server tests of the Makefile fetch
+# path.
 SWIFT_MK_CODELOAD_BASE ?= https://codeload.github.com
 
-# Print the trace header before any other work. The full trace logic lives once in
-# scripts/swift-mk-trace.sh (a consumer bootstrap.mk prints its own minimal header
-# inline instead). Resolve the script from the dev checkout, from the copy sitting
-# next to this makefile (a bare `make -f swift.mk` with no SWIFT_MK_DEV_DIR), or
-# from a fetched copy under .make/scripts, and run it; when none is present the
-# header defers to a later stage rather than failing the run. The dev-dir wildcard
-# is guarded so an empty SWIFT_MK_DEV_DIR does not resolve an absolute /scripts path.
+# Trace initialization runs during makefile parsing.
+# Missing trace scripts do not stop parsing.
+# The development-directory guard prevents an empty SWIFT_MK_DEV_DIR from
+# selecting /scripts/swift-mk-trace.sh.
 SWIFT_MK_TRACE_SCRIPT := $(firstword \
 	$(if $(strip $(SWIFT_MK_DEV_DIR)),$(wildcard $(SWIFT_MK_DEV_DIR)/scripts/swift-mk-trace.sh)) \
 	$(wildcard $(dir $(lastword $(MAKEFILE_LIST)))scripts/swift-mk-trace.sh) \
 	$(wildcard .make/scripts/swift-mk-trace.sh))
 ifneq ($(strip $(SWIFT_MK_TRACE_SCRIPT)),)
 ifeq ($(strip $(TRACEPARENT)),)
-# No inbound trace this run, so mint one via the script. TRACEPARENT is empty in
-# this branch, so no untrusted value is interpolated into this parse-time $(shell).
+# The parse-time shell command does not interpolate caller-supplied
+# TRACEPARENT.
 SWIFT_MK_TRACE_RESULT := $(shell bash "$(SWIFT_MK_TRACE_SCRIPT)")
 ifeq ($(word 1,$(SWIFT_MK_TRACE_RESULT)),ok)
 TRACEPARENT := $(word 2,$(SWIFT_MK_TRACE_RESULT))
@@ -95,12 +89,9 @@ SWIFT_MK_TRACE_ID := $(TRACE_ID)
 SWIFT_MK_SPAN_ID := $(SPAN_ID)
 endif
 else
-# bootstrap.mk already minted and printed the trace and set these make variables.
-# make's export does not reach a parse-time $(shell), so bootstrap's value cannot
-# arrive by env here; the make variable does. Adopt it directly, without re-running
-# the script, so no second header prints and no untrusted value is ever passed to a
-# shell (which would be a command-injection surface). Derive the ids from
-# TRACEPARENT only if a caller set TRACEPARENT on its own.
+# Reusing the existing make variables avoids another trace header and shell
+# interpolation of caller-supplied TRACEPARENT.
+# A caller can supply TRACEPARENT without separate trace and span identifiers.
 TRACE_ID := $(if $(strip $(TRACE_ID)),$(TRACE_ID),$(word 2,$(subst -, ,$(TRACEPARENT))))
 SPAN_ID := $(if $(strip $(SPAN_ID)),$(SPAN_ID),$(word 3,$(subst -, ,$(TRACEPARENT))))
 SWIFT_MK_TRACE_ID := $(TRACE_ID)
@@ -120,33 +111,30 @@ endif
 SWIFT_MK_SELF := $(lastword $(MAKEFILE_LIST))
 SWIFT_MK_SELF_DIR := $(patsubst %/,%,$(dir $(abspath $(SWIFT_MK_SELF))))
 
-# A local swift-makefile checkout is consumed through SWIFT_MK_DEV_DIR. SwiftPM
-# derives a path dependency's identity from its directory basename, and a consumer's
-# Tools manifest names `package: "swift-makefile"`, so a checkout in a worktree named
-# anything else (for example canonical-tuist-build) fails to resolve. Normalize the
-# override to a symlink literally named swift-makefile under .make/dev so any checkout
-# resolves. Skip when the basename is already swift-makefile (the main checkout, or an
-# already-normalized re-entry), which also avoids linking the symlink to itself.
+# SwiftPM derives a path dependency's identity from its directory basename.
+# A Tools manifest using `package: "swift-makefile"` requires that identity.
+# A checkout with a different basename fails to resolve that dependency.
+# The normalization symlink supplies the required basename.
+# The basename guard avoids linking an already-normalized symlink to itself.
 ifneq ($(strip $(SWIFT_MK_DEV_DIR)),)
 ifneq ($(notdir $(patsubst %/,%,$(SWIFT_MK_DEV_DIR))),swift-makefile)
 override SWIFT_MK_DEV_DIR := $(shell mkdir -p "$(CURDIR)/.make/dev" && ln -sfn "$(abspath $(SWIFT_MK_DEV_DIR))" "$(CURDIR)/.make/dev/swift-makefile" && printf '%s' "$(CURDIR)/.make/dev/swift-makefile")
 endif
 endif
 
-# Consumer self-reference robustness, the same basename fix as SWIFT_MK_DEV_DIR but for
-# a consumer pointing at its own repo. A nested SwiftPM package (a `Tools/` dev tool)
-# reaches its own root with a path dependency, whose SwiftPM identity is the directory
-# basename; in a worktree not named after the repo that identity is wrong and the
-# nested package fails to resolve. swift-mk derives the canonical repo name from git
-# (the common dir's parent, identical from the main checkout or any linked worktree)
-# and creates `.make/dev/<name>` as a symlink to the repo root. A consumer then writes
-# its self-reference as `.package(path: "../.make/dev/<name>")`, which resolves from any
-# worktree with no env var to set. The swiftcheck-extra `fragile_package_path` rule
-# enforces consumers use that symlink rather than a bare `..`.
-# Only at the repo toplevel: a recursive `make -C <subdir>` (swift-mk's own swiftcheck
-# build) has CURDIR set to the subdir while git still derives the repo name, which would
-# point the symlink at the subdir and clobber the SWIFT_MK_DEV_DIR symlink of the same
-# name. Gating on toplevel keeps the self-symlink a repo-root concern.
+# A nested Tools package can fail to resolve its repository path dependency
+# when a worktree basename differs from the package identity in its manifest.
+# The self-reference uses `.package(path: "../.make/dev/<name>")`.
+# The value of <name> is the parent directory name of Git's common directory.
+# Linked worktrees share that common directory.
+# The self-reference does not require an environment variable.
+# The swiftcheck-extra `fragile_package_path` rule requires the self-reference
+# symlink instead of a bare `..`.
+#
+# The toplevel guard prevents the self-reference from targeting a subdirectory.
+# Recursive `make -C <subdir>` uses the repository's common directory with
+# CURDIR set to the subdirectory. A self-reference created under the
+# subdirectory could replace the SWIFT_MK_DEV_DIR symlink when the names match.
 SWIFT_MK_REPO_NAME := $(notdir $(patsubst %/,%,$(dir $(abspath $(shell git -C "$(CURDIR)" rev-parse --git-common-dir 2>/dev/null)))))
 SWIFT_MK_GIT_TOPLEVEL := $(shell git -C "$(CURDIR)" rev-parse --show-toplevel 2>/dev/null)
 ifneq ($(strip $(SWIFT_MK_REPO_NAME)),)
@@ -163,31 +151,20 @@ SWIFT_MK_BIN ?= $(CURDIR)/.make/swift-mk
 SWIFT_MK_LOCAL_NOTICES := $(if $(strip $(SWIFT_MK_DEV_DIR)),$(SWIFT_MK_DEV_DIR)/notices.txt,$(SWIFT_MK_SELF_DIR)/notices.txt)
 SWIFT_MK_NOTICES_FILE := $(if $(wildcard $(SWIFT_MK_LOCAL_NOTICES)),$(SWIFT_MK_LOCAL_NOTICES),$(CURDIR)/.make/notices.txt)
 
-# Fetch the whole engine as one snapshot. The consumer path downloads the archive
-# for the pinned ref (SWIFT_MK_API_REF) from GitHub and extracts it into a stage
-# directory with tar --strip-components=1, so the archive's top-level directory is
-# dropped and the engine tree lands flat. gh streams the tarball first, and a plain
-# curl of the public codeload archive is the fallback, so no auth is required; only
-# the curl fallback's response headers are captured, since gh does not expose them
-# the same way, but this whole path runs at most once per consumer (the marker it
-# writes lands the helper, which owns every later parse). A marker records the ref,
-# the content ETag, and the extraction time, matching the format
-# scripts/swift-mk-bootstrap.sh and scripts/swift-mk-sync.sh's snapshot_extract both
-# write, so the idempotency check at the call site (SWIFT_MK_SNAPSHOT_CURRENT) can
-# key off the ETag rather than the ref name.
+# A single snapshot keeps the fetched engine files at one pinned ref.
+# The public codeload fallback does not require gh authentication.
+# Only curl captures response headers, so a successful gh fetch produces an
+# empty ETag in the snapshot marker.
 #
-# This is the one path a consumer whose committed bootstrap.mk predates the helper
-# still runs, so it stages into .make.next and swaps rather than clearing .make
-# before the fetch completes, the same non-destructive shape
-# scripts/swift-mk-bootstrap.sh's install_from_stage uses: nothing under .make is
-# removed until the new tree is fetched, extracted, and verified complete. A
-# fetch that fails, an incomplete tarball, or a mid-copy failure all leave .make
-# exactly as it was, rather than an offline or degraded consumer losing an
-# already-working tree over a fetch it could not complete. Generated runtime
-# files (logs, the build lock, the dev symlink, the built binary) carry forward
-# the same way install_from_stage preserves them. This runs before the swift-mk
-# binary or any fetched script exists, so it stays inline shell with no
-# fetched-script dependency.
+# The recipe exits before renaming .make if downloading, extracting,
+# checking required assets, or copying the stage into .make.next fails.
+# The required-asset check does not establish snapshot completeness.
+# The recipe uses find with cp -R to copy logs, build.lock, swift-mk,
+# swift-mk.key, *.bundle, swift-mk-build, dev, and *.log from .make into
+# .make.next without checking find's exit status.
+#
+# Consumers with bootstrap.mk versions that predate the helper require this
+# inline shell before the swift-mk binary or a fetched script exists.
 define _swift_mk_snapshot_commands
 	stage_root=$$(mktemp -d) || exit 1; \
 	stage_dir="$$stage_root/tree"; \
@@ -216,12 +193,12 @@ define _swift_mk_snapshot_commands
 	rm -rf .make.previous
 endef
 
-# The fetch runs inside a parse-time $(shell), whose stdout make captures for the
-# ok/fail marker, so the download and extract cannot stream their own output without a
-# pipe, and a pipe under /bin/sh (no pipefail) would let a tee success mask a real
-# fetch failure on the bootstrap path. Announce the step with $(info) instead, so the
-# otherwise-silent cold-fetch window shows a live heading in the log while the full
-# transcript still lands in .make/swift-mk-snapshot.log for a post-mortem.
+# The parse-time $(shell) captures stdout for the ok/fail result.
+# A tee pipeline under /bin/sh without pipefail could mask a fetch failure
+# with tee's exit status.
+# The $(info) heading reports progress during the otherwise-silent fetch.
+# The wrapper records the fetch transcript in .make/swift-mk-snapshot.log
+# for failure diagnosis.
 define swift_mk_snapshot
 $(info swift-mk: fetching engine snapshot $(SWIFT_MK_API_REF) (cold fetch, a few seconds))$(if $(filter ok,$(shell mkdir -p .make && if $(call _swift_mk_snapshot_commands) > .make/swift-mk-snapshot.log 2>&1; then printf ok; else printf fail; fi)),,$(error swift-makefile failed to fetch the engine snapshot for $(SWIFT_MK_API_REF); see .make/swift-mk-snapshot.log))
 endef
@@ -234,57 +211,54 @@ define swift-mk-require-one
 $(if $(wildcard $(1)),,$(error swift-makefile expected $(1); the engine snapshot is incomplete))
 endef
 
-# One engine snapshot replaces the per-file fetch. In consumer mode the whole
-# engine tree extracts into .make and becomes the flat SwiftPM package the build
-# compiles (.make/Package.swift, .make/Sources, .make/scripts, .make/swiftcheck),
-# so a source added to the engine is present with no manifest to maintain, and the
-# selected modules (SWIFT_MK_MODULES) arrive in the same snapshot. Dev-dir mode is
-# excluded here, because SWIFT_MK_HELPER_DIR then resolves to the checkout rather
-# than .make/scripts and the build reads the checkout directly.
+# Consumer mode extracts the whole engine into .make as a flat SwiftPM package
+# containing Package.swift, Sources, scripts, and swiftcheck.
+# The build compiles that package. The snapshot includes new engine sources
+# and selected SWIFT_MK_MODULES without a per-file manifest.
+# Dev-dir mode excludes snapshot extraction when the checkout provides
+# swift-mk-build.sh because SWIFT_MK_HELPER_DIR selects the checkout.
+# The build reads the checkout directly.
 #
-# The engine snapshot is current only when the marker carries the ETag the
-# helper recorded and the extracted package is present. The previous check
-# compared the marker to SWIFT_MK_API_REF, which for a branch pin is always
-# equal, so a consumer never re-fetched and stayed frozen on its first commit.
-# A marker holding only a bare ref name (what this same block used to write)
-# has no etag= line, so grep fails and the consumer is treated as not current,
-# forcing exactly one real re-extract to land the helper below.
+# A bare-ref marker lacks the ETag recorded by the helper.
+# A consumer with a bare-ref marker and no bootstrap helper requires exactly
+# one snapshot re-extraction to install the helper.
 SWIFT_MK_SNAPSHOT_HELPER := .make/scripts/swift-mk-bootstrap.sh
 SWIFT_MK_SNAPSHOT_CURRENT := $(shell if [ -f .make/Package.swift ] && grep -q '^etag=..*' .make/.swift-mk-snapshot-ref 2>/dev/null; then printf 1; fi)
 ifeq ($(SWIFT_MK_HELPER_DIR),$(SWIFT_MK_FETCHED_SCRIPT_DIR))
 ifeq ($(strip $(_SWIFT_MK_PROVISIONED)),1)
 SWIFT_MK_SNAPSHOT := $(call swift-mk-require-one,.make/Package.swift)
 else ifneq ($(wildcard $(SWIFT_MK_SNAPSHOT_HELPER)),)
-# The helper owns validation, reuse, and failure once it has landed once. It is
-# itself part of the fetched engine tree, so its policy reaches every consumer
-# on its next parse with no consumer-side change. Passed explicitly rather than
-# relying on `export`, since the export statements for these variables are
-# textually later in this file and would not yet be in effect for this
-# immediate $(shell) call. Every variable the helper reads is forwarded: Make
-# only auto-exports environment-origin variables, so a value set on the make
-# command line reaches this file but not a $(shell) child, and the helper would
-# silently fall back to its own default. GITHUB_ACTIONS and GITHUB_RUN_ID ride
-# along so the CI rule holds even when a caller passes them as make variables.
+# The bootstrap helper validates and reuses snapshots.
+# The helper reports snapshot failures.
+# The snapshot includes the helper. Consumers invoke the extracted helper on
+# the next unprovisioned parse without changing consumer configuration.
+# Explicit assignments are required because the later export statements do
+# not affect this immediate $(shell) call.
+# Make automatically exports only environment-origin variables to $(shell)
+# children. Command-line make variables require explicit assignments to
+# prevent the helper from silently using defaults.
+# The assignments forward every variable the helper reads.
+# Explicit GITHUB_ACTIONS and GITHUB_RUN_ID assignments preserve the helper's
+# CI rule when callers set these as make variables.
 SWIFT_MK_SNAPSHOT := $(if $(filter ok,$(shell SWIFT_MK_API_REPO="$(SWIFT_MK_API_REPO)" SWIFT_MK_API_REF="$(SWIFT_MK_API_REF)" SWIFT_MK_MODULES="$(SWIFT_MK_MODULES)" SWIFT_MK_CODELOAD_BASE="$(SWIFT_MK_CODELOAD_BASE)" SWIFT_MK_DEV_DIR="$(SWIFT_MK_DEV_DIR)" _SWIFT_MK_PROVISIONED="$(_SWIFT_MK_PROVISIONED)" GITHUB_ACTIONS="$(GITHUB_ACTIONS)" GITHUB_RUN_ID="$(GITHUB_RUN_ID)" bash "$(SWIFT_MK_SNAPSHOT_HELPER)" >&2 && printf ok)),,$(error swift-makefile failed to provision the engine snapshot))
 else ifneq ($(strip $(SWIFT_MK_SNAPSHOT_CURRENT)),1)
-# Cold path for a consumer whose .make predates the helper (or whose marker is
-# still the old bare-ref format). It extracts once, which lands the helper
-# among the fetched files, so every later parse takes the branch above instead.
+# The first snapshot extraction installs the bootstrap helper.
+# Subsequent unprovisioned make parses invoke the extracted helper.
 SWIFT_MK_SNAPSHOT := $(call swift_mk_snapshot)
 endif
 endif
 
 SWIFT_MK_MODULES ?=
 
-# Each selected module must sit at .make/$(m) so the `-include .make/$(m)` below
-# resolves it. The snapshot already extracts every module under its own name in
-# fetched mode (it is part of the engine tree, no rename needed), so a warm
-# parse finds it on disk and performs no fetch; fetch-one is a fallback for
-# dev-dir mode (where no snapshot extract runs) and for a module a snapshot
-# genuinely lacks: swift-mk-fetch-path copies from the checkout under
-# SWIFT_MK_DEV_DIR and downloads otherwise. The module list is the consumer's
-# own small selection, not the whole engine source tree, so fetching whichever
-# one is actually missing is not the manifest footgun the snapshot removed.
+# Each selected module must use .make/$(m) because the include directive reads
+# that path. Snapshot extraction preserves engine module filenames.
+# Existing modules require no per-module fetch.
+# fetch-one handles missing modules in dev-dir mode and modules absent from a
+# snapshot. Dev-dir mode with checkout build scripts does not extract a snapshot.
+# swift-mk-fetch-path copies modules from SWIFT_MK_DEV_DIR in dev-dir mode
+# and downloads modules otherwise.
+# The consumer's small module selection does not require a manifest of engine
+# sources when a missing module needs fetching.
 ifeq ($(strip $(_SWIFT_MK_PROVISIONED)),1)
 SWIFT_MK_FETCHED_MODULES := $(foreach m,$(SWIFT_MK_MODULES),$(call swift-mk-require-one,.make/$(m)))
 else
@@ -295,9 +269,9 @@ SWIFT_MK_SWIFTLINT_CONFIG ?= .make/swiftlint.yml
 SWIFT_MK_SWIFT_FORMAT_CONFIG ?= .make/swift-format.json
 SWIFT_MK_PERIPHERY_CONFIG ?= .make/periphery.yml
 
-# A consumer's own .swiftlint.yml / .swift-format / .periphery.yml is ignored in
-# favor of the shared fetched config. Warn once at the top level so the override
-# is visible. Set SWIFT_MK_ALLOW_LOCAL_CONFIGS to silence it.
+# The tools use the shared fetched configs instead of a consumer's local
+# .swiftlint.yml, .swift-format, and .periphery.yml.
+# Top-level warnings make each ignored local config visible once.
 SWIFT_MK_ALLOW_LOCAL_CONFIGS ?=
 ifeq ($(strip $(SWIFT_MK_ALLOW_LOCAL_CONFIGS)),)
 ifeq ($(MAKELEVEL),0)
@@ -318,28 +292,32 @@ endif
 endif
 endif
 endif
-# swift-mk owns the OSV policy outright: the audit gate reads only the fetched,
-# centrally-owned .make/osv-scanner.toml. override locks the config path and the
-# scanner args (below) so a consumer cannot redirect them from the command line or
-# environment, the same pattern LINT_GATES uses, and there is no root-osv-scanner.toml
-# fallback. Manage every exception in swift-makefile's own osv-scanner.toml.
+# swift-mk controls the OSV policy.
+# The audit gate reads only the shared fetched .make/osv-scanner.toml.
+# The override directives prevent consumers from changing the config path or
+# scanner arguments through command-line assignments or environment variables.
+# LINT_GATES uses the same override restriction.
+# The audit gate has no root-osv-scanner.toml fallback.
+# swift-makefile's osv-scanner.toml defines every exception.
 override SWIFT_MK_OSV_CONFIG := .make/osv-scanner.toml
-# mise loads every file under .config/mise/conf.d/ automatically and has no
-# env var for an arbitrary config path, so the shared tool pins fetch into
-# that documented additive location. Consumers gitignore the fetched file and
-# delete their root mise.toml / .tool-versions pins.
+# swift-mk fetches shared tool pins into .config/mise/conf.d/ because mise
+# automatically loads every file in that documented additive directory and has
+# no environment variable for an arbitrary config path.
+# Consumers exclude the fetched file from Git and delete their root mise.toml
+# and .tool-versions pins.
 SWIFT_MK_MISE_CONFIG ?= .config/mise/conf.d/swift-mk.toml
 
-# Default Xcode location for the rendered file-header macros. Override to a
-# project's xcshareddata for a per-project header. swift-mk reads the git
-# identity itself.
+# swift-mk renders file-header macros in Xcode's default directory.
+# XCODE_TEMPLATE_DIR can select a project's xcshareddata directory for a
+# per-project header.
+# swift-mk reads the git identity itself.
 XCODE_TEMPLATE_DIR ?= $(HOME)/Library/Developer/Xcode/UserData
 
-# The snapshot carries these configs, and the helper copies them into their
-# renamed targets (install_renamed_configs), so a warm parse performs no
-# per-file fetch. The $(if $(wildcard ...)) guard is what takes the fetch off
-# that path: fetch-path still runs for dev-dir mode, where no snapshot extract
-# ever happens, and as the fallback for a snapshot that genuinely lacks one of
+# The $(if $(wildcard ...)) guard skips per-file fetches during a warm parse.
+# The snapshot includes these configs.
+# install_renamed_configs copies the configs to their renamed targets.
+# The dev-dir mode never extracts a snapshot.
+# swift-mk-fetch-path runs in dev-dir mode and when a snapshot lacks one of
 # these files, the same two cases swift-mk-fetch-path already existed for.
 ifeq ($(strip $(_SWIFT_MK_PROVISIONED)),1)
 SWIFT_MK_FETCHED_SWIFTLINT := $(call swift-mk-require-one,$(SWIFT_MK_SWIFTLINT_CONFIG))
@@ -356,12 +334,14 @@ else
 SWIFT_MK_FETCHED_OSV := $(if $(wildcard $(SWIFT_MK_OSV_CONFIG)),,$(call swift-mk-fetch-path,osv-scanner.toml,$(SWIFT_MK_OSV_CONFIG)))
 endif
 
-# swift.mk owns the shared mise config outright: it is fetched here, not by the
-# consumer's tracked bootstrap.mk, so every consumer converges on its next run
-# with no consumer-repo change. The top-level run fetches it once, which is how
-# the _SWIFT_MK_PROVISIONED=1 sub-makes the engine uses for inner builds find
-# it already present; a provisioned run that genuinely lacks it gets the
-# standard pre-fetch error.
+# swift.mk fetches the shared mise config instead of the consumer's tracked
+# bootstrap.mk. Every consumer adopts the shared config on its next run
+# without a consumer-repository change.
+# The top-level make fetches a missing config once before the engine starts
+# inner builds with _SWIFT_MK_PROVISIONED=1.
+# Provisioned sub-makes use the config fetched by the top-level make.
+# A provisioned make reports an incomplete engine snapshot when the config
+# is missing.
 ifneq ($(wildcard $(SWIFT_MK_MISE_CONFIG)),)
 SWIFT_MK_FETCHED_MISE := 1
 else ifeq ($(strip $(_SWIFT_MK_PROVISIONED)),1)
@@ -374,10 +354,11 @@ SWIFTLINT ?= swiftlint
 SWIFTLINT_FLAGS ?= --config $(SWIFT_MK_SWIFTLINT_CONFIG) --reporter xcode
 SWIFTLINT_TARGETS ?= Sources Tests Package.swift
 SWIFTLINT_BASELINE ?= .swiftlint-baseline.jsonl
-# Untracked files (generated output, scratch files) are skipped by the git-ignore
-# filter in the lint runner, not by a path pattern: a path pattern would let a
-# tracked file in a matching directory silently escape linting. A repo can still
-# add explicit path patterns through SWIFTLINT_EXCLUDE_PATHS.
+# The lint runner skips untracked files (generated output and scratch files)
+# through its git-ignore filter instead of a path pattern.
+# A path pattern could silently exclude a tracked file in a matching
+# directory from linting.
+# Repositories can add explicit path patterns through SWIFTLINT_EXCLUDE_PATHS.
 SWIFTLINT_DEFAULT_EXCLUDE_PATHS ?=
 SWIFTLINT_EXCLUDE_PATHS ?=
 SWIFTLINT_BASELINE_SCOPE_PATTERN ?=
@@ -396,9 +377,10 @@ PERIPHERY_DEFAULT_EXCLUDE_PATHS ?=
 PERIPHERY_EXCLUDE_PATHS ?=
 
 OSV_SCANNER ?= osv-scanner
-# No --recursive: the audit discovers lockfiles through git's effective ignore
-# (`git ls-files --exclude-standard`) and passes them as -L paths, so globally
-# excluded trees (core.excludesFile) are never walked.
+# The audit avoids walking globally excluded trees (core.excludesFile) by
+# discovering lockfiles through git's effective ignore rules
+# (`git ls-files --exclude-standard`) and passing the lockfiles as -L paths
+# instead of --recursive.
 override OSV_SCANNER_ARGS := --allow-no-lockfiles --config $(SWIFT_MK_OSV_CONFIG)
 
 LINT_CONCURRENCY ?= auto
@@ -408,13 +390,10 @@ SWIFT_MK_SWIFT_CACHE ?= auto
 SWIFT_MK_SWIFTPM_CACHE ?= $(SWIFT_MK_SWIFT_CACHE)
 SWIFT_MK_XCODE_CACHE ?= $(SWIFT_MK_SWIFT_CACHE)
 SWIFT_MK_XCODE_CACHE_DIAGNOSTICS ?= false
-# The SwiftPM peer of the Xcode diagnostics knob, which turns each cached compile
-# into a remark naming the output it served and the key it served it under. The
-# engine reads it from the environment, and make exports a command-line assignment
-# on its own, so `make <target> SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS=1` already worked.
-# A consumer that sets it in its own Makefile does not, because make exports a
-# makefile assignment only when told to, which is why the sibling knobs are exported
-# below and this one now is too.
+# SwiftPM cache diagnostics emit a remark with the output and cache key for
+# each cached compile. The engine reads the setting from the environment.
+# GNU make exports command-line assignments automatically.
+# Consumer Makefile assignments require an explicit export.
 SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS ?= false
 SWIFT_MK_XCODE_CACHE_AUTO_ENABLED := $(shell awk 'BEGIN { version = "$(SWIFT_MK_XCODE_VERSION_MAJOR)" + 0; if (version >= 26) print "YES"; else print "NO"; }')
 SWIFT_MK_XCODE_CACHE_ENABLED := NO
@@ -425,13 +404,13 @@ SWIFT_MK_XCODE_CACHE_ENABLED := NO
 else ifneq ($(filter $(SWIFT_MK_XCODE_CACHE),auto AUTO),)
 SWIFT_MK_XCODE_CACHE_ENABLED := $(SWIFT_MK_XCODE_CACHE_AUTO_ENABLED)
 endif
-# Prefix mapping rewrites absolute path prefixes (SDK, toolchain, source root) out of
-# the compilation-cache keys so a cache entry produced on one machine or CI runner
-# hits on another whose checkout path differs. Without it the keys embed absolute
-# paths and every cross-runner restore misses. Defaults to the Xcode cache policy, so
-# it follows caching on Xcode 26+ and a consumer can drop just the mapping (keeping the
-# local cache) with SWIFT_MK_XCODE_CACHE_PREFIX_MAP=0 if a path-sensitive input (a
-# bridging header) regresses.
+# Prefix mapping removes absolute SDK, toolchain, and source-root path prefixes
+# from compilation-cache keys. Cache entries hit on another machine or continuous
+# integration runner when the checkout path differs.
+# Without prefix mapping, keys include absolute paths and every restore on
+# another runner misses.
+# SWIFT_MK_XCODE_CACHE_PREFIX_MAP=0 disables mapping without disabling the local
+# cache if a path-sensitive input, such as a bridging header, regresses.
 SWIFT_MK_XCODE_CACHE_PREFIX_MAP ?= $(SWIFT_MK_XCODE_CACHE)
 SWIFT_MK_XCODE_CACHE_PREFIX_MAP_ENABLED := NO
 ifneq ($(filter $(SWIFT_MK_XCODE_CACHE_PREFIX_MAP),1 true TRUE yes YES on ON),)
@@ -447,28 +426,26 @@ SWIFT_MK_XCODE_CACHE_DIAGNOSTICS_ENABLED := YES
 endif
 SWIFT_MK_XCODEBUILD_ARGS := $(strip $(if $(filter YES,$(SWIFT_MK_XCODE_CACHE_ENABLED)),COMPILATION_CACHE_ENABLE_CACHING=YES $(if $(filter YES,$(SWIFT_MK_XCODE_CACHE_PREFIX_MAP_ENABLED)),SWIFT_ENABLE_PREFIX_MAPPING=YES CLANG_ENABLE_PREFIX_MAPPING=YES,) $(if $(filter YES,$(SWIFT_MK_XCODE_CACHE_DIAGNOSTICS_ENABLED)),COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=YES,),))
 SWIFT_MK_XCODEBUILD_NO_CACHE_ARGS := COMPILATION_CACHE_ENABLE_CACHING=NO COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=NO
-# Canonical DerivedData path. A consumer that builds Xcode targets routes its
-# `xcodebuild -derivedDataPath` here, and the dead-code gate reads the index store
-# from the same place, so coverage analysis is deterministic across repos.
+# Xcode consumers use this DerivedData path for `xcodebuild -derivedDataPath`.
+# The dead-code gate reads the index store from this path.
+# The shared path makes coverage analysis deterministic across repositories.
 SWIFT_MK_DERIVED_DATA ?= $(CURDIR)/.derived-data
-# Normalize to absolute once, at the source. Some consumers set this to a relative
-# value (BUILD_DIR, e.g. `build`), and a relative DerivedData leaks into build settings
-# that xcodebuild resolves against a different base than the consumer cwd: the dead-code
-# OBJROOT resolved a relative value against each SwiftPM package's source root, landing
-# coverage intermediates inside the shared SPM clone where `rm -rf` could not clear them.
-# Absolutizing the one exported variable makes every make and Swift reader relative-safe.
-# `override` so a relative command-line value is absolutized too (a plain `:=` loses to a
-# command-line assignment), matching the `override LINT_GATES` hardening pattern. abspath
-# is lexical (no stat), a no-op on an already-absolute value, and points a relative value
-# at the same physical dir the consumer cwd already implied, so packaging that reads
-# BUILD_DIR is unaffected.
+# Some consumers use relative DerivedData values such as BUILD_DIR=build.
+# xcodebuild resolves build settings from relative DerivedData values against a
+# base other than the consumer working directory. A relative dead-code OBJROOT
+# resolves against each SwiftPM package's source root. The consumer's `rm -rf`
+# cannot clear coverage intermediates inside the shared SwiftPM clone.
+# The absolute exported path prevents relative-path errors in make and Swift readers.
+# The `override` assignment normalizes relative command-line values (a plain `:=`
+# loses to a command-line assignment), matching the `override LINT_GATES` hardening
+# pattern. abspath is lexical (no stat), a no-op on an already-absolute value, and
+# points a relative value at the same physical dir the consumer cwd already implied,
+# so packaging that reads BUILD_DIR is unaffected.
 override SWIFT_MK_DERIVED_DATA := $(abspath $(if $(strip $(SWIFT_MK_DERIVED_DATA)),$(SWIFT_MK_DERIVED_DATA),$(CURDIR)/.derived-data))
-# Shared build caches reused across every worktree and clone. DerivedData stays
-# per checkout (above) so concurrent builds never collide. On hosted and local
-# checkouts, the Clang module cache and SPM clone dir can both live under the
-# shared cache root. Pool builds keep the SPM clone dir on the shared mount but
-# move write-heavy package support and module-cache state under
-# SWIFT_MK_POOL_LOCAL_CACHE.
+# Worktrees and clones under one cache root can reuse build caches.
+# DerivedData defaults to a checkout-specific path to separate build output.
+# Pool builds use SWIFT_MK_POOL_LOCAL_CACHE for write-heavy package support
+# and module-cache state. The SwiftPM clone directory remains on the shared mount.
 SWIFT_MK_CACHE_ROOT ?= $(HOME)/Library/Caches/swift-mk
 SWIFT_MK_MODULE_CACHE ?= $(SWIFT_MK_CACHE_ROOT)/ModuleCache
 SWIFT_MK_SPM_CACHE ?= $(SWIFT_MK_CACHE_ROOT)/SourcePackages
@@ -476,31 +453,26 @@ export SWIFT_MK_MODULE_CACHE
 export SWIFT_MK_SPM_CACHE
 export SWIFT_MK_POOL
 export SWIFT_MK_POOL_LOCAL_CACHE
-# The LLVM compilation-cache (CAS) store. Kept OUTSIDE per-checkout DerivedData,
-# unlike Xcode's default of $(SWIFT_MK_DERIVED_DATA)/CompilationCache.noindex, so the
-# dead-code coverage build's `rm -rf $(SWIFT_MK_DERIVED_DATA)` cannot destroy it, and
-# shared across worktrees and clones like the module cache (the store is
-# content-addressed, so one shared copy is safe and maximizes reuse). The engine
-# injects COMPILATION_CACHE_CAS_PATH from this at the toolchain chokepoint; set it to
-# `off` to fall back to Xcode's in-DerivedData default.
+# Xcode uses an LLVM content-addressed compilation cache (CAS).
+# The store defaults outside DerivedData to survive dead-code coverage cleanup.
+# Its content-addressed results support reuse across worktrees and clones.
+# The toolchain sets COMPILATION_CACHE_CAS_PATH from SWIFT_MK_XCODE_CACHE_PATH.
+# The value `off` selects Xcode's default store inside DerivedData.
 SWIFT_MK_XCODE_CACHE_PATH ?= $(SWIFT_MK_CACHE_ROOT)/CompilationCache
 export SWIFT_MK_XCODE_CACHE_PATH
-# The shared LLVM CAS store for `swift build` compilation caching. Kept outside
-# DerivedData and shared across worktrees (content-addressed), the SwiftPM peer
-# of SWIFT_MK_XCODE_CACHE_PATH. The engine owns this cache with no consumer opt-out:
-# a real path relocates the store, and a disable token (off/none/0/disabled) is treated
-# as unset and resolves to the default store rather than turning caching off.
+# SwiftPM uses a shared LLVM content-addressed compilation cache outside DerivedData.
+# Consumers can relocate the store with SWIFT_MK_SWIFTPM_CACHE_PATH.
+# The engine enables caching without a consumer opt-out.
+# The values off, none, 0, and disabled select the default store.
 SWIFT_MK_SWIFTPM_CACHE_PATH ?= $(SWIFT_MK_CACHE_ROOT)/SwiftPMCompilationCache
 export SWIFT_MK_SWIFTPM_CACHE_PATH
-# SwiftPM compilation caching via -explicit-module-build -cache-compile-job. On by
-# default, the SwiftPM peer of the Xcode compilation cache, engine-owned with no consumer
-# opt-in or opt-out: the engine enables it whenever the toolchain supports the flag,
-# detected from the frontend help with a Swift 6.3 version-floor fallback (the release
-# where swift build compilation caching is available) so a change in the hidden-help text
-# cannot wrongly disable it, and a toolchain that lacks it never receives the flags.
+# SwiftPM compilation caching requires -explicit-module-build with -cache-compile-job.
+# The engine enables caching without a consumer opt-in or opt-out on supported toolchains.
+# The version fallback handles missing frontend help text because Swift 6.3
+# introduced `swift build` compilation caching.
 SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED := $(shell sc=$$(command -v swiftc 2>/dev/null || true); if [ -z "$$sc" ]; then printf 'NO'; elif "$$sc" -frontend -help-hidden 2>&1 | grep -q -- '-cache-compile-job'; then printf 'YES'; else v=$$("$$sc" -version 2>&1 | sed -n 's/.*Swift version \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p'); set -- $$v; maj=$${1:-0}; min=$${2:-0}; if [ "$$maj" -gt 6 ] || { [ "$$maj" -eq 6 ] && [ "$$min" -ge 3 ]; }; then printf 'YES'; else printf 'NO'; fi; fi)
 export SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED
-# Exported so `toolchain generate` can point Xcode.app's DerivedData at the same path.
+# `toolchain generate` uses the exported path for Xcode.app's DerivedData.
 export SWIFT_MK_DERIVED_DATA
 SWIFT_MK_SWIFTPM_CACHE_ENABLED := NO
 ifneq ($(filter $(SWIFT_MK_SWIFTPM_CACHE),1 true TRUE yes YES on ON auto AUTO),)
@@ -520,12 +492,7 @@ BASELINE_TOKEN ?=
 BASELINE_TOKEN_CMD ?= $(SWIFT_MK_GATE_TOKEN_CMD)
 BASELINE_UPDATE_MODE ?= sync
 
-# Canonical Xcode-app build path. A consumer that builds an Xcode app declares only
-# its generator, container, scheme, and configuration; swift-mk derives the build,
-# test, generate, and coverage commands, all routed through the `swift-mk toolchain`
-# chokepoint so no consumer Makefile names tuist/xcodegen/xcodebuild. Set
-# SWIFT_XCODE_SCHEME to opt in; leave it empty for a plain SwiftPM package (the
-# `swift build`/`swift test` defaults below apply).
+# Xcode app consumers use the toolchain instead of invoking native build tools.
 SWIFT_XCODE_SCHEME ?=
 SWIFT_XCODE_GENERATOR ?= tuist
 SWIFT_XCODE_CONFIGURATION ?= Debug
@@ -539,17 +506,13 @@ SWIFT_XCODE_BUILD_SETTINGS ?=
 SWIFT_XCODE_PREBUILD_CMD ?=
 ifneq ($(strip $(SWIFT_XCODE_SCHEME)),)
 SWIFT_XCODE_CONTAINER_ARG := $(if $(filter xcodegen,$(SWIFT_XCODE_GENERATOR)),--project $(SWIFT_XCODE_PROJECT),--workspace $(SWIFT_XCODE_WORKSPACE))
-# Generate installs external dependencies first; Tuist cannot generate a project
-# whose external SPM packages are unresolved, and xcodegen install is a no-op.
+# Tuist generation requires resolved external SwiftPM packages.
+# The xcodegen install operation does not perform any work.
 SWIFT_GENERATE_CMD ?= "$(SWIFT_MK_BIN)" toolchain install --generator $(SWIFT_XCODE_GENERATOR) && "$(SWIFT_MK_BIN)" toolchain generate --generator $(SWIFT_XCODE_GENERATOR)
 SWIFT_BUILD_CMD ?= "$(SWIFT_MK_BIN)" toolchain build --generator $(SWIFT_XCODE_GENERATOR) $(SWIFT_XCODE_CONTAINER_ARG) --scheme $(SWIFT_XCODE_SCHEME) --configuration $(SWIFT_XCODE_CONFIGURATION) --derived-data-path $(SWIFT_MK_DERIVED_DATA) $(SWIFT_XCODE_BUILD_SETTINGS) $(SWIFT_MK_XCODEBUILD_ARGS)
-# Test runner is decoupled from the generator. An Xcode consumer defaults to the
-# scheme-driven `toolchain test` path, but a hybrid consumer whose tests run as a
-# SwiftPM package (a Tuist overlay used only for generate and a metallib, with the
-# real targets in Package.swift) sets SWIFT_TEST_MODE=spm to test via `swift test`.
-# That sidesteps the Tuist static-framework SPM integration's failure to propagate
-# internal C-target module maps (the EventSource/NIO/_NumericsShims case), which
-# only affects the static-framework test build, never the SwiftPM executable build.
+# Hybrid consumers can run SwiftPM tests independently of the Xcode generator.
+# SwiftPM tests avoid Tuist's static-framework integration when that integration
+# omits internal C-target module maps.
 SWIFT_TEST_MODE ?= xcode
 ifeq ($(strip $(SWIFT_TEST_MODE)),spm)
 SWIFT_TEST_CMD ?= "$(SWIFT_MK_BIN)" toolchain swiftpm test
@@ -568,11 +531,11 @@ SWIFT_DEPLOY_CMD ?=
 SWIFT_ANALYZE_CMD ?=
 SWIFT_AUDIT_EXTRA_CMD ?=
 SWIFT_LOG_AUDIT_CMD ?=
-# Consumer-injected preflight rail: CHECK asserts a requirement the build needs,
-# ENSURE establishes it on a miss, then the check re-runs and a still-failing
-# check fails the run loud. Both empty (the default) leaves the rail inert. The
-# engine owns only the pattern; both commands are opaque consumer strings, e.g.
-# CHECK 'xcrun --find <tool>' with ENSURE '"$(SWIFT_MK_BIN)" toolchain
+# The preflight check tests a consumer requirement before the build.
+# The engine runs a configured ensure command after a failed check and repeats
+# the check. A repeated failure stops the build. Empty commands disable preflight.
+# The engine treats both commands as opaque consumer strings.
+# A consumer can use CHECK 'xcrun --find <tool>' with ENSURE '"$(SWIFT_MK_BIN)" toolchain
 # download-component <ComponentName>'. An empty CHECK with a set ENSURE runs
 # the ensure on every invocation, so that command must be idempotent.
 SWIFT_PREFLIGHT_CHECK_CMD ?=
@@ -587,10 +550,10 @@ SWIFTCHECK_EXTRA_BASELINE ?= .swiftcheck-extra-baseline.jsonl
 SWIFTCHECK_EXTRA_DEFAULT_EXCLUDE_PATHS ?=
 SWIFTCHECK_EXTRA_EXCLUDE_PATHS ?=
 
-# Framework-owned, not a consumer knob: swift-makefile enforces every gate. `override`
-# so a consumer cannot drop, reorder, or substitute a gate even from the make command
-# line (a plain `:=` still loses to a CLI `LINT_GATES=`). log-audit is appended only
-# when the consumer declares SWIFT_LOG_AUDIT_CMD.
+# swift-makefile enforces every gate. The `override` directive prevents
+# consumers from dropping, reordering, or substituting gates through make
+# command-line assignments. A plain `:=` assignment permits a command-line
+# `LINT_GATES=` override.
 override LINT_GATES := lint-swiftlint lint-format lint-complexity lint-deadcode swiftcheck-extra $(if $(strip $(SWIFT_LOG_AUDIT_CMD)),log-audit,)
 
 export SWIFT_MK_ROOT := $(CURDIR)
@@ -660,10 +623,11 @@ export SWIFT_MK_GATE_TOKEN_CMD
 export SWIFT_BUILD_CMD
 export SWIFT_VERIFY_BUILD_CMD
 export SWIFT_VERIFY_TEST_CMD
-# Signing context the swift-mk binary reads when it owns a build (the signing
-# xcconfig, the dead-code coverage build). Consumers set these as plain make
-# variables, so without the export the gate processes never see them and a CI
-# runner with no local xcconfig loses DEVELOPMENT_TEAM inside the coverage build.
+# The swift-mk binary reads these signing variables for the signing xcconfig
+# and the dead-code coverage build. Consumers set these as plain make variables.
+# Gate processes cannot read plain make variables without exports.
+# A CI runner without a local xcconfig loses DEVELOPMENT_TEAM in the coverage
+# build when these variables are not exported.
 export CODE_SIGN_IDENTITY
 export CODE_SIGN_KEYCHAIN
 export CODE_SIGN_STYLE
@@ -675,10 +639,11 @@ export SWIFT_MK_SIGN_TEAM
 export SWIFT_MK_SIGN_STYLE
 export SWIFT_MK_REQUIRE_SIGNING
 export SWIFT_MK_VERIFY_XCCONFIG
-# A consumer builds via Xcode when it declares a scheme or Xcode container; a plain
-# SwiftPM package declares neither. The dead-code gate and the build chokepoint key
-# off this one flag rather than guessing from on-disk project files, so a stray
-# generated .xcodeproj/.xcworkspace never changes behavior.
+# A consumer builds via Xcode when it declares a scheme or Xcode container.
+# A plain SwiftPM package declares neither.
+# The dead-code gate and build chokepoint use this flag instead of detecting
+# project files on disk. Stray generated .xcodeproj or .xcworkspace files do
+# not change build behavior.
 SWIFT_MK_XCODE_BUILD := $(if $(strip $(SWIFT_XCODE_SCHEME))$(strip $(SWIFT_XCODE_WORKSPACE))$(strip $(SWIFT_XCODE_PROJECT)),1,)
 export SWIFT_MK_XCODE_BUILD
 export SWIFT_TEST_CMD
@@ -704,14 +669,12 @@ export SWIFT_MK_UPDATE_INCLUDE_DIRTY
 export SWIFT_MK_UPDATE_VALIDATE
 export SWIFT_MK_UPDATE_DRY_RUN
 
-# SWIFT_MK_DERIVED_DATA is an override, so only rm a path that physically resolves
-# to a real subpath of the checkout; refuse anything outside so an override cannot
-# rm an arbitrary path. `abspath` is lexical (collapses `..`) but does not resolve
-# symlinks, so also resolve the physical path of the checkout root and of the
-# target's parent with `pwd -P`; a symlinked component then resolves to its real
-# location and is refused if that lands outside the root. Also refuse a target that
-# exists and is not a directory, so an override pointing at a tracked file (for
-# example $(CURDIR)/Package.swift) is not deleted.
+# clean restricts deletion of SWIFT_MK_DERIVED_DATA to paths below the
+# checkout root. abspath collapses .. without resolving symlinks.
+# clean uses pwd -P to resolve the checkout root and target parent before
+# comparing paths. A parent symlink outside the checkout fails the
+# containment check. clean refuses existing non-directory targets selected
+# by the override, including $(CURDIR)/Package.swift.
 .PHONY: clean
 clean:
 	@if [ -f Package.swift ]; then swift package clean >/dev/null 2>&1 || true; fi; \
@@ -734,23 +697,21 @@ swift-mk-bin:
 	@if [ -x "$(SWIFT_MK_BIN)" ]; then "$(SWIFT_MK_BIN)" trace begin 2>/dev/null || true; fi
 	@SWIFT_MK_ROOT="$(CURDIR)" bash "$(SWIFT_MK_HELPER_DIR)/swift-mk-build.sh" resolve
 
-# File rule so a missing engine binary is built on demand. SWIFT_MK_BIN is a normal
-# prerequisite of the build freshness stamp (SWIFT_MK_FRESH_INPUTS in swift-build.mk),
-# and nothing else provides a rule for the file itself: the phony swift-mk-bin above is
-# order-only, so on a fresh worktree that never ran it, `make build` and `make app`
-# fail with "No rule to make target .make/swift-mk" before the order-only prerequisite
-# can run. This rule delegates to swift-mk-bin as an order-only prerequisite and adds
-# no recipe of its own, so make builds the binary through the single swift-mk-bin
-# invocation instead of a second resolver. make runs it only when the binary is absent
-# (an existing file with no normal prerequisites is already up to date), and under
-# `make -j` the one phony invocation serializes the resolve, so the file rule and the
-# stamp's own `| swift-mk-bin` never run the unlocked resolver concurrently.
+# The build freshness stamp lists SWIFT_MK_BIN as a normal prerequisite.
+# Without this file rule, make build and make app fail in a fresh worktree
+# with "No rule to make target .make/swift-mk" before swift-mk-bin can run.
+# The file rule builds a missing binary by delegating to swift-mk-bin as
+# an order-only prerequisite. The file rule has no recipe of its own.
+# An existing binary has no normal prerequisites and is already up to date.
+# make still runs swift-mk-bin to check binary freshness when the file exists.
+# Under make -j, the file rule and freshness stamp cannot run the unlocked
+# resolver concurrently because make runs their shared prerequisite once.
 $(SWIFT_MK_BIN): | swift-mk-bin
 
-# Render the Xcode file-header macros from the current git identity so newly
-# created files are stamped with this author. swift-mk reads the git identity,
-# renders the template, and rewrites the plist only when it changes. Consumers
-# invoke this on demand; swift-makefile's own Makefile runs it on every build.
+# xcode-file-header renders Xcode file-header macros from the current git
+# identity for newly created files. The renderer rewrites the plist only when
+# its content changes. Consumers can invoke the target on demand.
+# swift-makefile's own Makefile invokes the target on every build.
 xcode-file-header: swift-mk-bin
 	@"$(SWIFT_MK_BIN)" xcode-file-header \
 		--templates-dir "$(SWIFT_MK_SELF_DIR)/templates/xcode" \
