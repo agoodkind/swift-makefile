@@ -709,7 +709,7 @@ jobs:
           HOSTED_RESULT: ${{ needs.extra-targets-hosted.result }}
         # extra-targets-pool succeeds without running bespoke targets when no bespoke
         # targets exist or a gate did not pass.
-        # A route-extra-targets failure skips extra-targets-pool.
+        # extra-targets-pool skips when route-extra-targets fails or is cancelled.
         # The aggregator passes when the pool or hosted retry succeeds.
         # The aggregator fails otherwise.
         # A bespoke target that fails on both attempts fails the aggregator.
