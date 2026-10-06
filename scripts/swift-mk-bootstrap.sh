@@ -64,8 +64,10 @@ swift_mk_lock_dir() {
     elif command -v sha1sum >/dev/null 2>&1; then
         digest=$(printf '%s' "${consumer_path}" | sha1sum | cut -d' ' -f1)
     else
-        # Locking remains necessary when no digest tool is available.
-        # Different consumer paths can produce the same sanitized lock name.
+        # The sanitized name provides a lock when no digest tool is available.
+        # Without a lock, concurrent parses of one consumer could run unserialized.
+        # Different consumer paths can share a sanitized name.
+        # A shared name makes one consumer wait for the other.
         digest=$(printf '%s' "${consumer_path}" | tr -c 'A-Za-z0-9' '-')
     fi
     printf '%s/swift-mk-lock-%s' "${TMPDIR:-/tmp}" "${digest}"
@@ -119,10 +121,8 @@ acquire_lock() {
         holder=$(cat "${LOCK_DIR}/pid" 2>/dev/null || printf '')
         if [[ -n "${holder}" ]] && ! kill -0 "${holder}" 2>/dev/null; then
             # A dead holder cannot release the lock.
-            # Concurrent parses can enter the critical section if both read the same dead
-            # PID and the second rm deletes the lock acquired by the first parse.
-            # An atomic rename lets one contender claim the stale directory.
-            # A competing rename fails while the source path is absent.
+            # When two contenders run mv before either recreates LOCK_DIR, the second
+            # mv fails because the first mv removed the source path.
             if mv "${LOCK_DIR}" "${LOCK_DIR}.stale.$$" 2>/dev/null; then
                 rm -rf "${LOCK_DIR}.stale.$$"
                 continue
