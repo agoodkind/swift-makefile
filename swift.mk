@@ -131,7 +131,7 @@ endif
 # The swiftcheck-extra `fragile_package_path` rule requires the self-reference
 # symlink instead of a bare `..`.
 #
-# The toplevel guard prevents the self-reference from targeting a subdirectory.
+# The top-level guard prevents the self-reference from targeting a subdirectory.
 # Recursive `make -C <subdir>` uses the repository's common directory with
 # CURDIR set to the subdirectory. A self-reference created under the
 # subdirectory could replace the SWIFT_MK_DEV_DIR symlink when the names match.
@@ -338,7 +338,7 @@ endif
 # bootstrap.mk. swift.mk does not replace an existing config.
 # The top-level make fetches a missing config once before the engine starts
 # inner builds with _SWIFT_MK_PROVISIONED=1.
-# Provisioned sub-makes use the config fetched by the top-level make.
+# Provisioned sub-makes require the config at $(SWIFT_MK_MISE_CONFIG).
 # A provisioned make reports an incomplete engine snapshot when the config
 # is missing.
 ifneq ($(wildcard $(SWIFT_MK_MISE_CONFIG)),)
@@ -376,10 +376,9 @@ PERIPHERY_DEFAULT_EXCLUDE_PATHS ?=
 PERIPHERY_EXCLUDE_PATHS ?=
 
 OSV_SCANNER ?= osv-scanner
-# The audit avoids walking globally excluded trees (core.excludesFile) by
-# discovering lockfiles through git's effective ignore rules
-# (`git ls-files --exclude-standard`) and passing the lockfiles as -L paths
-# instead of --recursive.
+# The audit discovers lockfiles with `git ls-files --exclude-standard` and
+# passes each lockfile as an -L path without --recursive.
+# The scanner does not walk trees excluded by core.excludesFile.
 override OSV_SCANNER_ARGS := --allow-no-lockfiles --config $(SWIFT_MK_OSV_CONFIG)
 
 LINT_CONCURRENCY ?= auto
