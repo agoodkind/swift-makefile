@@ -190,7 +190,7 @@ enum LintPolicy {
   ) -> Bool {
     guard LintResources.ensure(context: context) else {
       Output.log("\(name): FAILED")
-      Output.log("  The SwiftLint config was not written. The error above states the cause.")
+      Output.log("  swift-mk could not write the SwiftLint configuration.")
       GateStatus.last = 1
       Baseline.recordFailedGate(name)
       return false

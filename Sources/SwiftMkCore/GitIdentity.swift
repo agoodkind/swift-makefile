@@ -15,7 +15,6 @@ public struct GitIdentity: Equatable, Sendable {
   public let name: String
   public let email: String
 
-  /// Why `git config user.name` or `user.email` could not be read.
   public enum LoadFailure: Error, Equatable, Sendable {
     case missingEmail
     case missingName
@@ -26,10 +25,7 @@ public struct GitIdentity: Equatable, Sendable {
     self.email = email
   }
 
-  /// Read `user.name` and `user.email` from git config in `directory`.
-  ///
-  /// `environment` overrides the child environment so tests can hide a host
-  /// global gitconfig. An empty name or email is a failure, not a skip.
+  /// An empty name or email fails identity loading.
   public static func load(
     directory: String,
     environment: [String: String] = [:]
