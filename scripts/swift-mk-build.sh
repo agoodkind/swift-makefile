@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-# Build and cache the swift-mk tooling binary. Runs before the binary exists, so
-# it stays shell. Modeled on swift-mk-swiftcheck-extra.sh.
+# Builds the swift-mk binary and copies it to .make/swift-mk. This script is
+# shell because it runs before the binary exists.
 
 swift_mk_output_path() {
     printf "%s\n" "${SWIFT_MK_BIN:-${SWIFT_MK_ROOT:-${PWD}}/.make/swift-mk}"
@@ -44,10 +44,9 @@ swift_mk_dependency_hash() {
     } | awk '{ print $1 }' | LC_ALL=C sort | shasum | awk '{ print $1 }'
 }
 
-# Content key for the built tool binary: fold the source that produces it and the
-# active toolchain identity into one stable string. Reuse keys on content, not file
-# mtimes, so a source or toolchain change rebuilds while a binary restored with any
-# mtime neither forces a spurious rebuild nor serves a stale binary.
+# Prints the content key of the binary: a hash of the source files, the build
+# configuration, and a hash of the toolchain identity. swift_mk_resolve_bin
+# compares keys and ignores file modification times.
 swift_mk_content_key() {
     local package_path
     local config
@@ -56,12 +55,8 @@ swift_mk_content_key() {
     local toolchain_id
 
     package_path="$1"
-    # The product's build configuration is part of its identity: a release binary must
-    # not be reused when the consumer switches to debug, so fold it into the key.
     config="${SWIFT_MK_BUILD_CONFIG:-release}"
 
-    # Prefer the committed Package.resolved, else the .swiftpm one, recorded as a
-    # package-relative path so both the digest and the path stay stable across machines.
     resolved_rel=""
     if [[ -f "${package_path}/Package.resolved" ]]; then
         resolved_rel="Package.resolved"
@@ -69,15 +64,11 @@ swift_mk_content_key() {
         resolved_rel=".swiftpm/configuration/Package.resolved"
     fi
 
-    # Hash each input as "<content-digest>  <package-relative-path>", so a
-    # content-preserving rename changes the key (the path moved) while the digest stays
-    # deterministic across machines because the paths are package-relative, never absolute
-    # temp-dir paths. Run relative to the package so shasum emits relative paths. Inputs:
-    # Package.swift, the resolved lockfile, this build script (the CI toolchain-cache key
-    # folds it too), and every file under Sources (Swift sources plus bundled
-    # Resources/*.yml,*.json,*.toml that compile into the binary). find under pipefail
-    # must not abort when Sources is absent; the null delimiter keeps a path with
-    # whitespace from splitting an entry; sort the full lines so the key is order-stable.
+    # Each hashed line is "<digest>  <path relative to the package>". A renamed
+    # file changes the hash. Two machines with different checkout paths compute
+    # equal hashes. The inputs are Package.swift, the resolved lockfile, this
+    # script, and every file under Sources. `|| true` covers a missing Sources
+    # directory under pipefail.
     source_hash=$(
         cd "${package_path}" 2>/dev/null || exit 0
         {
@@ -88,8 +79,6 @@ swift_mk_content_key() {
         } | xargs -0 shasum 2>/dev/null | LC_ALL=C sort | shasum | awk '{ print $1 }'
     )
 
-    # Fold the active toolchain identity so a compiler or Xcode-bundle change rebuilds
-    # even when no source changed.
     toolchain_id=$(
         {
             xcode-select -p 2>/dev/null || true
@@ -123,10 +112,9 @@ swift_mk_pool_cache_args() {
     dependency_hash=$(swift_mk_dependency_hash "${package_path}")
     swiftpm_cache_path="${pool_cache_root}/spm/${dependency_hash}/swiftpm-cache"
     mkdir -p "${swiftpm_cache_path}"
-    # SwiftPM CLI has no separate SourcePackages checkout flag. Keep the
-    # per-consumer scratch path and share only SwiftPM's supported dependency cache.
-    # Disable the manifest DB because SwiftPM's shared manifest cache lives under
-    # --cache-path and is write-heavy.
+    # The pool shares only the SwiftPM dependency cache; each consumer has its
+    # own scratch path. The manifest cache is off because SwiftPM stores it under
+    # --cache-path and writes to it often.
     printf "%s\n" "--cache-path"
     printf "%s\n" "${swiftpm_cache_path}"
     printf "%s\n" "--manifest-cache"
@@ -156,19 +144,13 @@ swift_mk_build_from_repo() {
         printf "swift-mk: package %s not present\n" "${package_path}"
         return 1
     fi
-    # Capture the content key BEFORE compiling. Recomputing it after the build would
-    # open a TOCTOU gap: a source edit during compilation would label the just-built
-    # binary with the post-edit key, so the next resolve would reuse a binary that does
-    # not match the edited source. Keying on the pre-build inputs labels the binary with
-    # exactly what produced it, so a mid-build edit leaves a key mismatch and rebuilds.
+    # Compute the key before the build. A source edit during the build then
+    # produces a key mismatch on the next resolve, and the binary is rebuilt.
     content_key=$(swift_mk_content_key "${package_path}")
     mkdir -p "$(dirname "${output_path}")"
-    # Build into a per-consumer scratch directory under the consumer's .make, not
-    # the package's own .build. In dev-dir mode every consumer (and swift-makefile's
-    # own dev work) shares one swift-makefile checkout, so building into that
-    # checkout's .build serializes them all on a single SwiftPM lock and leaves the
-    # binary missing whenever another build holds it. A scratch path under the
-    # consumer isolates each consumer and each worktree.
+    # The scratch directory is under the .make of the consumer. In dev-dir mode
+    # every consumer builds one swift-makefile checkout, and a build into the
+    # .build of that checkout would wait on one SwiftPM lock.
     scratch_path="$(dirname "${output_path}")/swift-mk-build"
     pool_cache_args=()
     while IFS= read -r arg; do
@@ -197,10 +179,8 @@ swift_mk_build_from_repo() {
     output_dir="$(dirname "${output_path}")"
     cp "${bin_path}" "${output_path}"
     chmod +x "${output_path}"
-    # SwiftPM writes each module's resource bundle next to the binary in the build
-    # directory, and Bundle.module resolves those bundles relative to the running
-    # executable. Copy them beside the cached binary, or a gate that reads an
-    # engine-owned config (the SwiftLint template) finds no bundle and fails.
+    # swift-mk reads its lint configs from a resource bundle in the directory of
+    # the running executable. Copy every bundle from the build directory.
     shopt -s nullglob
     for bundle_path in "${bin_dir}"/*.bundle; do
         bundle_name="$(basename "${bundle_path}")"
@@ -211,18 +191,15 @@ swift_mk_build_from_repo() {
         cp -R "${bundle_path}" "${output_dir}/${bundle_name}"
     done
     shopt -u nullglob
-    # A copied arm64 binary can carry a stale linker signature and a provenance
-    # xattr that make the kernel kill it on launch ("Killed: 9"). Clear the xattrs
-    # and re-sign ad-hoc so the cached binary runs.
+    # The kernel can kill a copied arm64 binary on launch ("Killed: 9") because
+    # of a stale linker signature or a provenance xattr. Clear the xattrs and
+    # sign the copy ad hoc.
     if command -v xattr >/dev/null 2>&1; then
         xattr -c "${output_path}" 2>/dev/null || true
     fi
     if command -v codesign >/dev/null 2>&1; then
         codesign --force --sign - "${output_path}" >/dev/null 2>&1 || true
     fi
-    # Record the content key captured before the build, so a later resolve reuses the
-    # binary only when the source and toolchain that produced it are unchanged,
-    # independent of file mtimes.
     printf '%s\n' "${content_key}" > "${output_path}.key"
 }
 
@@ -235,12 +212,9 @@ swift_mk_resolve_bin() {
 
     output_path=$(swift_mk_output_path)
 
-    # Trust a CI-provided binary that already launched under its probe. CI exports
-    # SWIFT_MK_BIN_VERIFIED=1 after building or restoring the toolchain binary and
-    # running its `--help` launch probe, so the make-driven resolve reuses it instead
-    # of building a second copy. SWIFT_MK_BIN being set is not itself the signal:
-    # swift.mk sets it on every invocation, so gating on it would never rebuild a
-    # stale local binary.
+    # CI exports SWIFT_MK_BIN_VERIFIED=1 after it builds or restores the binary
+    # and runs `swift-mk --help`. Reuse that binary without a key check.
+    # SWIFT_MK_BIN is not the signal, because swift.mk sets it on every run.
     if [[ "${SWIFT_MK_BIN_VERIFIED:-}" == "1" && -x "${output_path}" ]]; then
         return
     fi
@@ -252,10 +226,6 @@ swift_mk_resolve_bin() {
     if [[ -f "${key_path}" ]]; then
         stored_key=$(cat "${key_path}")
     fi
-    # Reuse the existing binary only when it is executable and its stored content key
-    # matches the freshly computed one; otherwise rebuild (which rewrites the key).
-    # The key folds this script's own bytes, so a binary cached before the resource
-    # bundles were copied beside it carries a different key and rebuilds.
     if [[ -x "${output_path}" && "${stored_key}" == "${computed_key}" ]]; then
         return
     fi
