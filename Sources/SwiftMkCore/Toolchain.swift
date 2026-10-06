@@ -10,7 +10,7 @@ import Foundation
 
 // MARK: - Toolchain
 
-/// Use Toolchain for tuist, xcodegen, and xcodebuild operations.
+/// Only Toolchain and its extensions run tuist, xcodegen, or xcodebuild.
 /// Build commands select a Tuist workspace or an xcodegen project explicitly.
 /// Tuist workspace dependencies may be absent from the app project.
 public enum Toolchain {
@@ -179,6 +179,7 @@ public enum Toolchain {
   }
 
   /// `swiftlint analyze` reads the compiler log at `logPath`.
+  /// Compilation requires gate proof.
   @discardableResult
   public static func buildWritingLog(
     _ request: Request, logPath: String, clean: Bool = false
@@ -399,7 +400,7 @@ extension Toolchain {
     return args
   }
 
-  /// Empty values select the default subdirectory under $HOME/Library/Caches/swift-mk.
+  /// Empty values select a subdirectory under the default shared-cache root.
   /// Pass honorDisableToken: false for engine-owned caches without a consumer opt-out.
   /// With honorDisableToken false, disable tokens select the default cache path.
   /// This function does not create the directory.
