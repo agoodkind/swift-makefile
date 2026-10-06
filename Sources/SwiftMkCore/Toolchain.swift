@@ -253,7 +253,7 @@ public enum Toolchain {
 
   // MARK: Argument assembly (exposed for tests)
 
-  /// `--derived-data-path` uses the same path as the build and coverage paths.
+  /// `tuist test` includes `--derived-data-path` only for a caller-supplied path.
   /// `tuist test` passes the `KEY=value` settings after `--` to xcodebuild.
   static func tuistTestArguments(_ request: Request) -> [String] {
     var args = [
