@@ -1,42 +1,41 @@
 #!/usr/bin/env bash
-# swift-mk-bootstrap.sh: provision the swift-makefile engine snapshot into .make.
+# The bootstrap script provisions the swift-makefile engine snapshot into .make.
 #
-# bootstrap.mk delegates here so fetch policy lives in a fetched file rather
-# than in the copy each consumer commits. A policy change therefore ships to
-# every consumer on its next parse, with no consumer pull request.
+# Fetch policy is defined in this fetched script instead of the bootstrap.mk
+# copy each consumer commits. bootstrap.mk delegates fetching to this script.
+# Each consumer receives policy changes on its next parse without a pull request.
 #
-# Provisioning is staged: one tarball extracts into a temp directory, the
-# required assets are verified there, and only then is the tree under .make
-# replaced. Nothing is removed before its replacement exists.
+# The script extracts one tarball into a temporary directory and verifies the
+# required assets before replacing .make. The script removes the previous .make
+# tree only after the replacement passes verification.
 #
-# This script lives inside the tree it replaces, so it re-executes from a
-# temporary copy before touching .make. A running bash script whose file is
-# rewritten underneath it can misread its own remaining bytes.
+# The script executes from a temporary copy because provisioning replaces the
+# installed script inside .make. Bash can misread remaining bytes when its
+# running script file is rewritten.
 
 set -euo pipefail
 
 SWIFT_MK_API_REPO="${SWIFT_MK_API_REPO:-agoodkind/swift-makefile}"
 SWIFT_MK_API_REF="${SWIFT_MK_API_REF:-main}"
-# Internal override, in the same category as SWIFT_MK_API_REPO and
-# SWIFT_MK_API_REF. Tests point it at a local server; consumers never set it.
+# SWIFT_MK_CODELOAD_BASE is an internal override like SWIFT_MK_API_REPO and
+# SWIFT_MK_API_REF. Tests use a local server; consumers never set the override.
 SWIFT_MK_CODELOAD_BASE="${SWIFT_MK_CODELOAD_BASE:-https://codeload.github.com}"
 SWIFT_MK_DEV_DIR="${SWIFT_MK_DEV_DIR:-}"
 SWIFT_MK_MODULES="${SWIFT_MK_MODULES:-}"
 
 MAKE_DIR=".make"
-# A backstop, not the thing that decides: FETCH_SPEED_LIMIT/FETCH_SPEED_TIME
-# below abort a stalled transfer in a few seconds regardless of this value.
-# 60 was inherited from the old snapshot fetch in swift.mk with no derivation;
-# a real codeload download measures 2.06-2.4 seconds on a good link, so 15 is
-# about 6x that with headroom for a slow or roaming link, catching only a
-# transfer that keeps progressing but pathologically slowly.
+# FETCH_MAX_TIME bounds transfers that continue above the low-speed threshold.
+# FETCH_SPEED_LIMIT and FETCH_SPEED_TIME abort stalled transfers sooner.
+# Measured codeload downloads took 2.06-2.4 seconds on a good link.
+# The 15-second limit is about six times that duration to allow slower or
+# roaming links.
 FETCH_MAX_TIME=15
 FETCH_CONNECT_TIMEOUT=2
-# Abort when throughput stays under this floor for FETCH_SPEED_TIME seconds,
-# rather than waiting for FETCH_MAX_TIME to elapse. Measured: a server that
-# accepts and then stalls, or accepts and never sends headers, aborts in 3.0s
-# with these flags versus 30.0s+ without; a transfer progressing at 2 KB/s
-# (above the 1 KB/s floor) completes normally and is never aborted.
+# curl aborts after FETCH_SPEED_TIME seconds below FETCH_SPEED_LIMIT instead
+# of waiting for FETCH_MAX_TIME. Measurements recorded 3.0-second aborts for
+# servers that accepted connections but stalled or never sent headers, compared
+# with 30.0 seconds or more without the flags. A measured 2 KB/s transfer
+# completed above the 1 KB/s floor.
 FETCH_SPEED_LIMIT=1024
 FETCH_SPEED_TIME=3
 MARKER_PATH="${MAKE_DIR}/.swift-mk-snapshot-ref"
@@ -44,18 +43,18 @@ VALIDATION_CONNECT_TIMEOUT=2
 VALIDATION_MAX_TIME=3
 REUSE_WINDOW_SECONDS=3600
 
-# LOCK_DIR serializes concurrent parses of one consumer directory. It is a
-# directory because mkdir is the atomic create-if-absent primitive available
-# everywhere this runs.
+# LOCK_DIR serializes concurrent parses of one consumer directory. The lock
+# uses a directory because mkdir creates it atomically when it does not exist
+# on every supported platform.
 #
-# It lives OUTSIDE .make, in the temporary directory, keyed by a digest of the
-# consumer's absolute path. Inside .make it would break the rule that a 304
-# writes nothing: creating and removing the lock changes .make's own directory
-# mtime on every run, including runs that touch no asset.
+# The lock directory is outside .make, under the temporary directory.
+# The directory suffix uses a digest of the consumer's absolute path, or a
+# sanitized path when no digest tool exists. Creating or removing a lock inside
+# .make would change .make's directory mtime even after a 304 response.
+# The 304 response requires no writes under .make.
 #
-# Keying by path digest keeps it per-consumer, which is what matters, and a
-# lock that does not survive a reboot is correct anyway: no parse survives one
-# either.
+# Each consumer path has a separate lock. Reboots end every parse, so the
+# temporary lock does not need to survive a reboot.
 swift_mk_lock_dir() {
     local consumer_path
     local digest
@@ -65,47 +64,44 @@ swift_mk_lock_dir() {
     elif command -v sha1sum >/dev/null 2>&1; then
         digest=$(printf '%s' "${consumer_path}" | sha1sum | cut -d' ' -f1)
     else
-        # No digest tool. Fall back to a sanitized path, which is longer but
-        # just as unique, rather than dropping the lock entirely.
+        # Locking remains necessary when no digest tool is available.
+        # Different consumer paths can produce the same sanitized lock name.
         digest=$(printf '%s' "${consumer_path}" | tr -c 'A-Za-z0-9' '-')
     fi
     printf '%s/swift-mk-lock-%s' "${TMPDIR:-/tmp}" "${digest}"
 }
 LOCK_DIR=$(swift_mk_lock_dir)
-# LOCK_WAIT_SECONDS bounds how long a second parse waits for the first. A real
-# provision measures a few seconds, so this is generous, and a wait that
-# reaches it means something is wrong rather than merely slow.
+# Provisioning measures a few seconds. The timeout allows extra time.
+# A wait that exhausts the timeout indicates a problem rather than slow
+# provisioning.
 LOCK_WAIT_SECONDS=30
 
-# acquire_lock serializes everything that reads the marker or writes under
-# .make, for the whole lifetime of this process.
+# The lock protects marker reads and subsequent writes under .make until
+# process exit.
 #
-# Without it two parses in the same directory race. Each stages its own archive
-# and swaps, so .make.next and .make.previous collide and .make can end up a
-# mix of two trees, recorded as whichever marker write finished last. Every
-# later run then validates that mixed tree against one archive's ETag, receives
-# 304, and keeps it indefinitely. Both parses exit 0, so nothing reports it.
+# Concurrent parses can mix two archive trees because each parse stages and
+# swaps an archive using .make.next and .make.previous. The last marker write
+# records one archive's ETag. Later non-CI parses can reuse the mixed tree
+# indefinitely on 304 responses if the asset checks pass and the upstream
+# ETag remains unchanged. Both parses can exit 0 without reporting the mixed tree.
 #
-# mkdir is the primitive because it is atomic on every filesystem this runs on
-# and needs no flock, which macOS does not ship. The holder's pid goes in the
-# directory so a lock left by a killed process can be reclaimed rather than
-# blocking every future parse: the reclaim races, but only via rename, so
-# exactly one contender wins.
+# mkdir provides atomic lock creation on every filesystem this script uses.
+# macOS does not ship flock.
+# A recorded process ID permits stale-lock reclamation after a holder dies.
+# Later parses require reclamation because a dead holder cannot release the lock.
+# Rename is atomic. A delayed contender can rename a replacement lock created
+# after another contender renames the stale directory.
 acquire_lock() {
     local waited=0
     local holder=""
     local mkdir_error=""
     while true; do
-        # Separate "the lock is held" from "the lock cannot be created here".
-        # Only the first is contention worth waiting out. The second is a local
-        # setup problem, such as an unwritable or missing TMPDIR, and waiting
-        # the full timeout for it reports a conflict that does not exist while
-        # hiding the real cause.
+        # Only contention on an existing lock warrants waiting. A missing or
+        # unwritable TMPDIR is a local setup problem. Waiting for that failure would
+        # report a lock conflict instead of the creation error.
         if mkdir_error=$(mkdir "${LOCK_DIR}" 2>&1); then
-            # A lock whose pid was never recorded can never be recognized as
-            # stale, so every later parse would wait out the full timeout and
-            # fail. Treat a failed write as a failed acquisition and hand the
-            # lock straight back.
+            # acquire_lock cannot identify a stale lock without a recorded process ID.
+            # Later parses would exhaust the timeout and fail.
             if ! printf '%s\n' "$$" >"${LOCK_DIR}/pid" 2>/dev/null; then
                 rmdir "${LOCK_DIR}" 2>/dev/null || rm -rf "${LOCK_DIR}"
                 printf 'error: could not record the lock holder in %s: a local setup problem, not a lock conflict\n' \
@@ -122,22 +118,19 @@ acquire_lock() {
 
         holder=$(cat "${LOCK_DIR}/pid" 2>/dev/null || printf '')
         if [[ -n "${holder}" ]] && ! kill -0 "${holder}" 2>/dev/null; then
-            # The recorded holder is gone, so nobody will ever release this
-            # lock. Claim it by RENAMING it aside rather than removing it in
-            # place. Two parses can read the same dead pid, and with rm both
-            # would delete: the first would drop the stale lock and win it, and
-            # the second would then delete the first's LIVE lock and enter the
-            # critical section alongside it. rename is atomic, so exactly one
-            # contender moves that directory and the loser's rename fails
-            # against a name that is already gone.
+            # A dead holder cannot release the lock.
+            # Concurrent parses can enter the critical section if both read the same dead
+            # PID and the second rm deletes the lock acquired by the first parse.
+            # An atomic rename lets one contender claim the stale directory.
+            # A competing rename fails while the source path is absent.
             if mv "${LOCK_DIR}" "${LOCK_DIR}.stale.$$" 2>/dev/null; then
                 rm -rf "${LOCK_DIR}.stale.$$"
                 continue
             fi
-            # Someone else reclaimed it first. Fall through to the wait rather
-            # than spinning: a reclaim that keeps failing, against an immutable
-            # lock say, would otherwise loop forever without advancing the
-            # timeout.
+            # Another contender can reclaim the lock before the rename.
+            # An immutable lock directory can also prevent reclamation.
+            # The wait advances the timeout to prevent endless retries after a failed
+            # rename.
         fi
 
         if (( waited >= LOCK_WAIT_SECONDS )); then
@@ -154,8 +147,9 @@ release_lock() {
     rm -rf "${LOCK_DIR}"
 }
 
-# Re-execute from a temp copy so replacing this file mid-run is safe. The guard
-# variable stops the copy from re-executing itself.
+# The temporary copy prevents replacement of the original script from
+# disrupting execution.
+# The guard prevents recursive re-execution.
 reexec_from_temp_copy() {
     local temp_copy
     if [[ -n "${SWIFT_MK_BOOTSTRAP_REEXEC:-}" ]]; then
@@ -167,9 +161,8 @@ reexec_from_temp_copy() {
     SWIFT_MK_BOOTSTRAP_REEXEC=1 exec bash "${temp_copy}" "$@"
 }
 
-# A single-line, length-capped excerpt of a captured stderr log, so a failure
-# message carries a concrete reason (a 403 body, a DNS error, a tar format
-# complaint) instead of one generic sentence for every kind of failure.
+# Failure messages use stderr excerpts to distinguish a 403 body, a DNS
+# error, and a tar format error.
 stderr_sample() {
     tr '\n' ' ' < "$1" | cut -c1-200
 }
@@ -178,10 +171,10 @@ required_assets() {
     printf '%s\n' "swift.mk"
     printf '%s\n' "Package.swift"
     printf '%s\n' "scripts/swift-mk-build.sh"
-    # This script's own successor. Without it, assets_complete can read true on a
-    # tree whose helper is missing or stale, so a warm consumer with a matching
-    # etag never re-provisions and keeps running whatever helper it already has,
-    # even after a newer one ships upstream.
+    # A matching etag can prevent re-provisioning when assets_complete accepts
+    # a tree with a missing or stale bootstrap helper.
+    # The consumer can continue executing its existing helper after an upstream
+    # update if the required assets omit the bootstrap successor.
     printf '%s\n' "scripts/swift-mk-bootstrap.sh"
     local module_name
     for module_name in ${SWIFT_MK_MODULES}; do
@@ -195,9 +188,7 @@ assets_complete() {
     local asset_path
     while IFS= read -r asset_name; do
         asset_path="${base_dir}/${asset_name}"
-        # -s alone is true for a non-empty directory as well as a file, so a
-        # required asset path that is actually a directory would pass. -f
-        # requires it to be a regular file.
+        # A required asset that is a directory can pass the -s check.
         if [[ ! -f "${asset_path}" || ! -s "${asset_path}" ]]; then
             return 1
         fi
@@ -205,11 +196,9 @@ assets_complete() {
     return 0
 }
 
-# stage_fetch_and_verify downloads the pinned ref's archive into stage_root and
-# extracts it into stage_dir. Every failure path prints the exit code and a
-# short stderr excerpt from the command that actually failed, so a 403, a DNS
-# failure, and a corrupt tarball each leave a distinct diagnostic instead of
-# one generic message. Nothing under .make is touched here.
+# HTTP 403 responses, DNS failures, and corrupt archives produce distinct
+# diagnostics from HTTP statuses, command exit codes, and short stderr excerpts.
+# stage_fetch_and_verify does not modify .make.
 stage_fetch_and_verify() {
     local stage_root="$1"
     local stage_dir="$2"
@@ -220,11 +209,10 @@ stage_fetch_and_verify() {
     local curl_status=0
     local tar_status=0
 
-    # --speed-limit/--speed-time abort on stalled throughput rather than
-    # waiting for --max-time to elapse: curl aborts once the transfer
-    # averages under FETCH_SPEED_LIMIT bytes/sec for FETCH_SPEED_TIME seconds.
-    # --max-time stays as the backstop for a transfer that keeps progressing
-    # but pathologically slowly.
+    # curl aborts stalled transfers once throughput averages below
+    # FETCH_SPEED_LIMIT bytes per second for FETCH_SPEED_TIME seconds.
+    # The speed timeout avoids waiting for --max-time to expire.
+    # --max-time bounds transfers that continue making slow progress.
     status_code=$(curl -sS --connect-timeout "${FETCH_CONNECT_TIMEOUT}" \
         --speed-limit "${FETCH_SPEED_LIMIT}" --speed-time "${FETCH_SPEED_TIME}" \
         --max-time "${FETCH_MAX_TIME}" \
@@ -259,23 +247,21 @@ stage_fetch_and_verify() {
     return 0
 }
 
-# The snapshot already carries the engine's own config dotfiles, so the renamed
-# targets swift.mk expects (its shared SwiftLint, swift-format, Periphery, OSV,
-# and mise configs) are local copies rather than five to eight network fetches
-# on every parse. Called after every successful install, and again on the 304
-# and offline-reuse paths in main, which never call install_from_stage at all;
-# without that second call site, a consumer whose marker already validates
-# would never re-provision and so would never get the renamed targets created
-# in the first place. A source the snapshot genuinely lacks is skipped here, so
-# swift.mk's own wildcard guard falls through to its network fetch for that one
-# file only.
+# The snapshot includes the engine's config dotfiles. Local copies provide
+# swift.mk's renamed config targets without five to eight network fetches on
+# every parse.
+# install_renamed_configs runs after every successful install and on main's
+# 304 and offline-reuse paths. The reuse paths do not call install_from_stage.
+# A consumer with a valid marker does not re-provision. The reuse paths create
+# renamed targets for consumers with valid markers.
+# swift.mk's wildcard guards fetch each missing config over the network when
+# the snapshot lacks its source.
 #
-# Best-effort, like the chmod step in install_from_stage: none of these targets
-# are in required_assets, and swift.mk's own $(if $(wildcard ...)) guard around
-# each fetch already falls back to a real network fetch for whichever one is
-# still missing, so a copy failure here is worth a loud message but not worth
-# rolling back an otherwise-good install over. Every pair is still attempted
-# even after an earlier one fails, and the failure is never silent.
+# Config copy failures do not roll back an install because required_assets
+# excludes these targets and swift.mk's wildcard guards fetch missing targets.
+# The chmod step in install_from_stage also uses best-effort error handling.
+# Each copy failure produces a warning. A failed pair does not prevent attempts
+# to copy later pairs.
 install_renamed_configs() {
     local pair
     local source_name
@@ -303,19 +289,18 @@ install_renamed_configs() {
     done
 }
 
-# install_from_stage assembles the verified staged tree next to .make,
-# bringing forward the generated runtime files a build depends on (the same
-# set snapshot_clear_engine preserves in scripts/swift-mk-sync.sh), then swaps
-# it into place with mv. Nothing under .make is removed until the replacement
-# is fully staged and verified, so a cp that fails partway, or any other
-# failure before the final mv, leaves the existing .make exactly as it was.
+# install_from_stage stages the replacement beside .make and preserves the
+# generated runtime files that builds require. snapshot_clear_engine in
+# scripts/swift-mk-sync.sh preserves the same files.
+# install_from_stage swaps the verified replacement into .make with mv.
+# install_from_stage does not remove files under .make until the replacement
+# is fully staged and verified. A partial cp failure or another failure before
+# the final mv does not change the existing .make.
 #
-# This function runs inside provision's `if provision; then` condition, and
-# bash suppresses -e for the entire duration of a command used as an if/while
-# condition, including every function and subshell called from it. -e cannot
-# be relied on here at all: every step below that can fail is checked
-# explicitly and returns 1 itself, rather than assuming an unguarded command
-# would abort the function.
+# Bash suppresses -e throughout a command used as an if or while condition,
+# including every function and subshell called from that command.
+# install_from_stage executes within `if provision; then`. Each fallible step
+# checks its status explicitly and returns 1 on failure.
 install_from_stage() {
     local stage_dir="$1"
     local next_dir="${MAKE_DIR}.next"
@@ -332,13 +317,11 @@ install_from_stage() {
     preserve_list="$(dirname "${stage_dir}")/preserve.list"
     preserve_log="$(dirname "${stage_dir}")/preserve.log"
 
-    # If this rm fails partway (a locked or immutable file left over from a
-    # previous run), a stale next_dir would still exist. mkdir -p would then
-    # succeed against it unchanged, cp -R would add every new file alongside
-    # whatever survived, and both assets_complete checks below would still
-    # pass, since every required asset is present, swapping a .make carrying
-    # orphaned stale content into place with exit 0. Checking the status here
-    # is what stops that.
+    # The rm status check prevents a partial removal failure from producing a
+    # successful install with stale content. rm can fail on a locked or immutable
+    # file from a previous run. mkdir -p accepts a surviving next_dir directory.
+    # cp -R adds new files without deleting stale files. Both assets_complete
+    # checks can pass when every required asset exists alongside stale content.
     rm -rf "${next_dir}" "${previous_dir}" 2>"${clear_log}" || clear_status=$?
     if [[ ${clear_status} -ne 0 ]]; then
         printf 'error: could not clear stale staging directories %s and %s (rm exit %d): %s\n' \
@@ -401,8 +384,8 @@ install_from_stage() {
         return 1
     fi
 
-    # Best-effort only: a script that fails to gain +x here still fails loudly
-    # and correctly the moment a build tries to execute it.
+    # chmod is best effort because a build reports an execution error when
+    # the build tries to execute a script that chmod could not make executable.
     find "${next_dir}/scripts" -type f -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
 
     if ! assets_complete "${next_dir}"; then
@@ -428,9 +411,6 @@ install_from_stage() {
         return 1
     fi
 
-    # Re-verify the tree that is now actually at .make, not just the staged
-    # copy the mv came from, and roll back to the previous tree if it somehow
-    # does not hold rather than leaving a known-broken .make in place.
     if ! assets_complete "${MAKE_DIR}"; then
         printf 'error: .make is missing a required asset after the swap\n' >&2
         if [[ -d "${previous_dir}" ]]; then
@@ -454,10 +434,9 @@ current_epoch_seconds() {
     date +%s
 }
 
-# read_marker_field returns one field of the marker. A marker holding only a
-# bare ref name, which the previous engine wrote, has no fields, so every
-# lookup fails and the caller takes the cold path. That is what unfreezes a
-# consumer exactly once.
+# The caller takes the cold path because a marker containing only a bare ref
+# name fails every field lookup. The previous engine wrote this marker format.
+# The cold path unfreezes a consumer exactly once.
 read_marker_field() {
     local field_name="$1"
     local line
@@ -482,21 +461,16 @@ write_marker() {
     } > "${MARKER_PATH}"
 }
 
-# validate_upstream sends a HEAD request instead of a GET. A GET probe would
-# download and discard the full tarball on every run whose upstream moved,
-# doubling the transfer and making the 3 second validation budget dishonest
-# for anything larger than a tiny snapshot; a HEAD carries no body either way,
-# on a 200 or a 304, so the budget stays honest and a moved upstream costs one
-# real transfer (the later provision fetch) instead of two.
+# A GET probe would double the transfer after an upstream change by downloading
+# and discarding the full tarball before the provision fetch.
+# A GET probe would make the 3-second validation budget unreliable for larger
+# snapshots.
+# HEAD responses have no body for HTTP 200 or HTTP 304.
 #
-# curl's stderr is written to log_path instead of discarded with 2>/dev/null:
-# that discard was a control-flow probe whose failure reason selects between
-# serving from disk and falling through to a full provision, and the reason
-# must survive so the caller can report it rather than leaving a probe that
-# fails on every run invisible. On failure this returns curl's own exit
-# status (not a generic 1), so the caller can report the real reason (a
-# timeout, a DNS failure, a refused connection) rather than one generic
-# message for every kind of failure.
+# The caller needs curl's stderr and exit status to report repeated validation
+# failures when choosing disk reuse or full provisioning.
+# curl's exit statuses distinguish timeouts, DNS failures, and refused
+# connections.
 validate_upstream() {
     local known_etag="$1"
     local log_path="$2"
@@ -506,10 +480,10 @@ validate_upstream() {
     if [[ -n "${known_etag}" ]]; then
         header_args=(-H "If-None-Match: ${known_etag}")
     fi
-    # "${header_args[@]+"${header_args[@]}"}" instead of a bare
-    # "${header_args[@]}": under bash 3.2 (still /bin/bash on stock macOS)
-    # with `set -u`, expanding a zero-element array directly raises "unbound
-    # variable". The `+` form only expands the array when it is non-empty.
+    # With `set -u`, Bash 3.2 raises "unbound variable" for a direct expansion of
+    # a zero-element array.
+    # Stock macOS uses Bash 3.2 at /bin/bash.
+    # The `+` form expands the array only when it is non-empty.
     status_code=$(curl -sS --head \
         --connect-timeout "${VALIDATION_CONNECT_TIMEOUT}" \
         --max-time "${VALIDATION_MAX_TIME}" \
@@ -524,8 +498,9 @@ validate_upstream() {
 }
 
 # marker_is_recent reports whether the recorded validation is inside the reuse
-# window. A timestamp in the future, which a backwards clock produces, is not
-# recent, so a bad clock forces a real fetch rather than an unbounded serve.
+# window.
+# A future timestamp forces a fetch to prevent unbounded disk reuse after a
+# backward clock adjustment.
 marker_is_recent() {
     local recorded
     local now
@@ -569,11 +544,10 @@ running_in_ci() {
     [[ "${GITHUB_ACTIONS:-}" == "true" && -n "${GITHUB_RUN_ID:-}" ]]
 }
 
-# A trap set with `trap ... RETURN` is not scoped to the function that set it:
-# it also fires when an enclosing caller later returns, which here would read
-# a stage_root local that has already gone out of scope. The staging work runs
-# in a subshell instead, so its EXIT trap only ever fires once, on that
-# subshell's own exit, and the temp directory is removed exactly then.
+# A RETURN trap persists after the function that sets the trap returns.
+# The trap would read an out-of-scope stage_root when an enclosing caller returns.
+# The staging subshell's EXIT trap removes the temporary directory exactly once
+# at subshell exit.
 provision() {
     local stage_root
     local stage_dir
@@ -619,11 +593,10 @@ main() {
 
     mkdir -p "${MAKE_DIR}"
 
-    # Everything past this point either reads the marker or writes under
-    # .make, so it is all inside the lock. Two parses in one directory would
-    # otherwise collide on .make.next and .make.previous and could swap in a
-    # tree that is half one archive and half another, recorded as whichever
-    # marker write finished last.
+    # The lock protects marker reads and writes under .make.
+    # Concurrent parses could collide on .make.next and .make.previous.
+    # A collision could install a tree assembled from different archives
+    # with the marker from the last completed marker write.
     if ! acquire_lock; then
         return 1
     fi
@@ -641,16 +614,14 @@ main() {
         return 1
     fi
 
-    # In CI the marker is never read, no conditional request is ever sent, and
-    # a failed fetch never falls back to reusing what is on disk: a CI run
-    # provisions unconditionally or fails outright.
+    # CI skips marker reads and conditional requests.
+    # A failed fetch never falls back to reusing the snapshot on disk.
     if ! running_in_ci && assets_complete "${MAKE_DIR}"; then
-        # The etag is only trustworthy against the ref it was recorded for.
-        # If SWIFT_MK_API_REF has changed since, the stored etag describes a
-        # different ref's content: validating against it, or worse, serving
-        # it from disk when the new ref is unreachable, would be a
-        # wrong-content serve. A ref mismatch is treated the same as no
-        # marker at all.
+        # The stored ETag applies only to its recorded ref.
+        # Validating a different SWIFT_MK_API_REF against that ETag could accept
+        # content from the wrong ref.
+        # Reusing the stored snapshot when the new ref is unreachable could
+        # serve content from the wrong ref.
         stored_ref=$(read_marker_field "ref" || printf '')
         if [[ "${stored_ref}" == "${SWIFT_MK_API_REF}" ]]; then
             known_etag=$(read_marker_field "etag" || printf '')
@@ -658,51 +629,42 @@ main() {
     fi
 
     if [[ -n "${known_etag}" ]]; then
-        # A local mktemp failure (a full or unwritable TMPDIR) is not
-        # reuse-eligible: the network was never consulted, so "upstream
-        # unreachable, serving the stale snapshot" would be the wrong story,
-        # and this return fires before the marker_is_recent check below ever
-        # runs, so it cannot reach the reuse branch. It must not be silent,
-        # though, or a purely local, immediately fixable problem would read
-        # as an opaque failure with no cause named.
+        # A local mktemp failure cannot justify offline reuse because validation
+        # has not contacted upstream. A diagnostic must identify the local cause,
+        # such as a full or unwritable TMPDIR.
         if ! validation_log=$(mktemp "${TMPDIR:-/tmp}/swift-mk-validate.XXXXXXXX"); then
             printf 'error: could not create a temporary file for validation (mktemp failed); check TMPDIR access\n' >&2
             return 1
         fi
         status_code=$(validate_upstream "${known_etag}" "${validation_log}") || validate_status=$?
         if [[ "${status_code}" == "304" ]]; then
-            # Deliberately no write of ANY kind, marker included. The reuse
-            # window is a fixed hour from the last real download, not a window
-            # a successful check can slide forward, and a 304 must leave .make
-            # byte-for-byte alone, mtimes included. The renamed configs are not
-            # copied here either: any consumer whose marker carries an etag got
-            # that etag from a provision, and every provision installs the
-            # renamed configs, so a validated tree already has them.
+            # The 304 branch does not write under .make, including its marker.
+            # The reuse window expires one hour after the last download.
+            # Successful validation must not extend the window or change .make
+            # contents or mtimes.
+            # A validated tree already includes the renamed configs because
+            # provisioning recorded its ETag and every provision installs those configs.
             rm -f "${validation_log}"
             return 0
         fi
     fi
 
-    # A validation that did not complete (timeout, DNS failure, connection
-    # refused) or that returned something other than 304 still has one bounded
-    # offline-reuse option: a marker inside the reuse window serves the warm
-    # tree with a warning instead of blocking on a slow network. A marker
-    # outside the window falls through to a real provision attempt instead of
-    # failing here, since a validation timeout only proves the cheap 3 second
-    # check did not finish, not that the full fetch would also fail; only a
-    # provision that itself fails is a real failure.
+    # Offline reuse serves the stored tree with a warning when validation
+    # returns no HTTP status and the marker is within the reuse window.
+    # Reuse avoids a full fetch on a slow network.
+    # Validation failures include timeouts, DNS failures, and refused connections.
+    # An expired marker requires a full provision attempt because a failed
+    # three-second validation does not establish that the full fetch will fail.
     if ! running_in_ci && [[ -n "${known_etag}" && -z "${status_code}" ]] && marker_is_recent; then
-        # Serving from disk writes nothing under .make, for the same reason the
-        # 304 branch writes nothing: the tree being reused already carries the
-        # renamed configs from the provision that recorded its etag.
+        # Offline reuse does not write under .make because the provision that
+        # recorded the ETag already installed the renamed configs.
         serve_from_disk_with_warning "${validate_status}" "${validation_log}"
         rm -f "${validation_log}"
         return 0
     fi
 
-    # A probe that fails on every run must stay visible even on the stale
-    # fall-through path, where the failure only decides whether to log before
-    # a real provision attempt, not whether to serve from disk.
+    # Repeated validation failures require a diagnostic when an expired
+    # marker prevents offline reuse.
     if [[ -n "${validation_log}" ]]; then
         if [[ -z "${status_code}" ]]; then
             printf 'swift-mk: validation curl exit %d: %s; falling through to a full provision\n' \
@@ -711,11 +673,10 @@ main() {
         rm -f "${validation_log}"
     fi
 
-    # `if provision; then` puts provision, and everything it calls, in bash's
-    # -e ignore list for the duration of this call: an unguarded failing
-    # command anywhere under here would not abort on its own. provision and
-    # install_from_stage check every step's exit status explicitly instead of
-    # relying on -e to catch a mid-install failure.
+    # Bash ignores -e in provision and its callees because provision runs
+    # as an if condition. An unguarded failing command does not abort the call.
+    # provision and install_from_stage check each step's exit status
+    # explicitly to detect failures during installation.
     if provision; then
         return 0
     fi
