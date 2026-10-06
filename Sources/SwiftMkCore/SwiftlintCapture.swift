@@ -53,9 +53,8 @@ enum SwiftlintCapture {
     Output.debug(
       "swiftlint: capturing structured findings (only: \(onlyRules.joined(separator: ",")))")
     guard LintResources.ensure(context: context) else {
-      // Setup failed, so the linter never ran. Report a finding no baseline matches
-      // rather than an empty list, which a baseline write would record as clean.
-      let message = "swiftlint: could not materialize SwiftLint config from git identity"
+      // A setup failure must fail the gate even when no source findings exist.
+      let message = "swiftlint: swift-mk could not write the SwiftLint configuration."
       Output.error(message)
       GateStatus.last = 1
       Capture.write(message + "\n", to: rawPath)
@@ -63,8 +62,6 @@ enum SwiftlintCapture {
     }
     Capture.write("", to: rawPath)
     let invocation = invocation(onlyRules: onlyRules, flags: structuredFlags())
-    // One swiftlint run produces the findings, the gate status, and the raw capture,
-    // so all three describe the same invocation and the linter does no duplicate work.
     let result = Shell.run(
       invocation.executable,
       invocation.arguments + ["--reporter", "json"],
@@ -87,9 +84,8 @@ enum SwiftlintCapture {
     let notIgnored = dropGitIgnored(excluded)
     var findings = applyLineRanges(notIgnored)
     if let decodeError {
-      // A non-empty, undecodable result is unknown, not clean: append a finding the
-      // baseline never matches so the gate fails loud, past the exclude and line-range
-      // filters so it cannot be dropped.
+      // Append decoding failures after filters to prevent source exclusions from
+      // suppressing a failure to read the linter output.
       findings.append(undecodableFinding(decodeError))
     }
     return findings

@@ -14,7 +14,6 @@ import Foundation
 
 // MARK: - Lint
 
-/// Lint orchestration. Port of `scripts/swift-mk-lint.sh`.
 public enum Lint {
   static let remediation = "Fix the new findings before this gate will pass."
 
@@ -23,7 +22,6 @@ public enum Lint {
     "type_body_length", "function_parameter_count", "large_tuple", "nesting", "todo",
   ].joined(separator: ",")
 
-  /// The swiftlint rules the complexity gate and its baseline run against.
   static func complexityRules() -> [String] {
     Env.get("COMPLEXITY_RULES", complexityRulesDefault).split(separator: ",").map(String.init)
   }
@@ -116,8 +114,9 @@ public enum Lint {
     Output.debug("swiftlint: capturing findings (only: \(onlyRules.joined(separator: ",")))")
     guard LintResources.ensure(context: context) else {
       Output.log("swiftlint: FAILED")
-      Output.log("  The SwiftLint config was not written. The error above states the cause.")
-      Capture.write("swiftlint: the SwiftLint config was not written\n", to: rawPath)
+      Output.log("  swift-mk could not write the SwiftLint configuration.")
+      Capture.write(
+        "swiftlint: swift-mk could not write the SwiftLint configuration.\n", to: rawPath)
       Capture.write("", to: findingsPath)
       GateStatus.last = 1
       return
@@ -154,7 +153,7 @@ public enum Lint {
     Capture.ensureMakeDir()
     guard LintResources.ensure(context: context) else {
       Output.log("swiftlint: FAILED")
-      Output.log("  Could not materialize SwiftLint config from git identity")
+      Output.log("  swift-mk could not write the SwiftLint configuration.")
       GateStatus.last = 1
       Baseline.recordFailedGate("swiftlint")
       return false
@@ -190,7 +189,7 @@ public enum Lint {
     Output.debug("lint-complexity: running gate")
     guard LintResources.ensure(context: context) else {
       Output.log("lint-complexity: FAILED")
-      Output.log("  Could not materialize SwiftLint config from git identity")
+      Output.log("  swift-mk could not write the SwiftLint configuration.")
       GateStatus.last = 1
       Baseline.recordFailedGate("lint-complexity")
       return false
@@ -212,8 +211,8 @@ public enum Lint {
 
   // MARK: deadcode (periphery)
 
-  /// A `periphery` exit status of 0 means no findings and 1 means findings; this
-  /// threshold and above is a build or usage failure the gate fails loudly on.
+  // periphery exits with status 0 when it does not find unused declarations.
+  // Status 1 reports unused declarations. Status 2 or higher reports a build or usage failure.
   static let deadcodeHardFailStatus: Int32 = 2
 
   static func peripheryExclude() -> String {
@@ -221,8 +220,7 @@ public enum Lint {
       Env.get("PERIPHERY_DEFAULT_EXCLUDE_PATHS"), Env.get("PERIPHERY_EXCLUDE_PATHS"))
   }
 
-  /// Returns the Xcode index store the scan read, or nil when no Xcode scan ran, so
-  /// the runner can hand it to the coverage-completeness check.
+  /// The returned Xcode index path supports the coverage-completeness check.
   @discardableResult
   public static func captureDeadcode(
     rawPath: String,
@@ -238,14 +236,9 @@ public enum Lint {
       Capture.write("", to: findingsPath)
       return nil
     }
-    // Label the first of the two scans, then echo its result, so the package scan's
-    // "No unused code detected" is plainly the package half and is never confused
-    // with the Xcode scan's verdict below. The label goes into the raw capture too,
-    // so a later `Output:` dump of the capture stays self-describing.
     Output.log(DeadcodeScan.packageScanLabel)
     let args = peripheryPackageScanArguments()
-    // The scan builds the package (clean_build), so serialize it with other engine builds
-    // in this worktree through the same re-entrant lock the product build uses.
+    // periphery builds the package and must share BuildLock with other builds.
     let result = BuildLock.withLock {
       Shell.runForwardingAndCapturing(
         periphery, args, environment: lintEnvironment())
@@ -263,16 +256,8 @@ public enum Lint {
     return indexStore
   }
 
-  /// The periphery package-scan arguments, with the engine's compile-cache flags forwarded
-  /// to periphery's own `swift build` after `--`, so periphery builds the package in the
-  /// same module mode as the routed product build. Periphery's package scan does not skip
-  /// the build, so without this it runs a plain (implicit-module) `swift build` that leaves
-  /// `.build/Modules/*.swiftmodule` the explicit-module-build product build cannot reuse,
-  /// and the product build then fails to resolve their clang C-module dependencies. The
-  /// forwarding is engine-owned, so it applies even when a consumer overrides
-  /// `PERIPHERY_ARGS`; when the compile cache is off the forwarded set is empty and periphery
-  /// stays plain, matching a plain product build. Flags merge into an existing `--`
-  /// passthrough rather than adding a second one.
+  // Periphery and product builds must use compatible module-cache settings.
+  // Include compile-cache flags even when PERIPHERY_ARGS overrides scan options.
   static func peripheryPackageScanArguments() -> [String] {
     var args = Env.words(
       Env.get("PERIPHERY_ARGS", "scan --config .make/periphery.yml --strict"))
@@ -292,10 +277,7 @@ public enum Lint {
     return args
   }
 
-  /// Whether a build-output line is a Swift compiler error
-  /// (`<path>.swift:<line>:<col>: error: ...`), as opposed to a periphery finding,
-  /// which periphery emits as a `warning:`, or periphery's own `Error: Found N
-  /// issues` summary, which carries no `file:line:col`.
+  // periphery prints findings with warning:. Its summary does not include file:line:col.
   static func isSwiftCompileError(_ line: String) -> Bool {
     line.range(of: #"\.swift:[0-9]+:[0-9]+: error:"#, options: .regularExpression) != nil
   }
@@ -308,8 +290,7 @@ public enum Lint {
 
   @discardableResult
   public static func runDeadcode(context: PathContext) -> Bool {
-    // The Xcode coverage build is analysis-only, but it still routes through the
-    // guarded toolchain path, so the deadcode gate must carry the gate proof.
+    // The guarded toolchain requires GateProof for the Xcode coverage build.
     GateProof.mark(context: context)
     Capture.ensureMakeDir()
     Output.debug("lint-deadcode: running gate")
@@ -317,20 +298,13 @@ public enum Lint {
     let findings = ".make/periphery.out"
     let indexStore = captureDeadcode(rawPath: raw, findingsPath: findings, context: context)
     let status = GateStatus.last
-    // A compile error during periphery's own build leaves a partial index, and
-    // periphery then reports referenced declarations as unused. Periphery does not
-    // fail loudly on this (it builds what it can and analyzes the rest), so without
-    // this check the gate passes the resulting phantom findings to the baseline
-    // diff, where a real build break masquerades as dead code. The shared reporter
-    // detects the compile error and the index/build failures, prints the classifying
-    // verdict, and fails on the real cause first.
+    // A failed build can produce an incomplete index and false unused-code findings.
+    // Reject build failures before comparing findings with the baseline.
     if reportDeadcodeBuildFailure(rawPath: raw, status: status) {
       Baseline.recordFailedGate("lint-deadcode")
       return false
     }
-    // Unbypassable coverage check: every owned Swift source must be covered by the
-    // package scan or the Xcode index. A consumer with own code only in Xcode targets
-    // and no Xcode scan would otherwise leave it silently unscanned.
+    // Package scans do not cover sources included only in Xcode targets.
     if case .incomplete(let message) = DeadcodeCoverageCompleteness.assert(
       xcodeIndexStorePath: indexStore, context: context)
     {
@@ -417,7 +391,6 @@ private func normalizeFinding(_ finding: Finding, context: PathContext) -> Findi
 
 // MARK: - GateStatus
 
-/// Last external command status, mirroring `SWIFT_MK_COMMAND_STATUS`.
 enum GateStatus {
   nonisolated(unsafe) static var last: Int32 = 0
 }
