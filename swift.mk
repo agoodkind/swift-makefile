@@ -151,7 +151,7 @@ SWIFT_MK_BIN ?= $(CURDIR)/.make/swift-mk
 SWIFT_MK_LOCAL_NOTICES := $(if $(strip $(SWIFT_MK_DEV_DIR)),$(SWIFT_MK_DEV_DIR)/notices.txt,$(SWIFT_MK_SELF_DIR)/notices.txt)
 SWIFT_MK_NOTICES_FILE := $(if $(wildcard $(SWIFT_MK_LOCAL_NOTICES)),$(SWIFT_MK_LOCAL_NOTICES),$(CURDIR)/.make/notices.txt)
 
-# A single snapshot keeps the fetched engine files at one pinned ref.
+# The snapshot recipe extracts every engine file from one tarball at SWIFT_MK_API_REF.
 # The public codeload fallback does not require gh authentication.
 # Only curl captures response headers, so a successful gh fetch produces an
 # empty ETag in the snapshot marker.
@@ -335,8 +335,7 @@ SWIFT_MK_FETCHED_OSV := $(if $(wildcard $(SWIFT_MK_OSV_CONFIG)),,$(call swift-mk
 endif
 
 # swift.mk fetches the shared mise config instead of the consumer's tracked
-# bootstrap.mk. Every consumer adopts the shared config on its next run
-# without a consumer-repository change.
+# bootstrap.mk. swift.mk does not replace an existing config.
 # The top-level make fetches a missing config once before the engine starts
 # inner builds with _SWIFT_MK_PROVISIONED=1.
 # Provisioned sub-makes use the config fetched by the top-level make.
@@ -407,8 +406,8 @@ endif
 # Prefix mapping removes absolute SDK, toolchain, and source-root path prefixes
 # from compilation-cache keys. Cache entries hit on another machine or continuous
 # integration runner when the checkout path differs.
-# Without prefix mapping, keys include absolute paths and every restore on
-# another runner misses.
+# Without prefix mapping, cache restores miss when absolute SDK, toolchain,
+# or source-root paths differ between runners.
 # SWIFT_MK_XCODE_CACHE_PREFIX_MAP=0 disables mapping without disabling the local
 # cache if a path-sensitive input, such as a bridging header, regresses.
 SWIFT_MK_XCODE_CACHE_PREFIX_MAP ?= $(SWIFT_MK_XCODE_CACHE)
@@ -625,7 +624,8 @@ export SWIFT_VERIFY_BUILD_CMD
 export SWIFT_VERIFY_TEST_CMD
 # The swift-mk binary reads these signing variables for the signing xcconfig
 # and the dead-code coverage build. Consumers set these as plain make variables.
-# Gate processes cannot read plain make variables without exports.
+# Gate recipes receive command-line variables automatically.
+# Variables assigned in a consumer Makefile require an explicit export.
 # A CI runner without a local xcconfig loses DEVELOPMENT_TEAM in the coverage
 # build when these variables are not exported.
 export CODE_SIGN_IDENTITY
