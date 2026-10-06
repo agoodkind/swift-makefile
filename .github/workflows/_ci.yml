@@ -1,8 +1,8 @@
-# Reusable Swift CI. Consumers declare setup plus optional bespoke extra
-# targets; the required Verify and Extra Targets gates live here.
-# Dead-code analysis is not a CI gate: it needs an uncached compile that chokes
-# the pool, so it runs only locally (enforced by LINT_GATES in swift.mk).
-# Triggers live in the caller (GitHub does not allow them here).
+# Consumers configure setup and optional custom targets for reusable Swift CI.
+# This workflow runs the required Verify and Extra Targets gates.
+# Dead-code analysis runs only locally because its required uncached compilation
+# overloads the runner pool. LINT_GATES in swift.mk enforces the CI exclusion.
+# Caller workflows define triggers because GitHub does not allow them here.
 name: CI
 
 on:
@@ -14,27 +14,29 @@ on:
       xcode-version:
         type: string
         default: latest-stable
-      # Legacy JSON array alias for bespoke extra targets. The required Verify
-      # gate runs here.
+      # The targets input is a legacy JSON array alias for custom extra targets.
+      # The required Verify gate runs in this workflow.
       targets:
         type: string
         default: '["lint","build","test","audit"]'
-      # Optional JSON array of bespoke make targets that run after the shared
-      # required jobs.
+      # The extra-targets input accepts a JSON array of custom make targets.
+      # Custom targets run after the shared required jobs.
       extra-targets:
         type: string
         default: '[]'
-      # Build-relevant directories the detector cannot infer from the build graph, as a
-      # whitespace-separated list of repo-root-relative paths (space or newline separated).
+      # The extra-dirs input supplies build directories the detector cannot infer
+      # from the build graph. Paths are relative to the repository root and
+      # separated by spaces or newlines.
       extra-dirs:
         type: string
         default: ""
-      # Optional make target run before each required job and once before the
-      # extra-target batch.
+      # The setup target runs before each required job and once before the batch
+      # of extra targets.
       setup-target:
         type: string
         default: ""
-      # Appended verbatim to every make invocation (e.g. CODE_SIGN_IDENTITY=-).
+      # The workflow appends make-args verbatim to every make invocation.
+      # CODE_SIGN_IDENTITY=- is an example argument.
       make-args:
         type: string
         default: ""
@@ -47,25 +49,25 @@ on:
       cache-version:
         type: string
         default: v1
-      # Import a real Developer ID certificate before building. Requires the
-      # APPLE_DEVELOPER_ID_P12_* secrets when enabled.
+      # The workflow imports a Developer ID certificate before building.
+      # Enabling certificate import requires the APPLE_DEVELOPER_ID_P12_* secrets.
       import-signing-cert:
         type: boolean
         default: false
-      # Install a Developer ID provisioning profile before building, for apps
-      # with entitlements that require one (iCloud). Requires the
-      # APPLE_DEVELOPER_ID_PROFILE_BASE64 secret when enabled.
+      # The workflow installs a Developer ID provisioning profile before building.
+      # Some app entitlements, including iCloud, require a provisioning profile.
+      # Enabling profile installation requires APPLE_DEVELOPER_ID_PROFILE_BASE64.
       install-provisioning-profile:
         type: boolean
         default: false
       signing-identity-name:
         type: string
         default: ""
-      # Signing identity for the release dry run, when it differs from the one
-      # the verify stages use. A downloadable app signs Developer ID while its
-      # continuous integration signs Apple Distribution, because the runner is
-      # not a registered device and only App Store profiles work there. Empty
-      # makes the release stage sign with signing-identity-name, unchanged.
+      # The release dry run can use a different signing identity from verify.
+      # A downloadable app uses Developer ID signing. The app's CI uses Apple
+      # Distribution signing because the runner is not a registered device and
+      # only App Store profiles work there. An empty release-signing-identity-name
+      # uses signing-identity-name unchanged.
       release-signing-identity-name:
         type: string
         default: ""
@@ -78,12 +80,12 @@ on:
       fetch-depth:
         type: string
         default: "1"
-      # Run Verify as separate build, test, and quality stages and then the
-      # signed release stages on the same machine, publishing one named check run
-      # per stage. A consumer that turns this on drops the `pull_request` trigger
-      # from its release workflow, so a pull request occupies one macOS slot
-      # instead of two. Requires `checks: write` in the caller's own permissions,
-      # since a called workflow cannot hold a permission the caller withheld.
+      # Verify runs separate build, test, and quality stages before signed release
+      # stages on one machine. The workflow publishes one named check run per stage.
+      # Each pull request uses one macOS slot instead of two when a consumer enables
+      # release-dry-run and removes `pull_request` from its release workflow.
+      # The caller must grant `checks: write` because a called workflow cannot use
+      # permissions the caller withholds.
       release-dry-run:
         type: boolean
         default: false
@@ -96,8 +98,8 @@ on:
       release-timeout-minutes:
         type: number
         default: 90
-      # Globs evaluated inside dist-dir naming the artifacts the release dry run
-      # notarizes. Empty runs the release build and skips notarization.
+      # The release dry run notarizes artifacts selected by globs within dist-dir.
+      # An empty pattern runs the release build without notarization.
       notarize-pattern:
         type: string
         default: ""
@@ -106,36 +108,36 @@ on:
         default: dist
       timeout-minutes:
         type: number
-        # 60 leaves headroom for a one-time cold compile-cache populate. The SwiftPM
-        # compile cache uses -explicit-module-build, whose cold build is slower than an
-        # uncached build; the populate run must finish once to save the rolling cache so
-        # later runs replay and drop well under this ceiling. This is a ceiling, not a
-        # target, so a normal build still finishes early.
+        # The timeout allows a cold compile-cache population to finish.
+        # SwiftPM uses -explicit-module-build for the compile cache.
+        # A cold cache build takes longer than an uncached build.
+        # The first population must finish before the rolling cache can be saved.
+        # Later builds replay the cache and finish well before the timeout.
+        # Normal builds finish before the timeout.
         default: 60
-      # Self-hosted macOS pool support. When local-pool-capacity-url points at a
-      # broker that reports available capacity, each macOS gate independently
-      # prefers local-pool-label; otherwise that gate falls back to inputs.runner.
-      # The URL defaults to the shared broker, so consumers need no configuration.
-      # Set this to an empty string to force every gate to hosted.
+      # Each macOS gate independently prefers local-pool-label when the broker at
+      # local-pool-capacity-url reports available capacity.
+      # Each gate otherwise uses inputs.runner.
+      # The default URL uses the shared broker without consumer configuration.
+      # An empty URL forces every gate to use a hosted runner.
       local-pool-capacity-url:
         type: string
         default: "https://darwin-gh-broker.silver-flare.com/capacity"
-      # Runner label for the self-hosted pool. Ignored when the pool is
-      # unavailable or local-pool-capacity-url is empty.
+      # The workflow ignores local-pool-label when the pool is unavailable or
+      # local-pool-capacity-url is empty.
       local-pool-label:
         type: string
         default: agk-local-macos-26
     secrets:
-      # The two certificates a build can sign with. Set whichever ones this
-      # repository actually signs with; `signing-identity-name` decides which one
-      # a given build uses, so passing both is normal for a repository that signs
-      # its CI and its release differently.
+      # A repository supplies the certificates its builds use.
+      # signing-identity-name selects the certificate for each build.
+      # A repository supplies both certificates when CI and releases sign differently.
       #
-      # A repository whose CI runner is not a registered device cannot use
-      # development provisioning, so its CI signs with Apple Distribution and App
-      # Store profiles, which carry no device list. It still releases with
-      # Developer ID, because a downloadable app cannot be App Store signed. Such a
-      # repository sets both.
+      # CI runners that are not registered devices cannot use development provisioning.
+      # CI builds on those runners use Apple Distribution with App Store profiles.
+      # App Store profiles contain no device list.
+      # Downloadable apps use Developer ID because they cannot use App Store signing.
+      # Repositories with these CI and release builds supply both certificates.
       APPLE_DEVELOPER_ID_P12_BASE64:
         required: false
       APPLE_DEVELOPER_ID_P12_PASSWORD:
@@ -146,83 +148,85 @@ on:
         required: false
       APPLE_DEVELOPER_ID_PROFILE_BASE64:
         required: false
-      # App Store Connect API key for iOS automatic signing
-      # (`xcodebuild -allowProvisioningUpdates`). The consumer's build reads
-      # these from the environment, the same names `_release.yml` uses for
-      # notarization. Absent, the build does no automatic signing, which a
-      # simulator build never needs.
+      # The consumer build reads the App Store Connect API key from the environment
+      # for iOS automatic signing with `xcodebuild -allowProvisioningUpdates`.
+      # Notarization in `_release.yml` uses the same environment variable names.
+      # A build without the key does not perform automatic signing.
+      # Simulator builds do not need automatic signing.
       APPLE_NOTARY_KEY_BASE64:
         required: false
       APPLE_NOTARY_KEY_ID:
         required: false
       APPLE_NOTARY_ISSUER_ID:
         required: false
-      # Bearer token for the self-hosted pool's guarded /capacity endpoint. When
-      # set (alongside local-pool-capacity-url) plan-runners authenticates the
-      # capacity check; absent or wrong, the broker returns 401 and the gate
-      # falls back to hosted, so CI is never blocked.
+      # The broker requires a bearer token for its guarded /capacity endpoint.
+      # plan-runners authenticates capacity checks when the token and
+      # local-pool-capacity-url are set.
+      # The broker returns 401 when the token is missing or incorrect.
+      # The gate uses a hosted runner after an authentication failure.
+      # Capacity authentication failures never block CI.
       LOCAL_POOL_CAPACITY_TOKEN:
         required: false
 
 env:
-  # The swift-makefile bootstrap fetches swift.mk via `gh api`; unauthenticated
-  # fetches fail silently, so every consumer needs this token.
+  # The swift-makefile bootstrap fetches swift.mk with `gh api`.
+  # Every consumer needs GH_TOKEN because unauthenticated fetches fail silently.
   GH_TOKEN: ${{ github.token }}
-  # GitHub's macOS runners currently ship with untrusted third-party taps
-  # preinstalled, which makes unrelated `brew install` and `brew update` calls
-  # fail closed unless the job disables the new trust gate explicitly.
+  # GitHub's macOS runners include untrusted third-party taps.
+  # The trust gate makes unrelated `brew install` and `brew update` calls
+  # fail closed unless the job disables the gate.
   HOMEBREW_NO_REQUIRE_TAP_TRUST: "1"
   # The ci-diagnostics PR label turns on swift-mk debug logging across every job
   # in this workflow (changes, the aggregators, and anything else that runs
   # swift-mk). Empty keeps unlabeled runs at swift-mk's default quiet level. The
   # macOS system capture is added only inside the ci-gate action.
   SWIFT_MK_LOG_LEVEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') && 'debug' || '' }}
-  # The same label makes the compilation cache report itself. Each replayed compile
-  # prints the output file it served and the key it served it under, which is the only
-  # way to read a hit rate out of a CI run instead of inferring one from wall clock.
-  # Off by default because a warm build emits one remark per replayed output.
+  # Each replayed compile reports the output file it served and its cache key.
+  # Cache reports are the only way to measure a CI cache hit rate without
+  # inferring the rate from elapsed time.
+  # Compilation cache diagnostics are off by default because a warm build
+  # emits one remark per replayed output.
   SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS: ${{ contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') && '1' || '' }}
   SWIFT_MK_XCODE_CACHE_DIAGNOSTICS: ${{ contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') && '1' || '' }}
 
 jobs:
-  # changes: change-detection runs on a free ubuntu-latest runner instead of a
-  # scarce macOS pool slot. `swift-mk ci-changed` only diffs files with git and
-  # classifies paths: a generated-project consumer takes the nil-graph path and
-  # needs only git, while the swift-makefile engine repo also runs
-  # `swift package describe`, which the Linux Swift toolchain in the container
-  # provides. So change-detection needs no macOS toolchain, and moving it off the
-  # pool frees one slot per run. It publishes the aggregate run, which Verify and
-  # Extra Targets both read: Verify owns the compile and the lints, so it runs when
-  # either family changed. Change detection does not depend on
-  # runner routing, which stays at each real gate's DAG boundary.
+  # Change detection frees one scarce macOS pool slot per run by using a free
+  # Linux runner. `swift-mk ci-changed` diffs files with Git and classifies paths.
+  # Generated-project consumers use the nil-graph path and need only Git.
+  # The swift-makefile engine repository also runs `swift package describe`
+  # with the container's Linux Swift toolchain.
+  # Change detection needs no macOS toolchain.
+  # Changes publishes the aggregate run output for Verify and Extra Targets.
+  # Verify compiles and lints when either family changes.
+  # Change detection does not depend on runner routing.
+  # Each gate selects its runner at the gate's DAG boundary.
   #
-  # The job is fail-safe: the Linux swift-mk build is best-effort, and the detect
-  # step always runs and falls back to a full run (every output true) when the
-  # binary is unavailable, so a transient Linux-build hiccup keeps the job green and
-  # runs the full gate set rather than blocking CI or skipping a gate.
+  # The Linux swift-mk build is best-effort. The detect step always runs and
+  # selects a full run with every output true when the binary is unavailable.
+  # A transient Linux build failure keeps the job green and runs every gate.
   changes:
     name: Changes
     runs-on: ubuntu-latest
-    # The official Swift image ships the 6.3.x line the macOS CI runs plus git, so
-    # the Linux swift-mk builds and `swift package describe` resolves with no
-    # toolchain install; actions/checkout and actions/cache run unchanged inside it.
+    # The official Swift image includes Git and the Swift 6.3.x version line
+    # used by macOS CI. Linux swift-mk builds and `swift package describe`
+    # require no toolchain installation. actions/checkout and actions/cache
+    # run unchanged inside the container.
     container: swift:6.3
     timeout-minutes: ${{ inputs.timeout-minutes }}
     env:
-      # Pin SwiftPM's cache to one absolute literal path so the cache step and the swift
-      # process reference the identical location, instead of each resolving `~`/HOME on
-      # its own (the container sets HOME to /github/home, but the cache action's tilde
-      # expansion and swift's HOME are not guaranteed to agree). SwiftPM honors
-      # XDG_CACHE_HOME, placing its clone cache at $XDG_CACHE_HOME/org.swift.swiftpm. A
+      # SwiftPM and the cache action need one absolute literal cache path
+      # because the cache action's tilde expansion can differ from SwiftPM's HOME.
+      # The container sets HOME to /github/home. SwiftPM honors XDG_CACHE_HOME
+      # and stores its clone cache at $XDG_CACHE_HOME/org.swift.swiftpm. A
       # literal path is required here because the `runner` context is not available in a
       # job-level env; the container filesystem is shared across steps, so /tmp persists
       # for the whole job.
       XDG_CACHE_HOME: /tmp/swiftpm-cache
-      # Default the detector to info, overriding the workflow-level SWIFT_MK_LOG_LEVEL
-      # (empty unless labeled) for this job only, so the detector's essential phase logs
-      # (diff base, git diff, build-graph read, classification) always show. The
-      # ci-diagnostics label still raises this to debug, matching the reusable gate's own
-      # expression, so a labeled run additionally gets the per-git-call debug lines.
+      # The job overrides the workflow-level SWIFT_MK_LOG_LEVEL so the detector always
+      # logs diff-base selection, git diff, build-graph reading, and classification.
+      # The workflow-level value is empty unless the run is labeled.
+      # The ci-diagnostics label enables per-git-call debug logs.
+      # The reusable gate uses the same ci-diagnostics expression.
       SWIFT_MK_LOG_LEVEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci-diagnostics') && 'debug' || 'info' }}
     permissions:
       contents: read
@@ -231,46 +235,49 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # Credentials stay persisted (the default): the detector's feature-branch
-          # merge-base can need `git fetch origin <default>`, which fails without auth on a
-          # private repo and would disable skipping on feature branches.
+          # actions/checkout persists credentials by default.
+          # The detector's feature-branch merge-base calculation can require
+          # `git fetch origin <default>`.
+          # A fetch without authentication fails in private repositories and disables
+          # skipping on feature branches.
           fetch-depth: 0
 
       - name: Trust the workspace for git
         shell: bash
-        # This job runs in a container as root, but actions/checkout writes each working
-        # tree as the runner UID. git then refuses to operate on it ("detected dubious
-        # ownership") from any later step, because checkout only marks the tree safe in
-        # its own temporary HOME. Without this, the detector's git calls (merge-base,
-        # diff) and the engine checkout's build both fail. Trust every path in this
-        # ephemeral container so the workspace and the .swift-makefile engine checkout
-        # both work; the container is CI-controlled and discarded after the job.
+        # actions/checkout writes trees as the runner UID in this root container.
+        # Git rejects later operations with "detected dubious ownership" because
+        # checkout marks the working tree safe only in its temporary HOME.
+        # The ownership check blocks the detector's merge-base and diff calls and the
+        # engine checkout's build.
+        # The wildcard trusts the workspace and the .swift-makefile engine checkout.
+        # The container is CI-controlled and discarded after the job.
         run: git config --global --add safe.directory '*'
 
       - name: Cache SwiftPM dependency resolution
         uses: actions/cache@v6
         with:
-          # The detect step's `swift package describe` resolves the described repo's
-          # dependency graph, cloning every dependency over the network when this cache
-          # is cold. That resolve is the slow, occasionally stalling part of the changes
-          # job. Cache SwiftPM's clone cache so the resolve reuses cloned repositories
-          # instead of hitting the network. The path matches XDG_CACHE_HOME above, so the
-          # cache action and swift agree on one literal location. Key on the manifests so
-          # a dependency change rotates the key; restore-keys lets a manifest change still
-          # restore the previous cache and update it rather than cold-clone. Package.resolved
-          # is gitignored in swift-makefile's own repo, so hashFiles falls back to
+          # The detect step's `swift package describe` resolves the repository's graph
+          # and clones every dependency over the network when the cache is cold.
+          # Resolution is the slow part of the changes job and sometimes stalls.
+          # SwiftPM reuses cached clones during resolution instead of cloning
+          # dependencies over the network.
+          # XDG_CACHE_HOME and the cache action use the same literal location.
+          # The manifest hash rotates the cache key after a dependency change.
+          # restore-keys restores the previous cache after a manifest change.
+          # SwiftPM updates cached clones instead of cloning into an empty cache.
+          # Because swift-makefile ignores Package.resolved, hashFiles uses
           # Package.swift alone there.
           path: /tmp/swiftpm-cache/org.swift.swiftpm
           key: swiftpm-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Package.swift', '**/Package.resolved') }}
           restore-keys: |
             swiftpm-deps-${{ runner.os }}-${{ runner.arch }}-
 
-      # Check out the swift-makefile engine at one uniform path so a single setup step
-      # builds swift-mk for the engine and every consumer alike. A step's `uses:` cannot
-      # take an expression, so the ref is what varies: the engine tests its own in-PR
-      # action by checking out this run's sha, and consumers pin @main. This keeps
-      # swift-makefile dogfooding its own action (its PR runs the PR's action) while
-      # avoiding two near-duplicate setup steps guarded by github.repository.
+      # One checkout path lets one setup step build swift-mk for the engine and
+      # consumers.
+      # A step's uses: field cannot take an expression.
+      # The checkout uses github.sha for agoodkind/swift-makefile and main otherwise.
+      # Engine pull requests run the setup action from the pull request.
+      # The single setup step replaces two steps guarded by github.repository.
       - name: Check out the swift-makefile engine
         uses: actions/checkout@v7
         with:
@@ -279,27 +286,28 @@ jobs:
           path: .swift-makefile
           fetch-depth: 1
 
-      # Setup provides the Linux swift-mk binary from the cache, the published release asset, or a
-      # source build, and fails loud on a real error (apt, a non-404 HTTP status, a checksum
-      # mismatch, a build failure), so a genuine infrastructure or engine problem shows as a red
-      # step. A 404 for the not-yet-published asset is not an error and builds from source. The
-      # Detect step below is the single recovery: it fails open to a full run if no usable binary
-      # was produced, so the downstream gates still run even when this step is red.
+      # Setup obtains Linux swift-mk from the cache, a release asset, or a source
+      # build. Setup fails on apt errors, non-404 HTTP statuses, checksum
+      # mismatches, and build failures.
+      # Setup builds from source without failing on a 404 for an unpublished asset.
+      # Detect provides the only recovery by defaulting to full CI when Setup
+      # produces no usable binary. Downstream gates run even if Setup fails.
       - name: Setup Linux swift-mk
         uses: ./.swift-makefile/.github/actions/setup-linux-swift-mk
 
       - name: Detect changes
         id: detect
-        # always() so detection still runs, and fails open to a full run, even when the setup step
-        # above failed to provide a usable binary.
+        # Detection defaults to full CI when Setup fails to provide a usable
+        # binary.
         if: ${{ always() }}
         shell: bash
         env:
-          # On a pull request, github.event.before is empty, github.ref_name is the merge
-          # ref (<n>/merge), and github.sha is the synthetic merge commit. The pull-request
-          # context (head sha, base branch, head branch) gives the detector a well-defined
-          # branch head to diff against its base, so the merge-base path runs. On a push,
-          # those pull-request fields are empty and the values fall back to the push context.
+          # Pull requests have an empty github.event.before.
+          # Pull requests use a merge ref (<n>/merge) in github.ref_name.
+          # Pull requests use a synthetic merge commit in github.sha.
+          # The pull request's head SHA, base branch, and head branch let the detector
+          # compare the branch head with its base through the merge-base path.
+          # Push events have empty pull request fields.
           SWIFT_MK_EVENT_NAME: ${{ github.event_name }}
           SWIFT_MK_DIFF_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
           SWIFT_MK_DIFF_BASE: ${{ github.event.before }}
@@ -309,11 +317,12 @@ jobs:
         run: |
           set -uo pipefail
 
-          # Run the detector. It exits 0 and writes the outputs on success, fail-safing to all-true
-          # internally. Only a missing or non-runnable binary reaches the fallback, which is the
-          # single recovery for a Setup step that could not provide a usable binary. Run the binary
-          # directly rather than gating on a mode check: a missing binary makes this fail and take
-          # the same fallback.
+          # The detector exits 0 and writes outputs on success.
+          # The detector defaults all outputs to true when internal detection fails.
+          # Only a missing or non-runnable binary triggers the fallback.
+          # The fallback is the only recovery when Setup produces no usable binary.
+          # Direct invocation triggers the fallback for a missing binary without a
+          # mode check.
           bin="${SWIFT_MK_BIN:-${HOME}/.swift-mk-ci-toolchain/swift-mk}"
           if "${bin}" ci-changed; then
             exit 0
@@ -325,11 +334,11 @@ jobs:
             printf 'changed=true\n'
           } >> "${GITHUB_OUTPUT}"
 
-  # Verify runs the configured verify build and test, then the source-only lint
-  # gates against that build. When the verify commands are the build-with-tests
-  # plus test-without-building pair, the product compiles once; when they are
-  # unset, Verify runs the normal build and then the normal test, which compiles
-  # the product twice.
+  # Verify runs the configured build and test before source-only lint gates
+  # check that build.
+  # The build-with-tests and test-without-building pair compiles the product
+  # once. Without configured verify commands, the normal build and test
+  # compile the product twice.
   route-verify:
     name: Route Verify Job
     needs: [changes]
@@ -363,20 +372,21 @@ jobs:
           local-pool-label: ${{ inputs.local-pool-label }}
           capacity-token: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
 
-  # ── Verify ─────────────────────────────────────────────────────────────────
-  # verify-pool: first attempt on the planned runner (pool or hosted).
-  # verify-hosted: hosted-only fallback that runs when verify-pool fails or is
-  # cancelled (a pool runner that disconnects mid-job ends as cancelled).
-  # verify: tiny aggregator that is the single required status check for Verify.
+  # verify-pool runs the first attempt on the planned pool or hosted runner.
+  # verify-hosted retries failed or cancelled verification on a hosted runner.
+  # A pool runner that disconnects mid-job ends as cancelled.
+  # verify aggregates results into the single required Verify status check.
   verify-pool:
     name: Verify (${{ needs.changes.outputs.run == 'false' && 'skipped' || (needs.route-verify.outputs.on_pool == 'true' && 'self-hosted' || 'github-hosted') }})
     needs: [route-verify, changes]
-    # !cancelled() forces this to run when changes fails (empty run means full CI);
-    # requiring route-verify success keeps runs-on well-defined, so a routing
-    # failure surfaces as a Verify failure rather than an empty runner label.
+    # !cancelled() lets verify-pool run when changes fails.
+    # An empty run value requests full CI.
+    # Requiring route-verify success prevents an undefined runs-on value.
+    # A routing failure produces a Verify failure instead of an empty runner
+    # label.
     if: ${{ !cancelled() && (github.event_name != 'push' || github.ref_name != github.event.repository.default_branch) && needs.route-verify.result == 'success' }}
-    # Route to ubuntu on an index-confirmed skip so a docs-only push does not
-    # occupy a macOS pool slot.
+    # A docs-only push with an index-confirmed skip uses Ubuntu to avoid
+    # occupying a macOS pool slot.
     runs-on: ${{ needs.changes.outputs.run == 'false' && 'ubuntu-latest' || needs.route-verify.outputs.label }}
     timeout-minutes: ${{ (inputs.release-dry-run && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') && inputs.release-timeout-minutes || inputs.timeout-minutes }}
     permissions:
@@ -396,10 +406,11 @@ jobs:
           runner: ${{ needs.changes.outputs.run == 'false' && 'ubuntu-latest' || needs.route-verify.outputs.label }}
           run: ${{ needs.changes.outputs.run }}
           release-dry-run: ${{ inputs.release-dry-run }}
-          # A fork carries no secrets, and Dependabot reads its own secret set, so
-          # neither can run a signed stage. They still run the staged verify half
-          # and report Release dry run as skipped, so the same four checks a
-          # ruleset requires appear on every pull request.
+          # Fork pull requests receive no secrets. Dependabot reads its own secret set.
+          # Neither can run a signed stage.
+          # The gate still runs staged verification and reports Release dry run as
+          # skipped for fork and Dependabot pull requests.
+          # Every pull request reports the same four checks required by the ruleset.
           sign-release: ${{ inputs.release-dry-run && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' }}
           notarize-pattern: ${{ inputs.notarize-pattern }}
           dist-dir: ${{ inputs.dist-dir }}
@@ -409,10 +420,10 @@ jobs:
           cache-version: ${{ inputs.cache-version }}
           extra-cache-paths: ${{ inputs.extra-cache-paths }}
           brew-packages: ${{ inputs.brew-packages }}
-          # A release-dry-run consumer asks for signing so the release stage can
-          # sign; hold that request off exactly where that stage cannot run, or
-          # the signing preflight fails a fork before the build starts. A consumer
-          # that did not opt in forwards its own value unchanged.
+          # A release-dry-run consumer requests signing for the release stage.
+          # Signing preflight fails a fork before the build if signing remains enabled
+          # when the release stage cannot run.
+          # Consumers without release-dry-run use their configured signing values.
           import-signing-cert: ${{ inputs.import-signing-cert && (!inputs.release-dry-run || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')) }}
           install-provisioning-profile: ${{ inputs.install-provisioning-profile && (!inputs.release-dry-run || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')) }}
           signing-identity-name: ${{ inputs.signing-identity-name }}
@@ -495,9 +506,10 @@ jobs:
 
   verify:
     name: Verify
-    # !cancelled(), not always(): report the required check on every live run but
-    # skip when the run is cancelled, so a superseded or watchdog-cancelled run
-    # cancels cleanly and ci-infra-retry.yml can rerun it on hosted.
+    # Verify reports the required check on live runs except default-branch pushes.
+    # The !cancelled() guard permits Verify after failed or skipped dependencies.
+    # Superseded or watchdog-cancelled runs skip Verify to cancel cleanly.
+    # ci-infra-retry.yml can rerun cancelled workflows on hosted runners.
     if: ${{ !cancelled() && (github.event_name != 'push' || github.ref_name != github.event.repository.default_branch) }}
     needs: [verify-pool, verify-hosted]
     runs-on: ubuntu-latest
@@ -520,18 +532,19 @@ jobs:
             exit 1
           fi
 
-  # ── Extra Targets ──────────────────────────────────────────────────────────
-  # extra-targets-pool: first attempt on the planned runner (pool or hosted).
-  # extra-targets-hosted: hosted-only fallback that runs when the pool attempt
-  # fails or is cancelled (a pool runner that disconnects ends as cancelled).
-  # extra-targets: tiny aggregator that is the single required status check.
-  # Both attempts skip when there are no bespoke targets to run.
+  # extra-targets-pool runs the first attempt on the planned pool or hosted runner.
+  # extra-targets-hosted retries failed, cancelled, or skipped pool attempts on
+  # hosted runners while the workflow is active.
+  # A disconnected pool runner ends as cancelled.
+  # extra-targets provides the single required status check for both attempts.
+  # With no bespoke targets, extra-targets-pool runs without executing targets,
+  # and extra-targets-hosted skips.
   route-extra-targets:
     name: Route Extra Targets Job
     needs: [changes, verify]
-    # !cancelled() defeats the implicit skip once Verify finishes, while
-    # skipping on a cancelled run; the explicit result check keeps this gated
-    # on Verify succeeding.
+    # !cancelled() overrides GitHub's implicit skip after Verify finishes.
+    # A cancelled run skips this job.
+    # The needs.verify.result == 'success' condition requires Verify to succeed.
     if: ${{ !cancelled() && (github.event_name != 'push' || github.ref_name != github.event.repository.default_branch) && needs.verify.result == 'success' && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -563,18 +576,20 @@ jobs:
           capacity-token: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
 
   extra-targets-pool:
-    # Run whenever routing succeeded or was skipped, so this job is not truly skipped in the
-    # common cases and its dynamic name is evaluated instead of rendering its raw ${{ }} text in
-    # the checks list (a skipped job's name is not evaluated). route-extra-targets is skipped when
-    # there are no bespoke targets or a gate did not pass; in that case this job runs on ubuntu as
-    # a no-op and its name shows "skipped". When routing succeeded it does the real work on the
-    # routed runner. A routing failure is left out, so this job skips and the aggregator reports a
-    # failure, exactly like verify-pool does on a routing failure.
+    # GitHub Actions evaluates the dynamic name in the checks list when
+    # extra-targets-pool runs after successful or skipped routing.
+    # GitHub Actions displays raw ${{ }} text for a skipped job's name.
+    # extra-targets-pool performs no work on Ubuntu when routing skips because no
+    # bespoke targets exist or a gate did not pass.
+    # extra-targets-pool performs the requested work on the routed runner when
+    # routing succeeds and the detector output is not 'false'.
+    # The aggregator reports a failure when routing fails.
+    # verify-pool also skips after a routing failure.
     name: Extra Targets (${{ (needs.route-extra-targets.result != 'success' || needs.changes.outputs.run == 'false') && 'skipped' || (needs.route-extra-targets.outputs.on_pool == 'true' && 'self-hosted' || 'github-hosted') }})
     needs: [route-extra-targets, changes, verify]
     if: ${{ !cancelled() && (github.event_name != 'push' || github.ref_name != github.event.repository.default_branch) && (needs.route-extra-targets.result == 'success' || needs.route-extra-targets.result == 'skipped') }}
-    # The real runner only when doing real work; otherwise ubuntu for the no-op, so a run with
-    # no bespoke targets does not occupy a macOS pool slot.
+    # The Ubuntu fallback prevents runs without bespoke targets from occupying
+    # a macOS pool slot.
     runs-on: ${{ (needs.route-extra-targets.result == 'success' && needs.changes.outputs.run != 'false') && needs.route-extra-targets.outputs.label || 'ubuntu-latest' }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
@@ -590,9 +605,11 @@ jobs:
         with: &extra-targets-pool-inputs
           gate: extra-targets
           runner: ${{ (needs.route-extra-targets.result == 'success' && needs.changes.outputs.run != 'false') && needs.route-extra-targets.outputs.label || 'ubuntu-latest' }}
-          # No-op when routing was skipped (no bespoke targets or a gate did not pass). When
-          # routing succeeded, pass the detector output through unchanged so an empty value keeps
-          # the detector's fail-safe (empty means run), matching the other gates.
+          # The gate performs no work when routing skips because no bespoke targets
+          # exist or a gate did not pass.
+          # The gate runs when the detector output is empty to preserve the detector's
+          # fail-safe behavior.
+          # The other gates also run when the detector output is empty.
           run: ${{ needs.route-extra-targets.result != 'success' && 'false' || needs.changes.outputs.run }}
           extra-targets: ${{ inputs.extra-targets }}
           targets: ${{ inputs.targets }}
@@ -625,9 +642,11 @@ jobs:
   extra-targets-hosted:
     name: Extra Targets (github-hosted retry)
     needs: [route-extra-targets, extra-targets-pool]
-    # See the verify-hosted note: !cancelled(). Runs only when the caller configured
-    # extra targets, expressed inline since the reusable planner carries no such
-    # output.
+    # !cancelled() overrides GitHub's implicit skip.
+    # The hosted retry requires an unsuccessful pool attempt on a pool-routed run.
+    # A cancelled run skips the hosted retry.
+    # The if: checks extra targets inline because the reusable planner has no
+    # output for that configuration.
     if: ${{ !cancelled() && (github.event_name != 'push' || github.ref_name != github.event.repository.default_branch) && (inputs.extra-targets != '[]' || inputs.targets != '["lint","build","test","audit"]') && needs.route-extra-targets.outputs.on_pool == 'true' && needs.extra-targets-pool.result != 'success' }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
@@ -674,7 +693,9 @@ jobs:
 
   extra-targets:
     name: Extra Targets
-    # !cancelled(): see the Verify aggregator note.
+    # !cancelled() lets the aggregator run after failed or skipped dependencies.
+    # A cancelled run skips the aggregator.
+    # ci-infra-retry.yml reruns the workflow after cancellation.
     if: ${{ !cancelled() && (github.event_name != 'push' || github.ref_name != github.event.repository.default_branch) }}
     needs: [extra-targets-pool, extra-targets-hosted]
     runs-on: ubuntu-latest
@@ -686,9 +707,12 @@ jobs:
         env:
           POOL_RESULT: ${{ needs.extra-targets-pool.result }}
           HOSTED_RESULT: ${{ needs.extra-targets-hosted.result }}
-        # extra-targets-pool always runs (it no-ops green when there are no bespoke targets or a
-        # gate did not pass), so a skipped pool means the run was cancelled, and the only real
-        # failure is a bespoke target that failed on both the pool and the hosted retry.
+        # extra-targets-pool succeeds without running bespoke targets when no bespoke
+        # targets exist or a gate did not pass.
+        # extra-targets-pool skips when route-extra-targets fails or is cancelled.
+        # The aggregator passes when the pool or hosted retry succeeds.
+        # The aggregator fails otherwise.
+        # A bespoke target that fails on both attempts fails the aggregator.
         run: |
           if [[ "${POOL_RESULT}" == "success" ]] || [[ "${HOSTED_RESULT}" == "success" ]]; then
             printf 'Extra Targets passed (pool=%s, hosted=%s)\n' "${POOL_RESULT}" "${HOSTED_RESULT}"
