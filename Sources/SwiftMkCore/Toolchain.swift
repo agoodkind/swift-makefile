@@ -123,9 +123,11 @@ public enum Toolchain {
 
   // MARK: Build and test
 
-  /// Product packaging reads the configured derived-data directory.
-  /// xcodebuild supports that directory without using Tuist build output.
-  /// The caller must run the lint gates before this compile operation.
+  /// Packaging reads the built product from the configured derived-data directory.
+  /// xcodebuild writes build products to the configured derived-data directory.
+  /// tuist build writes build products to Tuist's own DerivedData.
+  ///
+  /// The caller must run the lint gates before compilation.
   @discardableResult
   public static func build(_ request: Request) -> Int32 {
     // A forbidden signing setting is a caller error, and its check does not depend
