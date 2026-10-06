@@ -14,39 +14,26 @@ import Foundation
 
 // MARK: - GateProof
 
-/// Proof that a compile runs inside a swift-mk gated invocation.
+/// GateProof checks a build stamp against its age and a live ancestor process.
+/// The ancestor must run make, gmake, or swift-mk. The verifier checks the
+/// recorded process start time unless the producer could not read it.
 ///
-/// `swift-mk build` runs the lint gates, then the build command of the consumer.
-/// A compile subcommand run directly does not run the gates. An environment
-/// variable cannot serve as the proof, because any process can set it. The proof
-/// has three factors:
+/// Source digests support diagnostics only. Code generation can change source
+/// files between a gate and compilation.
 ///
-///   A. Freshness: a gated entry writes `.make/.gate/stamp` with its creation
-///      time, and the verifier rejects a stamp older than the window. The stamp
-///      also records a source digest. The verifier does not check the digest,
-///      because code generation during a build can change a tracked source.
-///   B. Live ancestor: the stamp records the pid of the anchor process. The
-///      verifier requires that pid in its own ancestry, and requires the process
-///      to be `make`, `gmake`, or `swift-mk`.
-///   C. Process identity: the stamp records the start time of the anchor, and the
-///      verifier requires the live ancestor to have that start time. A new process
-///      that reuses the pid does not match. The stamp records the start time
-///      because Foundation process spawning does not pass an inherited file
-///      descriptor, and Foundation caches the environment.
-///
-/// The proof does not resist a deliberate bypass on a single-user machine. It does
-/// not cover a `swift build` run by hand in a shell.
+/// These checks cover the project build entrypoints. They do not prevent a
+/// deliberate bypass or a direct shell invocation of swift build.
 public enum GateProof {
   static let stampRelativeComponents = [".make", ".gate", "stamp"]
 
-  /// The window is long because a build can run for a long time. Factor B rejects
-  /// a stamp after its anchor process exits.
+  /// Long builds require a generous age limit. The ancestor check also requires
+  /// the recorded build process to remain active.
   static let freshnessWindowSeconds: Double = 3_600
 
-  /// `EX_SOFTWARE` in sysexits.h.
+  /// This status uses EX_SOFTWARE from sysexits.h.
   static let refusedExitStatus: Int32 = 70
 
-  /// The ancestry walk stops at this depth on a pid cycle.
+  /// Bound the ancestry walk if process metadata contains a cycle.
   static let maxAncestorDepth = 64
 
   static let nonceByteCount = 16
@@ -55,9 +42,8 @@ public enum GateProof {
 
   // MARK: Producer
 
-  /// Each gated entry calls mark at its start. A second call in the same process
-  /// returns without writing, and a nested gate does not rewrite the stamp. A gated
-  /// entry returns before the compile when a gate fails.
+  /// Call mark before running gates. Callers must stop compilation if a gate fails.
+  /// Repeated calls in one process do not rewrite the stamp.
   public static func mark(context: PathContext = .current()) {
     let myPid = currentPid()
     if markedPid == myPid {
@@ -81,8 +67,7 @@ public enum GateProof {
 
   // MARK: Verifier
 
-  /// Prints the cause and returns `refusedExitStatus` when no gate proof covers this
-  /// process. Returns nil otherwise. The caller exits with the returned status.
+  /// Callers must propagate a returned refusal status.
   public static func refusal(entry: String, context: PathContext = .current()) -> Int32? {
     if isGated(context: context) {
       return nil
@@ -104,21 +89,17 @@ public enum GateProof {
     isGated(context: context)
   }
 
-  /// Checks factors A, B, and C. `refusal` adds the message and the status.
   static func isGated(context: PathContext = .current()) -> Bool {
     guard let stamp = readStamp(context: context) else {
       return false
     }
-    // (A) Freshness.
     guard nowSeconds() - stamp.createdAt <= freshnessWindowSeconds else {
       return false
     }
-    // (B) Live anchor in the ancestry of this process.
     guard ancestorPids().contains(stamp.gatePid), processIsGateAnchor(stamp.gatePid) else {
       return false
     }
-    // (C) Start time. A stored start time of 0 means the gate could not read it,
-    // and the check is skipped.
+    // Skip identity comparison when the producer could not read the start time.
     if stamp.gateStartTime != 0 {
       guard processStartTime(of: stamp.gatePid) == stamp.gateStartTime else {
         return false
@@ -141,15 +122,14 @@ public enum GateProof {
     let startMatch =
       stamp.gateStartTime == 0
       || processStartTime(of: stamp.gatePid) == stamp.gateStartTime
-    // The verdict does not include the source digest, as in `isGated`.
+    // Source changes do not affect gate authorization.
     let gated = fresh && ancestor && anchor && startMatch
     return
       "gated=\(gated) fresh=\(fresh) source=\(sourceMatch) ancestor=\(ancestor) "
       + "anchor=\(anchor) startMatch=\(startMatch) anchorPid=\(stamp.gatePid)"
   }
 
-  /// Marks this process, runs `gate-proof probe` in a child process of the same
-  /// binary, and returns the report line of the child.
+  /// The probe checks the stamp from a child process of this executable.
   public static func selftest(context: PathContext = .current()) -> String {
     mark(context: context)
     let selfPath = currentExecutablePath()
@@ -269,7 +249,7 @@ public enum GateProof {
       return info.kp_eproc.e_ppid
     }
 
-    /// Returns an empty string for a dead pid.
+    /// An unreadable process path produces an empty name.
     static func processName(of pid: Int32) -> String {
       var pathBuffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
       let length = proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count))
@@ -409,8 +389,9 @@ extension GateProof {
     return true
   }
 
-  /// Digest of the path, size, and modification time of each tracked source file.
-  /// The function does not read file contents. `isGated` does not check this digest.
+  /// The digest uses relative paths, sizes, and modification times without reading
+  /// file contents. The directory walk does not query Git tracking status.
+  /// isGated does not check this digest.
   static func sourceDigest(context: PathContext) -> String {
     var entries: [String] = []
     let started = forEachTrackedSource(context: context) { relative, url in
@@ -448,8 +429,7 @@ extension GateProof {
     return String(format: "%016llx", hash)
   }
 
-  /// Reads the file in chunks of `fileDigestChunkBytes`. Returns "unreadable" when
-  /// the file cannot be opened or read. No hex digest equals that string.
+  /// An open or read failure returns "unreadable", which cannot equal a hex digest.
   static func fnv1aHexOfFile(at url: URL) -> String {
     let handle: FileHandle
     do {
