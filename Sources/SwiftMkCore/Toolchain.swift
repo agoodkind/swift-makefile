@@ -10,14 +10,9 @@ import Foundation
 
 // MARK: - Toolchain
 
-/// This type is the only site that runs `tuist`, `xcodegen`, or `xcodebuild`.
-/// Make consumers run `swift-mk toolchain <op>`, and Swift dev tools import
-/// SwiftMkCore. A swiftcheck rule and the build-tooling audit reject a reference to
-/// those tools from any other file.
-///
-/// A bare `xcodebuild -scheme` without a container opens the app project and does
-/// not see an external SPM dependency that Tuist adds only to the workspace. Build
-/// commands pass `-workspace` for Tuist or `-project` for xcodegen.
+/// Use Toolchain for tuist, xcodegen, and xcodebuild operations.
+/// Build commands select a Tuist workspace or an xcodegen project explicitly.
+/// Tuist workspace dependencies may be absent from the app project.
 public enum Toolchain {
   public enum Generator: String, Sendable {
     case tuist
@@ -33,8 +28,7 @@ public enum Toolchain {
     public let destination: String?
     public let derivedDataPath: String?
     public let extraSettings: [String: String]
-    /// xcodebuild flags that are not `KEY=value` settings, such as
-    /// `-allowProvisioningUpdates`.
+    /// Pass additional xcodebuild flags here, such as -allowProvisioningUpdates.
     public let extraArguments: [String]
 
     public init(
@@ -77,16 +71,13 @@ public enum Toolchain {
 
   // MARK: Signing-setting rejection
 
-  /// `EX_USAGE` in sysexits.h.
+  /// This status uses EX_USAGE from sysexits.h.
   static let signingOverrideRejectionStatus: Int32 = 64
 
   static let gateFailureStatus: Int32 = 1
 
-  /// swift-mk sets signing through an `XCODE_XCCONFIG_FILE` override, and a
-  /// command-line `KEY=value` setting takes precedence over that file. Every build
-  /// path rejects these keys. The dead-code coverage build disables signing through
-  /// the xcconfig of `DeadcodeBuildConfig` and does not use these settings. The
-  /// matcher compares the uppercase form of the key.
+  /// Command-line signing settings override XCODE_XCCONFIG_FILE.
+  /// Reject these keys to require the configured signing override.
   static let forbiddenSigningSettingKeys: Set<String> = [
     "CODE_SIGN_IDENTITY",
     "EXPANDED_CODE_SIGN_IDENTITY",
@@ -101,9 +92,7 @@ public enum Toolchain {
     "OTHER_CODE_SIGN_FLAGS",
   ]
 
-  /// Returns the first forbidden signing key in its original spelling, or nil. The
-  /// function checks the keys of `extraSettings` and each `KEY=value` token in
-  /// `extraArguments`. The CLI rejects a request with this function before a build.
+  /// The result preserves the spelling supplied by the caller.
   public static func forbiddenSigningSetting(in request: Request) -> String? {
     for key in request.extraSettings.keys.sorted()
     where forbiddenSigningSettingKeys.contains(key.uppercased()) {
@@ -134,12 +123,9 @@ public enum Toolchain {
 
   // MARK: Build and test
 
-  /// The build uses xcodebuild and does not use `tuist build`. A consumer that
-  /// packages its product reads it from `-derivedDataPath`, and `tuist build`
-  /// writes to the DerivedData directory of Tuist.
-  ///
-  /// The function does not run the lint gates. `swift-mk build` runs them once, and
-  /// a second `toolchain build` for a Metal or helper target does not run them again.
+  /// Product packaging reads the configured derived-data directory.
+  /// xcodebuild supports that directory without using Tuist build output.
+  /// The caller must run the lint gates before this compile operation.
   @discardableResult
   public static func build(_ request: Request) -> Int32 {
     // A forbidden signing setting is a caller error, and its check does not depend
@@ -148,20 +134,16 @@ public enum Toolchain {
     if let rejection = rejectionForSigningOverride(request) {
       return rejection
     }
-    // A secondary build after `swift-mk build` exits passes, because its `make`
-    // ancestor is the anchor. A dev tool without `make` calls `build(_:receipt:)`,
-    // which requires a `GateReceipt` from the hard gate.
+    // A later compile can use the live make ancestor after swift-mk build exits.
+    // A caller without that ancestor needs the GateReceipt overload.
     if let refusal = GateProof.refusal(entry: "toolchain build") {
       return refusal
     }
     return buildWithoutGateCheck(request, signingAlreadyRejected: true)
   }
 
-  /// An `XCODE_XCCONFIG_FILE` exported by the make signing prelude takes
-  /// precedence, and the function returns no override. Otherwise the function
-  /// writes an override from the identity and team in the environment. With
-  /// neither set, `SigningBuildConfig.write` returns nil and the build uses its own
-  /// signing. The function does not add ad hoc signing.
+  /// Preserve an inherited XCODE_XCCONFIG_FILE. Otherwise request a signing
+  /// override from SigningBuildConfig; omit the override when it returns nil.
   static func signingEnvironment() -> [String: String] {
     if !Env.get("XCODE_XCCONFIG_FILE").isEmpty {
       return [:]
@@ -172,8 +154,7 @@ public enum Toolchain {
     return ["XCODE_XCCONFIG_FILE": path]
   }
 
-  /// The Tuist path runs `tuist test --no-selective-testing`. Selective testing
-  /// skips the whole suite.
+  /// Disable selective testing to request the complete Tuist test suite.
   @discardableResult
   public static func test(_ request: Request) -> Int32 {
     if let rejection = rejectionForSigningOverride(request) {
@@ -249,9 +230,7 @@ public enum Toolchain {
     return Shell.run("xcodebuild", arguments)
   }
 
-  /// The dead-code coverage build reads the destinations of a scheme from this
-  /// output. xcodebuild resolves `SUPPORTED_PLATFORMS` through the xcconfig files of
-  /// the consumer, and the raw project file does not contain a value resolved that way.
+  /// Read destinations resolved by xcodebuild, including xcconfig settings.
   public static func showDestinations(
     container: String, isWorkspace: Bool, scheme: String
   ) -> Shell.Result {
@@ -286,8 +265,7 @@ public enum Toolchain {
     return args
   }
 
-  /// A missing container returns `-version`, and xcodebuild does not discover a
-  /// project.
+  /// A missing container selects the version query instead of project discovery.
   static func xcodebuildArguments(
     _ request: Request, actions: [String], resultBundleDirectory: String? = nil
   ) -> [String] {
@@ -383,19 +361,9 @@ public enum Toolchain {
 extension Toolchain {
   static let sharedCacheDisableTokens: Set<String> = ["off", "none", "0", "disabled"]
 
-  /// `-derivedDataPath` is per checkout. The Clang module cache, the SPM clone
-  /// directory, and the LLVM compilation cache store are content-addressed, and
-  /// every checkout uses one location for each. `SWIFT_MK_MODULE_CACHE`,
-  /// `SWIFT_MK_SPM_CACHE`, and `SWIFT_MK_XCODE_CACHE_PATH` set the locations.
-  ///
-  /// The compilation cache store is outside DerivedData. Xcode stores it in
-  /// `<derivedDataPath>/CompilationCache.noindex` by default, and the dead-code
-  /// coverage build deletes DerivedData. The setting has no effect when compilation
-  /// caching is off.
-  ///
-  /// With `SWIFT_MK_POOL=1`, the package cache and the module cache use a local
-  /// directory of the VM, and only SourcePackages stays on the shared host mount.
-  /// Xcode writes often to those two caches.
+  /// Cache paths are separate from DerivedData, which coverage builds delete.
+  /// Pool builds use VM-local module and package caches while package checkouts
+  /// use the configured shared location.
   static func sharedCacheArguments() -> [String] {
     var args: [String] = []
     let isPool = Env.get("SWIFT_MK_POOL") == "1"
@@ -426,9 +394,8 @@ extension Toolchain {
     return args
   }
 
-  /// Returns nil for a disable token. An empty value returns the default under
-  /// `~/Library/Caches/swift-mk`. The function does not create the directory. With
-  /// `honorDisableToken: false`, a disable token returns the default path.
+  /// With honorDisableToken false, disable tokens select the default cache path.
+  /// This function does not create the directory.
   static func resolvedSharedCachePath(
     _ envName: String, defaultSubdirectory: String, honorDisableToken: Bool = true
   ) -> String? {
@@ -497,19 +464,17 @@ extension Toolchain {
 // MARK: - Toolchain version probes
 
 extension Toolchain {
-  /// Used in cache keys.
   public static func xcodeVersionString() -> String {
     Output.debug("toolchain: reading xcodebuild -version")
     return probedToolVersion("xcodebuild", ["-version"], fallback: "xcode-unavailable")
   }
 
-  /// Used in cache keys.
   public static func swiftVersionString() -> String {
     Output.debug("toolchain: reading swift --version")
     return probedToolVersion("swift", ["--version"], fallback: "swift-unavailable")
   }
 
-  /// Cache keys depend on this trimming, which matches the output of shell `$(...)`.
+  /// Trim surrounding whitespace before using tool output in cache keys.
   private static func probedToolVersion(
     _ command: String, _ arguments: [String], fallback: String
   ) -> String {
