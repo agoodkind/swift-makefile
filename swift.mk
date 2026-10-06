@@ -271,7 +271,8 @@ SWIFT_MK_PERIPHERY_CONFIG ?= .make/periphery.yml
 
 # The tools use the shared fetched configs instead of a consumer's local
 # .swiftlint.yml, .swift-format, and .periphery.yml.
-# Top-level warnings make each ignored local config visible once.
+# Top-level make warns once per ignored local config when
+# SWIFT_MK_ALLOW_LOCAL_CONFIGS is empty.
 SWIFT_MK_ALLOW_LOCAL_CONFIGS ?=
 ifeq ($(strip $(SWIFT_MK_ALLOW_LOCAL_CONFIGS)),)
 ifeq ($(MAKELEVEL),0)
@@ -391,7 +392,7 @@ SWIFT_MK_XCODE_CACHE_DIAGNOSTICS ?= false
 # SwiftPM cache diagnostics emit a remark with the output and cache key for
 # each cached compile. The engine reads the setting from the environment.
 # GNU make exports command-line assignments automatically.
-# Consumer Makefile assignments require an explicit export.
+# swift.mk exports this setting for consumer Makefile assignments.
 SWIFT_MK_SWIFTPM_CACHE_DIAGNOSTICS ?= false
 SWIFT_MK_XCODE_CACHE_AUTO_ENABLED := $(shell awk 'BEGIN { version = "$(SWIFT_MK_XCODE_VERSION_MAJOR)" + 0; if (version >= 26) print "YES"; else print "NO"; }')
 SWIFT_MK_XCODE_CACHE_ENABLED := NO
@@ -436,9 +437,8 @@ SWIFT_MK_DERIVED_DATA ?= $(CURDIR)/.derived-data
 # The absolute exported path prevents relative-path errors in make and Swift readers.
 # The `override` assignment normalizes relative command-line values (a plain `:=`
 # loses to a command-line assignment), matching the `override LINT_GATES` hardening
-# pattern. abspath is lexical (no stat), a no-op on an already-absolute value, and
-# points a relative value at the same physical dir the consumer cwd already implied,
-# so packaging that reads BUILD_DIR is unaffected.
+# pattern. abspath resolves relative values against CURDIR without reading
+# the filesystem.
 override SWIFT_MK_DERIVED_DATA := $(abspath $(if $(strip $(SWIFT_MK_DERIVED_DATA)),$(SWIFT_MK_DERIVED_DATA),$(CURDIR)/.derived-data))
 # Worktrees and clones under one cache root can reuse build caches.
 # DerivedData defaults to a checkout-specific path to separate build output.
