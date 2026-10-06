@@ -142,8 +142,9 @@ public enum Toolchain {
     return buildWithoutGateCheck(request, signingAlreadyRejected: true)
   }
 
-  /// Preserve an inherited XCODE_XCCONFIG_FILE. Otherwise request a signing
-  /// override from SigningBuildConfig; omit the override when it returns nil.
+  /// Preserve an inherited XCODE_XCCONFIG_FILE.
+  /// Otherwise, request a signing override from SigningBuildConfig.
+  /// Omit the override when SigningBuildConfig.write() returns nil.
   static func signingEnvironment() -> [String: String] {
     if !Env.get("XCODE_XCCONFIG_FILE").isEmpty {
       return [:]
