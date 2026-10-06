@@ -56,7 +56,7 @@ public enum Toolchain {
 
   // MARK: Project generation and dependencies
 
-  /// Tuist fetches external SPM dependencies into `Tuist/.build`.
+  /// Tuist installs dependencies; xcodegen has no dependency install step.
   @discardableResult
   public static func installDependencies(_ generator: Generator) -> Int32 {
     switch generator {
@@ -168,7 +168,7 @@ public enum Toolchain {
     }
   }
 
-  /// The dead-code gate calls `buildCoverage(_:)` and does not run this command.
+  /// The dead-code gate calls `buildCoverage(_:)` instead of `buildForTesting(_:)`.
   @discardableResult
   public static func buildForTesting(_ request: Request) -> Int32 {
     if let refusal = GateProof.refusal(entry: "toolchain build-for-testing") {
