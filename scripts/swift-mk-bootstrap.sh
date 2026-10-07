@@ -78,6 +78,25 @@ LOCK_DIR=$(swift_mk_lock_dir)
 # provisioning.
 LOCK_WAIT_SECONDS=30
 
+# Creating reclaim.<pid> with mkdir permits one reclaimer per lock directory.
+# Re-reading pid confirms that the directory still records the checked dead PID.
+reclaim_stale_lock() {
+    local checked_holder="$1"
+    local recorded_holder=""
+    if ! mkdir "${LOCK_DIR}/reclaim.${checked_holder}" 2>/dev/null; then
+        return 1
+    fi
+    recorded_holder=$(cat "${LOCK_DIR}/pid" 2>/dev/null || printf '')
+    if [[ "${recorded_holder}" != "${checked_holder}" ]]; then
+        return 1
+    fi
+    if ! mv "${LOCK_DIR}" "${LOCK_DIR}.stale.$$" 2>/dev/null; then
+        return 1
+    fi
+    rm -rf "${LOCK_DIR}.stale.$$"
+    return 0
+}
+
 # The lock protects marker reads and subsequent writes under .make until
 # process exit.
 #
@@ -91,8 +110,8 @@ LOCK_WAIT_SECONDS=30
 # macOS does not ship flock.
 # A recorded process ID permits stale-lock reclamation after a holder dies.
 # Later parses require reclamation because a dead holder cannot release the lock.
-# Rename is atomic. A delayed contender can rename a replacement lock created
-# after another contender renames the stale directory.
+# A delayed contender can create a claim in a replacement lock directory.
+# A different or empty pid makes reclaim_stale_lock return 1 without renaming.
 acquire_lock() {
     local waited=0
     local holder=""
@@ -121,10 +140,8 @@ acquire_lock() {
         holder=$(cat "${LOCK_DIR}/pid" 2>/dev/null || printf '')
         if [[ -n "${holder}" ]] && ! kill -0 "${holder}" 2>/dev/null; then
             # A dead holder cannot release the lock.
-            # When two contenders run mv before either recreates LOCK_DIR, the second
-            # mv fails because the first mv removed the source path.
-            if mv "${LOCK_DIR}" "${LOCK_DIR}.stale.$$" 2>/dev/null; then
-                rm -rf "${LOCK_DIR}.stale.$$"
+            # An existing claim or a changed pid makes this contender wait.
+            if reclaim_stale_lock "${holder}"; then
                 continue
             fi
             # Another contender can reclaim the lock before the rename.
