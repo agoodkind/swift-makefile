@@ -77,17 +77,53 @@ LOCK_DIR=$(swift_mk_lock_dir)
 # A wait that exhausts the timeout indicates a problem rather than slow
 # provisioning.
 LOCK_WAIT_SECONDS=30
+RECLAIM_CLAIM_ABANDON_SECONDS=5
+
+# GNU stat -c %Y runs first; BSD stat -f %m runs next if needed.
+path_mtime_seconds() {
+    local target_path="$1"
+    local mtime=""
+    if mtime=$(stat -c %Y "${target_path}" 2>/dev/null) && [[ "${mtime}" =~ ^[0-9]+$ ]]; then
+        printf '%s' "${mtime}"
+        return 0
+    fi
+    if mtime=$(stat -f %m "${target_path}" 2>&1) && [[ "${mtime}" =~ ^[0-9]+$ ]]; then
+        printf '%s' "${mtime}"
+        return 0
+    fi
+    printf 'warning: could not read the modification time of %s: %s\n' \
+        "${target_path}" "${mtime}" >&2
+    return 1
+}
+
+# Five seconds is far longer than one rename. rmdir removes an empty claim atomically.
+remove_abandoned_claim() {
+    local claim_dir="$1"
+    local claim_mtime=""
+    local claim_age=0
+    if ! claim_mtime=$(path_mtime_seconds "${claim_dir}"); then
+        return 1
+    fi
+    claim_age=$(( $(current_epoch_seconds) - claim_mtime ))
+    if (( claim_age < RECLAIM_CLAIM_ABANDON_SECONDS )); then
+        return 1
+    fi
+    rmdir "${claim_dir}" 2>/dev/null
+}
 
 # Creating reclaim.<pid> with mkdir permits one reclaimer per lock directory.
-# Re-reading pid confirms that the directory still records the checked dead PID.
+# Re-reading pid compares the full record (PID plus token) with the checked record.
 reclaim_stale_lock() {
-    local checked_holder="$1"
+    local checked_record="$1"
+    local checked_pid="$2"
+    local claim_dir="${LOCK_DIR}/reclaim.${checked_pid}"
     local recorded_holder=""
-    if ! mkdir "${LOCK_DIR}/reclaim.${checked_holder}" 2>/dev/null; then
+    if ! mkdir "${claim_dir}" 2>/dev/null; then
+        remove_abandoned_claim "${claim_dir}"
         return 1
     fi
     recorded_holder=$(cat "${LOCK_DIR}/pid" 2>/dev/null || printf '')
-    if [[ "${recorded_holder}" != "${checked_holder}" ]]; then
+    if [[ "${recorded_holder}" != "${checked_record}" ]]; then
         return 1
     fi
     if ! mv "${LOCK_DIR}" "${LOCK_DIR}.stale.$$" 2>/dev/null; then
@@ -111,10 +147,11 @@ reclaim_stale_lock() {
 # A recorded process ID permits stale-lock reclamation after a holder dies.
 # Later parses require reclamation because a dead holder cannot release the lock.
 # A delayed contender can create a claim in a replacement lock directory.
-# A different or empty pid makes reclaim_stale_lock return 1 without renaming.
+# A changed or empty lock record makes reclaim_stale_lock return 1 without renaming.
 acquire_lock() {
     local waited=0
-    local holder=""
+    local holder_record=""
+    local holder_pid=""
     local mkdir_error=""
     while true; do
         # Only contention on an existing lock warrants waiting. A missing or
@@ -123,7 +160,10 @@ acquire_lock() {
         if mkdir_error=$(mkdir "${LOCK_DIR}" 2>&1); then
             # acquire_lock cannot identify a stale lock without a recorded process ID.
             # Later parses would exhaust the timeout and fail.
-            if ! printf '%s\n' "$$" >"${LOCK_DIR}/pid" 2>/dev/null; then
+            # The lock record format is "PID epoch_seconds ${RANDOM}${RANDOM}".
+            # PID-only files from the previous script still reclaim.
+            if ! printf '%s %s %s%s\n' "$$" "$(current_epoch_seconds)" "${RANDOM}" "${RANDOM}" \
+                >"${LOCK_DIR}/pid" 2>/dev/null; then
                 rmdir "${LOCK_DIR}" 2>/dev/null || rm -rf "${LOCK_DIR}"
                 printf 'error: could not record the lock holder in %s: a local setup problem, not a lock conflict\n' \
                     "${LOCK_DIR}" >&2
@@ -137,11 +177,12 @@ acquire_lock() {
             return 1
         fi
 
-        holder=$(cat "${LOCK_DIR}/pid" 2>/dev/null || printf '')
-        if [[ -n "${holder}" ]] && ! kill -0 "${holder}" 2>/dev/null; then
+        holder_record=$(cat "${LOCK_DIR}/pid" 2>/dev/null || printf '')
+        holder_pid="${holder_record%% *}"
+        if [[ -n "${holder_pid}" ]] && ! kill -0 "${holder_pid}" 2>/dev/null; then
             # A dead holder cannot release the lock.
             # An existing claim or a changed pid makes this contender wait.
-            if reclaim_stale_lock "${holder}"; then
+            if reclaim_stale_lock "${holder_record}" "${holder_pid}"; then
                 continue
             fi
             # Another contender can reclaim the lock before the rename.
