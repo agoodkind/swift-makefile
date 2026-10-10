@@ -43,9 +43,9 @@ VALIDATION_CONNECT_TIMEOUT=2
 VALIDATION_MAX_TIME=3
 REUSE_WINDOW_SECONDS=3600
 
-# LOCK_DIR serializes concurrent parses of one consumer directory. The lock
-# uses a directory because mkdir creates it atomically when it does not exist
-# on every supported platform.
+# LOCK_DIR serializes concurrent parses of one consumer directory.
+# A process owns the lock while its owner file is the only owner record
+# in LOCK_DIR.
 #
 # The lock directory is outside .make, under the temporary directory.
 # The directory suffix uses a digest of the consumer's absolute path, or a
@@ -77,61 +77,7 @@ LOCK_DIR=$(swift_mk_lock_dir)
 # A wait that exhausts the timeout indicates a problem rather than slow
 # provisioning.
 LOCK_WAIT_SECONDS=30
-RECLAIM_CLAIM_ABANDON_SECONDS=5
-
-# GNU stat -c %Y runs first; BSD stat -f %m runs next if needed.
-path_mtime_seconds() {
-    local target_path="$1"
-    local mtime=""
-    if mtime=$(stat -c %Y "${target_path}" 2>/dev/null) && [[ "${mtime}" =~ ^[0-9]+$ ]]; then
-        printf '%s' "${mtime}"
-        return 0
-    fi
-    if mtime=$(stat -f %m "${target_path}" 2>&1) && [[ "${mtime}" =~ ^[0-9]+$ ]]; then
-        printf '%s' "${mtime}"
-        return 0
-    fi
-    printf 'warning: could not read the modification time of %s: %s\n' \
-        "${target_path}" "${mtime}" >&2
-    return 1
-}
-
-# Five seconds is far longer than one rename. rmdir removes an empty claim atomically.
-remove_abandoned_claim() {
-    local claim_dir="$1"
-    local claim_mtime=""
-    local claim_age=0
-    if ! claim_mtime=$(path_mtime_seconds "${claim_dir}"); then
-        return 1
-    fi
-    claim_age=$(( $(current_epoch_seconds) - claim_mtime ))
-    if (( claim_age < RECLAIM_CLAIM_ABANDON_SECONDS )); then
-        return 1
-    fi
-    rmdir "${claim_dir}" 2>/dev/null
-}
-
-# Creating reclaim.<pid> with mkdir permits one reclaimer per lock directory.
-# Re-reading pid compares the full record (PID plus token) with the checked record.
-reclaim_stale_lock() {
-    local checked_record="$1"
-    local checked_pid="$2"
-    local claim_dir="${LOCK_DIR}/reclaim.${checked_pid}"
-    local recorded_holder=""
-    if ! mkdir "${claim_dir}" 2>/dev/null; then
-        remove_abandoned_claim "${claim_dir}"
-        return 1
-    fi
-    recorded_holder=$(cat "${LOCK_DIR}/pid" 2>/dev/null || printf '')
-    if [[ "${recorded_holder}" != "${checked_record}" ]]; then
-        return 1
-    fi
-    if ! mv "${LOCK_DIR}" "${LOCK_DIR}.stale.$$" 2>/dev/null; then
-        return 1
-    fi
-    rm -rf "${LOCK_DIR}.stale.$$"
-    return 0
-}
+LOCK_OWNER_FILE=""
 
 # The lock protects marker reads and subsequent writes under .make until
 # process exit.
@@ -142,53 +88,92 @@ reclaim_stale_lock() {
 # indefinitely on 304 responses if the asset checks pass and the upstream
 # ETag remains unchanged. Both parses can exit 0 without reporting the mixed tree.
 #
-# mkdir provides atomic lock creation on every filesystem this script uses.
 # macOS does not ship flock.
-# A recorded process ID permits stale-lock reclamation after a holder dies.
-# Later parses require reclamation because a dead holder cannot release the lock.
-# A delayed contender can create a claim in a replacement lock directory.
-# A changed or empty lock record makes reclaim_stale_lock return 1 without renaming.
+# At most one contender returns 0 because the later file creator lists
+# the other contender's owner record.
+# Removing a contender's own record before waiting limits interference
+# with the owner and other waiters to one attempt.
+# Dead processes cannot delete their owner files.
+# acquire_lock reclaims a record when kill -0 reports its PID as not running.
+# Unique owner.<pid>.<epoch_seconds>.<random> filenames prevent delayed
+# deletion from removing another process's record.
+# acquire_lock counts pid as another owner record and reads its PID from
+# the first field.
 acquire_lock() {
     local waited=0
-    local holder_record=""
-    local holder_pid=""
     local mkdir_error=""
+    local owner_file=""
+    local record_path=""
+    local record_name=""
+    local record_content=""
+    local record_pid=""
+    local other_count=0
+    local removed_dead_record=0
+    local -a other_records=()
     while true; do
         # Only contention on an existing lock warrants waiting. A missing or
         # unwritable TMPDIR is a local setup problem. Waiting for that failure would
         # report a lock conflict instead of the creation error.
-        if mkdir_error=$(mkdir "${LOCK_DIR}" 2>&1); then
-            # acquire_lock cannot identify a stale lock without a recorded process ID.
-            # Later parses would exhaust the timeout and fail.
-            # The lock record format is "PID epoch_seconds ${RANDOM}${RANDOM}".
-            # PID-only files from the previous script still reclaim.
-            if ! printf '%s %s %s%s\n' "$$" "$(current_epoch_seconds)" "${RANDOM}" "${RANDOM}" \
-                >"${LOCK_DIR}/pid" 2>/dev/null; then
-                rmdir "${LOCK_DIR}" 2>/dev/null || rm -rf "${LOCK_DIR}"
-                printf 'error: could not record the lock holder in %s: a local setup problem, not a lock conflict\n' \
-                    "${LOCK_DIR}" >&2
+        if ! mkdir_error=$(mkdir "${LOCK_DIR}" 2>&1); then
+            if [[ ! -d "${LOCK_DIR}" ]]; then
+                printf 'error: could not create the lock directory %s: %s. This is a local setup problem, not another build holding the lock.\n' \
+                    "${LOCK_DIR}" "${mkdir_error}" >&2
                 return 1
             fi
-            return 0
-        fi
-        if [[ ! -d "${LOCK_DIR}" ]]; then
-            printf 'error: could not create the lock directory %s: %s. This is a local setup problem, not another build holding the lock.\n' \
-                "${LOCK_DIR}" "${mkdir_error}" >&2
-            return 1
         fi
 
-        holder_record=$(cat "${LOCK_DIR}/pid" 2>/dev/null || printf '')
-        holder_pid="${holder_record%% *}"
-        if [[ -n "${holder_pid}" ]] && ! kill -0 "${holder_pid}" 2>/dev/null; then
-            # A dead holder cannot release the lock.
-            # An existing claim or a changed pid makes this contender wait.
-            if reclaim_stale_lock "${holder_record}" "${holder_pid}"; then
+        owner_file="${LOCK_DIR}/owner.$$.$(current_epoch_seconds).${RANDOM}${RANDOM}"
+        if ! printf '' 2>/dev/null >"${owner_file}"; then
+            if [[ ! -d "${LOCK_DIR}" ]]; then
                 continue
             fi
-            # Another contender can reclaim the lock before the rename.
-            # An immutable lock directory can also prevent reclamation.
-            # The wait advances the timeout to prevent endless retries after a failed
-            # rename.
+            printf 'error: could not record the lock holder in %s: a local setup problem, not a lock conflict\n' \
+                "${LOCK_DIR}" >&2
+            return 1
+        fi
+        LOCK_OWNER_FILE="${owner_file}"
+
+        other_records=()
+        other_count=0
+        for record_path in "${LOCK_DIR}"/owner.* "${LOCK_DIR}/pid"; do
+            if [[ ! -e "${record_path}" ]]; then
+                continue
+            fi
+            if [[ "${record_path}" == "${LOCK_OWNER_FILE}" ]]; then
+                continue
+            fi
+            other_records[other_count]="${record_path}"
+            other_count=$(( other_count + 1 ))
+        done
+
+        if (( other_count == 0 )); then
+            return 0
+        fi
+
+        rm -f "${LOCK_OWNER_FILE}"
+        LOCK_OWNER_FILE=""
+        removed_dead_record=0
+        for record_path in "${other_records[@]}"; do
+            record_name="${record_path##*/}"
+            if [[ "${record_name}" == "pid" ]]; then
+                record_content=$(cat "${record_path}" 2>/dev/null || printf '')
+                read -r record_pid _ <<<"${record_content}"
+            else
+                record_pid="${record_name#owner.}"
+                record_pid="${record_pid%%.*}"
+            fi
+            if [[ ! "${record_pid}" =~ ^[0-9]+$ ]]; then
+                continue
+            fi
+            if kill -0 "${record_pid}" 2>/dev/null; then
+                continue
+            fi
+            if rm -f "${record_path}"; then
+                removed_dead_record=1
+            fi
+        done
+        if (( removed_dead_record == 1 )); then
+            continue
         fi
 
         if (( waited >= LOCK_WAIT_SECONDS )); then
@@ -196,13 +181,18 @@ acquire_lock() {
                 "${LOCK_DIR}" "${LOCK_WAIT_SECONDS}" >&2
             return 1
         fi
-        sleep 1
+        # The random fraction gives waiters different retry times because equal
+        # retry times can make each waiter list the other's file on every attempt.
+        sleep "1.$(( RANDOM % 10 ))"
         waited=$(( waited + 1 ))
     done
 }
 
 release_lock() {
-    rm -rf "${LOCK_DIR}"
+    if [[ -n "${LOCK_OWNER_FILE}" ]]; then
+        rm -f "${LOCK_OWNER_FILE}"
+    fi
+    rmdir "${LOCK_DIR}" 2>/dev/null || true
 }
 
 # The temporary copy prevents replacement of the original script from

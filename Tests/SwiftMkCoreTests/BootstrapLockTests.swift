@@ -11,20 +11,22 @@ import Testing
 
 @testable import SwiftMkCore
 
-#if canImport(Darwin)
-  import Darwin
-#elseif canImport(Glibc)
-  import Glibc
-#endif
-
 // MARK: - BootstrapLockTests
 
 enum BootstrapLockTests {}
 
-private let fifoMode: mode_t = 0o600
-private let readerWaitSeconds = 10.0
-private let readerPollMicroseconds: useconds_t = 10_000
 private let contenderSettleSeconds = 2
+private let deadHolderRecoveryLimitSeconds = 10.0
+private let ownerRecordPrefix = "owner."
+private let ownerRecordSuffix = ".1000.11"
+private let checkedTokenSuffix = " 1000 11"
+private let simultaneousContenderCount = 8
+
+private let consumerTemporarySubdirectory = "/tmp"
+
+private typealias LockConsumer = (directory: String, lockDirectory: String)
+
+private typealias TimedContenderRun = (result: BootstrapHelperRunner.Result, finishedAt: Date)
 
 private func lockDirectoryPath(consumer: String, temporaryDirectory: String) async -> String {
   let script = #"cd "$1" && printf '%s' "$(pwd -P)" | shasum | cut -d' ' -f1"#
@@ -45,28 +47,7 @@ private func deadProcessIdentifier() async throws -> Int32 {
   }
 }
 
-private func openWriterOnceReaderArrives(_ path: String) async -> Int32 {
-  await OffPoolWork.run {
-    let deadline = Date().addingTimeInterval(readerWaitSeconds)
-    while Date() < deadline {
-      let descriptor = open(path, O_WRONLY | O_NONBLOCK)
-      if descriptor >= 0 {
-        return descriptor
-      }
-      usleep(readerPollMicroseconds)
-    }
-    return -1
-  }
-}
-
-private let abandonedClaimAgeSeconds = 60.0
-private let abandonedClaimRecoveryLimitSeconds = 20.0
-private let checkedTokenSuffix = " 1000 11"
-private let replacementTokenSuffix = " 2000 22"
-
-private let consumerTemporarySubdirectory = "/tmp"
-
-private func makeLockConsumer() async throws -> (directory: String, lockDirectory: String) {
+private func makeLockConsumer() async throws -> LockConsumer {
   let directory = try temporaryConsumer()
   try FileManager.default.createDirectory(
     atPath: directory + "/.make", withIntermediateDirectories: true)
@@ -78,9 +59,7 @@ private func makeLockConsumer() async throws -> (directory: String, lockDirector
   return (directory: directory, lockDirectory: lockDirectory)
 }
 
-private func runLockContender(
-  _ consumer: (directory: String, lockDirectory: String)
-) async -> BootstrapHelperRunner.Result {
+private func runLockContender(_ consumer: LockConsumer) async -> BootstrapHelperRunner.Result {
   await runHelper(
     directory: consumer.directory,
     environment: [
@@ -89,166 +68,148 @@ private func runLockContender(
     ])
 }
 
-@Test
-func staleLockReclaimLeavesALiveReplacementLockInPlace() async throws {
-  let deadHolder = try await deadProcessIdentifier()
-  let liveHolder = ProcessInfo.processInfo.processIdentifier
-  try await expectReplacementLockSurvivesReclaim(
-    checkedRecord: "\(deadHolder)\n",
-    replacementRecord: "\(liveHolder)\n",
-    removalMessage: "the contender removed a lock held by live process \(liveHolder) "
-      + "after checking dead process \(deadHolder)")
+private func runTimedLockContender(_ consumer: LockConsumer) async -> TimedContenderRun {
+  let result = await runLockContender(consumer)
+  return (result: result, finishedAt: Date())
 }
 
-private let rereadSettleMilliseconds = 500
+private func ownerFilePath(_ consumer: LockConsumer, holder: Int32) -> String {
+  consumer.lockDirectory + "/" + ownerRecordPrefix + "\(holder)" + ownerRecordSuffix
+}
 
-private func isFifo(_ path: String) -> Bool {
-  var information = stat()
-  if lstat(path, &information) != 0 {
-    return false
+private func ownerFileNames(_ consumer: LockConsumer) throws -> [String] {
+  if !FileManager.default.fileExists(atPath: consumer.lockDirectory) {
+    return []
   }
-  return (information.st_mode & S_IFMT) == S_IFIFO
+  let names = try FileManager.default.contentsOfDirectory(atPath: consumer.lockDirectory)
+  return names.filter { $0.hasPrefix(ownerRecordPrefix) }
 }
 
-private func writeRecord(_ record: String, onceReaderOpens path: String) async -> Bool {
-  let writer = await openWriterOnceReaderArrives(path)
-  if writer < 0 {
-    return false
-  }
-  let bytes = Array(record.utf8)
-  let written = write(writer, bytes, bytes.count)
-  close(writer)
-  return written == bytes.count
-}
-
-@Test
-func staleLockReclaimLeavesAReplacementLockWithAReusedPidInPlace() async throws {
-  let consumer = try await makeLockConsumer()
-  let lockDirectory = consumer.lockDirectory
-  let pidPath = lockDirectory + "/pid"
-  let replacedStaleLock = lockDirectory + ".replaced"
-  let deadHolder = try await deadProcessIdentifier()
-  let liveHolder = ProcessInfo.processInfo.processIdentifier
-  try FileManager.default.createDirectory(atPath: lockDirectory, withIntermediateDirectories: false)
-  try #require(mkfifo(pidPath, fifoMode) == 0)
-
-  async let contender = runLockContender(consumer)
-
-  let staleWriter = await openWriterOnceReaderArrives(pidPath)
-  #expect(staleWriter >= 0, "the contender never opened the stale lock's pid file")
-  try FileManager.default.moveItem(atPath: lockDirectory, toPath: replacedStaleLock)
-  try FileManager.default.createDirectory(atPath: lockDirectory, withIntermediateDirectories: false)
-  try #require(mkfifo(pidPath, fifoMode) == 0)
-  if staleWriter >= 0 {
-    let checkedBytes = Array("\(deadHolder)\(checkedTokenSuffix)\n".utf8)
-    #expect(write(staleWriter, checkedBytes, checkedBytes.count) == checkedBytes.count)
-    close(staleWriter)
-  }
-
-  let reread = await writeRecord(
-    "\(deadHolder)\(replacementTokenSuffix)\n", onceReaderOpens: pidPath)
-  #expect(reread, "the contender never re-read the replacement lock's pid file")
-  try await Task.sleep(for: .milliseconds(rereadSettleMilliseconds))
-  let removalMessage =
-    "the contender removed a replacement lock that reused PID \(deadHolder) "
-    + "with a different token"
-  #expect(isFifo(pidPath), "\(removalMessage)")
-  let nextIteration = await writeRecord(
-    "\(liveHolder)\(replacementTokenSuffix)\n", onceReaderOpens: pidPath)
-  #expect(nextIteration, "the contender never read the replacement lock on its next attempt")
-
-  removeIfPresent(lockDirectory)
-  let result = await contender
-  #expect(result.status == 0, "\(result.stderr)")
-  removeIfPresent(replacedStaleLock)
-  removeIfPresent(consumer.directory)
-}
-
-@Test
-func lockHolderCheckUsesThePidFieldOfATokenRecord() async throws {
-  let consumer = try await makeLockConsumer()
-  let liveHolder = ProcessInfo.processInfo.processIdentifier
-  let liveHolderRecord = "\(liveHolder)\(checkedTokenSuffix)\n"
+private func writeLockRecord(_ consumer: LockConsumer, path: String, content: String) throws {
   try FileManager.default.createDirectory(
     atPath: consumer.lockDirectory, withIntermediateDirectories: false)
-  try liveHolderRecord.write(
-    toFile: consumer.lockDirectory + "/pid", atomically: true, encoding: .utf8)
+  try content.write(toFile: path, atomically: true, encoding: .utf8)
+}
 
-  async let contender = runLockContender(consumer)
+private func expectContenderWaitsForLiveRecord(
+  _ consumer: LockConsumer, recordPath: String, liveHolder: Int32
+) async throws {
+  async let contender = runTimedLockContender(consumer)
   try await Task.sleep(for: .seconds(contenderSettleSeconds))
-  let lockName = (consumer.lockDirectory as NSString).lastPathComponent
-  let recordedHolder = readConsumerFile(consumer.directory, "tmp/" + lockName + "/pid")
   #expect(
-    recordedHolder == liveHolderRecord,
+    FileManager.default.fileExists(atPath: recordPath),
     "the contender removed a lock held by live process \(liveHolder)")
+  let releasedAt = Date()
+  removeIfPresent(recordPath)
 
-  removeIfPresent(consumer.lockDirectory)
-  let result = await contender
-  #expect(result.status == 0, "\(result.stderr)")
-  removeIfPresent(consumer.directory)
+  let run = await contender
+  #expect(
+    run.finishedAt >= releasedAt,
+    "the contender exited while live process \(liveHolder) held the lock")
+  #expect(run.result.status == 0, "\(run.result.stderr)")
 }
 
-@Test
-func staleLockWithAnAbandonedReclaimClaimIsAcquiredBeforeTheTimeout() async throws {
-  let consumer = try await makeLockConsumer()
-  let deadHolder = try await deadProcessIdentifier()
-  try FileManager.default.createDirectory(
-    atPath: consumer.lockDirectory, withIntermediateDirectories: false)
-  try "\(deadHolder)\n".write(
-    toFile: consumer.lockDirectory + "/pid", atomically: true, encoding: .utf8)
-  let claimDirectory = consumer.lockDirectory + "/reclaim.\(deadHolder)"
-  try FileManager.default.createDirectory(
-    atPath: claimDirectory, withIntermediateDirectories: false)
-  let claimDate = Date().addingTimeInterval(-abandonedClaimAgeSeconds)
-  try FileManager.default.setAttributes(
-    [.modificationDate: claimDate], ofItemAtPath: claimDirectory)
-
+private func expectContenderAcquiresWithinLimit(_ consumer: LockConsumer) async {
   let started = Date()
   let result = await runLockContender(consumer)
   let elapsedSeconds = Date().timeIntervalSince(started)
   #expect(result.status == 0, "\(result.stderr)")
   #expect(
-    elapsedSeconds < abandonedClaimRecoveryLimitSeconds,
-    "the contender took \(elapsedSeconds)s to acquire a stale lock with an abandoned claim")
+    elapsedSeconds < deadHolderRecoveryLimitSeconds,
+    "the contender took \(elapsedSeconds)s to acquire the lock")
+}
+
+@Test
+func deadOwnerFileIsRemovedAndTheLockIsAcquired() async throws {
+  let consumer = try await makeLockConsumer()
+  let deadHolder = try await deadProcessIdentifier()
+  let deadOwnerFile = ownerFilePath(consumer, holder: deadHolder)
+  try writeLockRecord(consumer, path: deadOwnerFile, content: "")
+
+  await expectContenderAcquiresWithinLimit(consumer)
+  #expect(
+    !FileManager.default.fileExists(atPath: deadOwnerFile),
+    "the contender left the owner file of dead process \(deadHolder) in place")
   removeIfPresent(consumer.directory)
 }
 
-private func expectReplacementLockSurvivesReclaim(
-  checkedRecord: String, replacementRecord: String, removalMessage: String
-) async throws {
+@Test
+func liveOwnerFileMakesTheContenderWait() async throws {
   let consumer = try await makeLockConsumer()
-  let directory = consumer.directory
-  let lockDirectory = consumer.lockDirectory
-  let stalePidPath = lockDirectory + "/pid"
-  let replacedStaleLock = lockDirectory + ".replaced"
+  let liveHolder = ProcessInfo.processInfo.processIdentifier
+  let liveOwnerFile = ownerFilePath(consumer, holder: liveHolder)
+  try writeLockRecord(consumer, path: liveOwnerFile, content: "")
 
-  try FileManager.default.createDirectory(atPath: lockDirectory, withIntermediateDirectories: false)
-  try #require(mkfifo(stalePidPath, fifoMode) == 0)
+  try await expectContenderWaitsForLiveRecord(
+    consumer, recordPath: liveOwnerFile, liveHolder: liveHolder)
+  removeIfPresent(consumer.directory)
+}
 
-  async let contender = runLockContender(consumer)
+@Test(arguments: ["", checkedTokenSuffix])
+func legacyPidFileOfADeadProcessIsReclaimed(recordSuffix: String) async throws {
+  let consumer = try await makeLockConsumer()
+  let deadHolder = try await deadProcessIdentifier()
+  try writeLockRecord(
+    consumer, path: consumer.lockDirectory + "/pid", content: "\(deadHolder)\(recordSuffix)\n")
 
-  // The pipe blocks the contender after it opens the stale lock's pid.
-  // The test swaps locks between the stale pid read and the reclaim attempt.
-  let writer = await openWriterOnceReaderArrives(stalePidPath)
-  #expect(writer >= 0, "the contender never opened the stale lock's pid file")
-  try FileManager.default.moveItem(atPath: lockDirectory, toPath: replacedStaleLock)
-  try FileManager.default.createDirectory(atPath: lockDirectory, withIntermediateDirectories: false)
-  try replacementRecord.write(toFile: lockDirectory + "/pid", atomically: true, encoding: .utf8)
-  if writer >= 0 {
-    let checkedBytes = Array(checkedRecord.utf8)
-    let written = write(writer, checkedBytes, checkedBytes.count)
-    #expect(written == checkedBytes.count)
-    close(writer)
+  await expectContenderAcquiresWithinLimit(consumer)
+  removeIfPresent(consumer.directory)
+}
+
+@Test
+func legacyPidFileOfALiveProcessMakesTheContenderWait() async throws {
+  let consumer = try await makeLockConsumer()
+  let liveHolder = ProcessInfo.processInfo.processIdentifier
+  let pidPath = consumer.lockDirectory + "/pid"
+  try writeLockRecord(consumer, path: pidPath, content: "\(liveHolder)\(checkedTokenSuffix)\n")
+
+  try await expectContenderWaitsForLiveRecord(
+    consumer, recordPath: pidPath, liveHolder: liveHolder)
+  removeIfPresent(consumer.directory)
+}
+
+@Test
+func releasedLockLeavesNoOwnerFileAndIsAcquiredAgain() async throws {
+  let consumer = try await makeLockConsumer()
+
+  let first = await runLockContender(consumer)
+  #expect(first.status == 0, "\(first.stderr)")
+  let remainingOwnerFiles = try ownerFileNames(consumer)
+  #expect(
+    remainingOwnerFiles.isEmpty,
+    "the contender left owner files after exiting: \(remainingOwnerFiles)")
+
+  await expectContenderAcquiresWithinLimit(consumer)
+  removeIfPresent(consumer.directory)
+}
+
+@Test
+func simultaneousContendersAllAcquireALockWithADeadOwnerFile() async throws {
+  let consumer = try await makeLockConsumer()
+  let deadHolder = try await deadProcessIdentifier()
+  try writeLockRecord(
+    consumer, path: ownerFilePath(consumer, holder: deadHolder), content: "")
+
+  let results = await withTaskGroup(of: BootstrapHelperRunner.Result.self) { group in
+    for _ in 0..<simultaneousContenderCount {
+      group.addTask {
+        await runLockContender(consumer)
+      }
+    }
+    var collected: [BootstrapHelperRunner.Result] = []
+    for await result in group {
+      collected.append(result)
+    }
+    return collected
   }
 
-  try await Task.sleep(for: .seconds(contenderSettleSeconds))
-  let lockName = (lockDirectory as NSString).lastPathComponent
-  let recordedHolder = readConsumerFile(directory, "tmp/" + lockName + "/pid")
-  #expect(recordedHolder == replacementRecord, "\(removalMessage)")
-
-  removeIfPresent(lockDirectory)
-  let result = await contender
-  #expect(result.status == 0, "\(result.stderr)")
-  removeIfPresent(replacedStaleLock)
-  removeIfPresent(directory)
+  #expect(results.count == simultaneousContenderCount)
+  for result in results {
+    #expect(result.status == 0, "\(result.stderr)")
+  }
+  let remainingOwnerFiles = try ownerFileNames(consumer)
+  #expect(
+    remainingOwnerFiles.isEmpty,
+    "the contender left owner files after exiting: \(remainingOwnerFiles)")
+  removeIfPresent(consumer.directory)
 }
