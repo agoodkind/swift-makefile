@@ -44,8 +44,8 @@ VALIDATION_MAX_TIME=3
 REUSE_WINDOW_SECONDS=3600
 
 # LOCK_DIR serializes concurrent parses of one consumer directory.
-# A process owns the lock while its owner file is the only owner record
-# in LOCK_DIR.
+# A process acquires the lock when its owner file is the only owner record
+# in LOCK_DIR. It releases the lock when it removes that file.
 #
 # The lock directory is outside .make, under the temporary directory.
 # The directory suffix uses a digest of the consumer's absolute path, or a
@@ -139,7 +139,7 @@ process_start_token() {
 # acquire_lock counts pid as another owner record and reads its PID from
 # the first field.
 acquire_lock() {
-    local waited=0
+    local wait_started_seconds="${SECONDS}"
     local mkdir_error=""
     local owner_file=""
     local record_path=""
@@ -229,6 +229,7 @@ acquire_lock() {
                 if [[ "${record_name}" == "pid" ]]; then
                     continue
                 fi
+                # Start tokens contain no dots.
                 record_token="${record_name#owner.*.}"
                 record_token="${record_token%%.*}"
                 if [[ "${record_token}" == "${UNKNOWN_START_TOKEN}" ]]; then
@@ -252,7 +253,7 @@ acquire_lock() {
             continue
         fi
 
-        if (( waited >= LOCK_WAIT_SECONDS )); then
+        if (( SECONDS - wait_started_seconds >= LOCK_WAIT_SECONDS )); then
             if [[ -n "${non_numeric_record}" ]]; then
                 printf 'swift-mk: acquire_lock did not remove lock record %s because the record has no numeric process ID.\n' \
                     "${non_numeric_record}" >&2
@@ -264,7 +265,6 @@ acquire_lock() {
         # The random fraction gives waiters different retry times because equal
         # retry times can make each waiter list the other's file on every attempt.
         sleep "1.$(( RANDOM % 10 ))"
-        waited=$(( waited + 1 ))
     done
 }
 
