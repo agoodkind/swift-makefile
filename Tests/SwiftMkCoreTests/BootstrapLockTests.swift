@@ -18,7 +18,10 @@ enum BootstrapLockTests {}
 private let contenderSettleSeconds = 2
 private let deadHolderRecoveryLimitSeconds = 10.0
 private let ownerRecordPrefix = "owner."
-private let ownerRecordSuffix = ".1000.11"
+private let ownerRecordSuffix = ".11"
+private let deadHolderStartToken = "1000"
+private let unknownStartToken = "unknown"
+private let mismatchedStartTokenSuffix = "0"
 private let checkedTokenSuffix = " 1000 11"
 private let simultaneousContenderCount = 8
 
@@ -47,6 +50,26 @@ private func deadProcessIdentifier() async throws -> Int32 {
   }
 }
 
+private let startTokenScript = #"""
+  if [[ -e "/proc/$1/stat" ]]; then
+      stat_text=$(cat "/proc/$1/stat")
+      stat_text="${stat_text##*)}"
+      read -r -a stat_fields <<<"${stat_text}"
+      printf '%s' "${stat_fields[19]}"
+  else
+      LC_ALL=C ps -o lstart= -p "$1" | tr -cd 'A-Za-z0-9'
+  fi
+  """#
+
+private func processStartToken(_ processIdentifier: Int32) async throws -> String {
+  let result = await OffPoolWork.run {
+    Shell.run("/bin/bash", ["-c", startTokenScript, "start-token", "\(processIdentifier)"])
+  }
+  let token = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+  try #require(!token.isEmpty, "\(result.stderr)")
+  return token
+}
+
 private func makeLockConsumer() async throws -> LockConsumer {
   let directory = try temporaryConsumer()
   try FileManager.default.createDirectory(
@@ -73,8 +96,11 @@ private func runTimedLockContender(_ consumer: LockConsumer) async -> TimedConte
   return (result: result, finishedAt: Date())
 }
 
-private func ownerFilePath(_ consumer: LockConsumer, holder: Int32) -> String {
-  consumer.lockDirectory + "/" + ownerRecordPrefix + "\(holder)" + ownerRecordSuffix
+private func ownerFilePath(
+  _ consumer: LockConsumer, holder: Int32, startToken: String
+) -> String {
+  let recordName = ownerRecordPrefix + "\(holder)." + startToken + ownerRecordSuffix
+  return consumer.lockDirectory + "/" + recordName
 }
 
 private func ownerFileNames(_ consumer: LockConsumer) throws -> [String] {
@@ -123,7 +149,8 @@ private func expectContenderAcquiresWithinLimit(_ consumer: LockConsumer) async 
 func deadOwnerFileIsRemovedAndTheLockIsAcquired() async throws {
   let consumer = try await makeLockConsumer()
   let deadHolder = try await deadProcessIdentifier()
-  let deadOwnerFile = ownerFilePath(consumer, holder: deadHolder)
+  let deadOwnerFile = ownerFilePath(
+    consumer, holder: deadHolder, startToken: deadHolderStartToken)
   try writeLockRecord(consumer, path: deadOwnerFile, content: "")
 
   await expectContenderAcquiresWithinLimit(consumer)
@@ -137,11 +164,41 @@ func deadOwnerFileIsRemovedAndTheLockIsAcquired() async throws {
 func liveOwnerFileMakesTheContenderWait() async throws {
   let consumer = try await makeLockConsumer()
   let liveHolder = ProcessInfo.processInfo.processIdentifier
-  let liveOwnerFile = ownerFilePath(consumer, holder: liveHolder)
+  let liveStartToken = try await processStartToken(liveHolder)
+  let liveOwnerFile = ownerFilePath(consumer, holder: liveHolder, startToken: liveStartToken)
   try writeLockRecord(consumer, path: liveOwnerFile, content: "")
 
   try await expectContenderWaitsForLiveRecord(
     consumer, recordPath: liveOwnerFile, liveHolder: liveHolder)
+  removeIfPresent(consumer.directory)
+}
+
+@Test
+func ownerFileWithAnUnknownStartTokenMakesTheContenderWait() async throws {
+  let consumer = try await makeLockConsumer()
+  let liveHolder = ProcessInfo.processInfo.processIdentifier
+  let liveOwnerFile = ownerFilePath(
+    consumer, holder: liveHolder, startToken: unknownStartToken)
+  try writeLockRecord(consumer, path: liveOwnerFile, content: "")
+
+  try await expectContenderWaitsForLiveRecord(
+    consumer, recordPath: liveOwnerFile, liveHolder: liveHolder)
+  removeIfPresent(consumer.directory)
+}
+
+@Test
+func ownerFileOfAReusedProcessIdentifierIsRemovedAndTheLockIsAcquired() async throws {
+  let consumer = try await makeLockConsumer()
+  let reusedHolder = ProcessInfo.processInfo.processIdentifier
+  let liveStartToken = try await processStartToken(reusedHolder)
+  let staleOwnerFile = ownerFilePath(
+    consumer, holder: reusedHolder, startToken: liveStartToken + mismatchedStartTokenSuffix)
+  try writeLockRecord(consumer, path: staleOwnerFile, content: "")
+
+  await expectContenderAcquiresWithinLimit(consumer)
+  #expect(
+    !FileManager.default.fileExists(atPath: staleOwnerFile),
+    "the contender left an owner file with a different start token in place")
   removeIfPresent(consumer.directory)
 }
 
@@ -188,7 +245,9 @@ func simultaneousContendersAllAcquireALockWithADeadOwnerFile() async throws {
   let consumer = try await makeLockConsumer()
   let deadHolder = try await deadProcessIdentifier()
   try writeLockRecord(
-    consumer, path: ownerFilePath(consumer, holder: deadHolder), content: "")
+    consumer,
+    path: ownerFilePath(consumer, holder: deadHolder, startToken: deadHolderStartToken),
+    content: "")
 
   let results = await withTaskGroup(of: BootstrapHelperRunner.Result.self) { group in
     for _ in 0..<simultaneousContenderCount {

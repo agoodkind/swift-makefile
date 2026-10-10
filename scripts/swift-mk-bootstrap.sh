@@ -78,6 +78,43 @@ LOCK_DIR=$(swift_mk_lock_dir)
 # provisioning.
 LOCK_WAIT_SECONDS=30
 LOCK_OWNER_FILE=""
+# The process name in field 2 can contain spaces and parentheses.
+# Deleting through the last ) makes start time at field 22 zero-based index 19.
+PROC_STAT_START_FIELD_INDEX=19
+UNKNOWN_START_TOKEN="unknown"
+LOCK_DIR_CREATE_ATTEMPTS=3
+
+# Linux start tokens are clock ticks since boot from /proc/<pid>/stat.
+# Wall clock changes do not change those ticks.
+# Without /proc, process_start_token prints ps lstart.
+# The function prints an empty string when neither source gives a value.
+process_start_token() {
+    local pid="$1"
+    local stat_path="/proc/${pid}/stat"
+    local stat_text=""
+    local ps_output=""
+    local ps_status=0
+    local -a stat_fields=()
+    if [[ -r "${stat_path}" ]]; then
+        if ! stat_text=$(cat "${stat_path}"); then
+            printf 'swift-mk: could not read %s for the start time of process %s\n' \
+                "${stat_path}" "${pid}" >&2
+            return 0
+        fi
+        stat_text="${stat_text##*)}"
+        read -r -a stat_fields <<<"${stat_text}"
+        printf '%s' "${stat_fields[PROC_STAT_START_FIELD_INDEX]:-}"
+        return 0
+    fi
+    ps_output=$(LC_ALL=C ps -o lstart= -p "${pid}") || ps_status=$?
+    if [[ ${ps_status} -ne 0 ]]; then
+        printf 'swift-mk: could not read the start time of process %s (ps exit %d)\n' \
+            "${pid}" "${ps_status}" >&2
+        return 0
+    fi
+    printf '%s' "${ps_output}" | tr -cd 'A-Za-z0-9'
+    return 0
+}
 
 # The lock protects marker reads and subsequent writes under .make until
 # process exit.
@@ -95,8 +132,10 @@ LOCK_OWNER_FILE=""
 # with the owner and other waiters to one attempt.
 # Dead processes cannot delete their owner files.
 # acquire_lock reclaims a record when kill -0 reports its PID as not running.
-# Unique owner.<pid>.<epoch_seconds>.<random> filenames prevent delayed
-# deletion from removing another process's record.
+# The operating system can reuse a dead owner's PID for an unrelated process.
+# Owner file names use owner.<pid>.<start_token>.<random>.
+# acquire_lock reclaims records when the running process's start token differs.
+# Unique names prevent delayed deletion of another process's record.
 # acquire_lock counts pid as another owner record and reads its PID from
 # the first field.
 acquire_lock() {
@@ -107,22 +146,38 @@ acquire_lock() {
     local record_name=""
     local record_content=""
     local record_pid=""
+    local record_token=""
+    local current_token=""
+    local own_token=""
     local other_count=0
+    local create_failures=0
     local removed_dead_record=0
     local -a other_records=()
+    own_token=$(process_start_token "$$")
+    if [[ -z "${own_token}" ]]; then
+        own_token="${UNKNOWN_START_TOKEN}"
+    fi
     while true; do
         # Only contention on an existing lock warrants waiting. A missing or
         # unwritable TMPDIR is a local setup problem. Waiting for that failure would
         # report a lock conflict instead of the creation error.
         if ! mkdir_error=$(mkdir "${LOCK_DIR}" 2>&1); then
             if [[ ! -d "${LOCK_DIR}" ]]; then
+                # A releasing process can remove the empty directory between mkdir's failure
+                # and the directory test. Retry up to LOCK_DIR_CREATE_ATTEMPTS before reporting
+                # a local setup problem.
+                create_failures=$(( create_failures + 1 ))
+                if (( create_failures < LOCK_DIR_CREATE_ATTEMPTS )); then
+                    continue
+                fi
                 printf 'error: could not create the lock directory %s: %s. This is a local setup problem, not another build holding the lock.\n' \
                     "${LOCK_DIR}" "${mkdir_error}" >&2
                 return 1
             fi
         fi
+        create_failures=0
 
-        owner_file="${LOCK_DIR}/owner.$$.$(current_epoch_seconds).${RANDOM}${RANDOM}"
+        owner_file="${LOCK_DIR}/owner.$$.${own_token}.${RANDOM}${RANDOM}"
         if ! printf '' 2>/dev/null >"${owner_file}"; then
             if [[ ! -d "${LOCK_DIR}" ]]; then
                 continue
@@ -166,7 +221,21 @@ acquire_lock() {
                 continue
             fi
             if kill -0 "${record_pid}" 2>/dev/null; then
-                continue
+                if [[ "${record_name}" == "pid" ]]; then
+                    continue
+                fi
+                record_token="${record_name#owner.*.}"
+                record_token="${record_token%%.*}"
+                if [[ "${record_token}" == "${UNKNOWN_START_TOKEN}" ]]; then
+                    continue
+                fi
+                current_token=$(process_start_token "${record_pid}")
+                if [[ -z "${current_token}" ]]; then
+                    continue
+                fi
+                if [[ "${current_token}" == "${record_token}" ]]; then
+                    continue
+                fi
             fi
             if rm -f "${record_path}"; then
                 removed_dead_record=1
