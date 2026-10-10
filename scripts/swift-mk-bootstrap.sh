@@ -99,7 +99,7 @@ process_start_token() {
         if ! stat_text=$(cat "${stat_path}"); then
             printf 'swift-mk: could not read %s for the start time of process %s\n' \
                 "${stat_path}" "${pid}" >&2
-            return 0
+            return 1
         fi
         stat_text="${stat_text##*)}"
         read -r -a stat_fields <<<"${stat_text}"
@@ -110,7 +110,7 @@ process_start_token() {
     if [[ ${ps_status} -ne 0 ]]; then
         printf 'swift-mk: could not read the start time of process %s (ps exit %d)\n' \
             "${pid}" "${ps_status}" >&2
-        return 0
+        return 1
     fi
     printf '%s' "${ps_output}" | tr -cd 'A-Za-z0-9'
     return 0
@@ -126,8 +126,8 @@ process_start_token() {
 # ETag remains unchanged. Both parses can exit 0 without reporting the mixed tree.
 #
 # macOS does not ship flock.
-# At most one contender returns 0 because the later file creator lists
-# the other contender's owner record.
+# The later contender lists the earlier contender's owner record.
+# Only the first contender returns 0.
 # Removing a contender's own record before waiting limits interference
 # with the owner and other waiters to one attempt.
 # Dead processes cannot delete their owner files.
@@ -152,8 +152,11 @@ acquire_lock() {
     local other_count=0
     local create_failures=0
     local removed_dead_record=0
+    local non_numeric_record=""
     local -a other_records=()
-    own_token=$(process_start_token "$$")
+    if ! own_token=$(process_start_token "$$"); then
+        own_token="${UNKNOWN_START_TOKEN}"
+    fi
     if [[ -z "${own_token}" ]]; then
         own_token="${UNKNOWN_START_TOKEN}"
     fi
@@ -208,6 +211,7 @@ acquire_lock() {
         rm -f "${LOCK_OWNER_FILE}"
         LOCK_OWNER_FILE=""
         removed_dead_record=0
+        non_numeric_record=""
         for record_path in "${other_records[@]}"; do
             record_name="${record_path##*/}"
             if [[ "${record_name}" == "pid" ]]; then
@@ -218,6 +222,7 @@ acquire_lock() {
                 record_pid="${record_pid%%.*}"
             fi
             if [[ ! "${record_pid}" =~ ^[0-9]+$ ]]; then
+                non_numeric_record="${record_path}"
                 continue
             fi
             if kill -0 "${record_pid}" 2>/dev/null; then
@@ -229,7 +234,9 @@ acquire_lock() {
                 if [[ "${record_token}" == "${UNKNOWN_START_TOKEN}" ]]; then
                     continue
                 fi
-                current_token=$(process_start_token "${record_pid}")
+                if ! current_token=$(process_start_token "${record_pid}"); then
+                    continue
+                fi
                 if [[ -z "${current_token}" ]]; then
                     continue
                 fi
@@ -246,6 +253,10 @@ acquire_lock() {
         fi
 
         if (( waited >= LOCK_WAIT_SECONDS )); then
+            if [[ -n "${non_numeric_record}" ]]; then
+                printf 'swift-mk: acquire_lock did not remove lock record %s because the record has no numeric process ID.\n' \
+                    "${non_numeric_record}" >&2
+            fi
             printf 'error: another swift-makefile parse has held %s for %ss. If no other build is running, remove that directory.\n' \
                 "${LOCK_DIR}" "${LOCK_WAIT_SECONDS}" >&2
             return 1

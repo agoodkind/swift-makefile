@@ -21,6 +21,7 @@ private let ownerRecordPrefix = "owner."
 private let ownerRecordSuffix = ".11"
 private let deadHolderStartToken = "1000"
 private let unknownStartToken = "unknown"
+private let nonNumericProcessIdentifierRecordName = "owner.notapid.unknown.11"
 private let mismatchedStartTokenSuffix = "0"
 private let checkedTokenSuffix = " 1000 11"
 private let simultaneousContenderCount = 8
@@ -183,6 +184,21 @@ func ownerFileWithAnUnknownStartTokenMakesTheContenderWait() async throws {
 
   try await expectContenderWaitsForLiveRecord(
     consumer, recordPath: liveOwnerFile, liveHolder: liveHolder)
+  removeIfPresent(consumer.directory)
+}
+
+@Test
+func ownerFileWithoutANumericProcessIdentifierIsReportedAtTheTimeout() async throws {
+  let consumer = try await makeLockConsumer()
+  let recordPath = consumer.lockDirectory + "/" + nonNumericProcessIdentifierRecordName
+  try writeLockRecord(consumer, path: recordPath, content: "")
+
+  let result = await runLockContender(consumer)
+  #expect(result.status != 0, "\(result.stderr)")
+  #expect(result.stderr.contains(recordPath), "\(result.stderr)")
+  #expect(
+    FileManager.default.fileExists(atPath: recordPath),
+    "the contender removed the lock record without a numeric process ID")
   removeIfPresent(consumer.directory)
 }
 
