@@ -2,19 +2,11 @@
 #
 # swift-mk-trace.sh
 #
-# The full make-time trace bootstrap. The engine swift.mk invokes this once at
-# parse time, before any heavy work, so the trace header is the first thing a run
-# prints; a consumer bootstrap.mk prints its own minimal header inline (a reduced
-# form of this precedence) so it needs no fetch. It runs before the swift-mk binary
-# exists, so it stays pure shell with only baseline tools.
+# The engine swift.mk invokes this trace bootstrap at parse time, before the
+# swift-mk binary exists. The script uses Bash and baseline system tools.
 #
-# It resolves one run correlation and prints it: adopt an inbound W3C TRACEPARENT,
-# else the canonical TRACE_ID/SPAN_ID pair, else the SWIFT_MK_TRACE_ID/
-# SWIFT_MK_SPAN_ID aliases, else (provisioned only) the persisted .traceparent,
-# else mint a fresh id. The chosen traceparent is written under the log directory,
-# the header is printed to stderr once per run (guarded by the .run sentinel), and
-# `ok <traceparent> <trace> <span>` is printed to stdout for the make caller to
-# parse into its exported variables.
+# The script resolves the run trace, saves the traceparent and run sentinel,
+# and prints `ok <traceparent> <trace> <span>` for make to parse.
 #
 # Inputs (environment): TRACEPARENT, TRACE_ID, SPAN_ID, SWIFT_MK_TRACE_ID,
 # SWIFT_MK_SPAN_ID, _SWIFT_MK_PROVISIONED, SWIFT_MK_ROOT. The make caller passes its
@@ -41,7 +33,7 @@ resolve_log_dir() {
     fi
 
     mkdir -p "$log_dir"
-    # Subshell keeps the caller's cwd unchanged while absolutizing for the header.
+    # Resolve the absolute path in a subshell to preserve the caller's directory.
     (cd "$log_dir" && pwd)
 }
 
@@ -166,7 +158,7 @@ random_hex() {
     return 1
 }
 
-# Split a normalized traceparent into trace and span ids for the header and .run
+# Split a normalized traceparent into trace and span ids for make and the .run
 # sentinel. The caller already validated the string through normalize_traceparent
 # or constructed it from validated ids.
 ids_from_traceparent() {
@@ -257,7 +249,6 @@ main() {
 
     if [[ "$previous_run" != "$trace" ]]; then
         printf '%s\n' "$trace" >"$run_file"
-        printf '🔎 logs=%s trace_id=%s span_id=%s\n' "$log_dir" "$trace" "$span" >&2
     fi
 
     printf 'ok %s %s %s\n' "$traceparent" "$trace" "$span"

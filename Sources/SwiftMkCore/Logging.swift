@@ -12,21 +12,15 @@ import Foundation
 
 /// The run's correlation and per-concern log files, mirroring the go engine.
 ///
-/// The first swift-mk process of a run mints the trace, prints the one-line
-/// header, and exports the traceparent so child processes it spawns join the
-/// same trace and stay quiet. Every diagnostic record is also written to a
-/// per-concern JSONL file under `.make/logs`, carrying the run's trace and span
-/// ids, so a failure is traceable from the printed header. Auxiliary subcommands
-/// that run as make prerequisites, such as `notice`, never print the header.
+/// The first swift-mk process resolves the trace and exports the traceparent
+/// for child processes. Each diagnostic record includes the run's trace and
+/// span IDs in a per-concern JSONL file under `.make/logs`.
 public enum Logging {
   /// The per-concern JSONL directory every run writes under.
   public static let logDirectory = ".make/logs"
   public static let traceparentPath = ".make/logs/.traceparent"
 
   private static let fallbackConcern = "swift-mk"
-  private static let headerlessCommands: Set<String> = [
-    "notice", "signing-xcconfig", "signing-identity",
-  ]
 
   nonisolated(unsafe) private static var started = false
   nonisolated(unsafe) private static var recording = false
@@ -61,15 +55,13 @@ public enum Logging {
       correlationValue = current
       exportCorrelation(current)
       writeTraceparent(current)
-      // The make recipe redirects stderr to hide stale-binary errors.
-      printHeaderOnce(current, to: .standardOutput)
+      recordRunOnce(current)
       startExport(current)
     }
   }
 
   /// Resolve the run's trace once: adopt an inherited traceparent, adopt the
-  /// persisted trace from the latest make run, or mint a new one, then print the
-  /// header unless this is an auxiliary subcommand.
+  /// persisted trace from the latest make run, or mint a new one.
   public static func ensureStarted() {
     withStateLock {
       ensureStartedLocked()
@@ -108,9 +100,7 @@ public enum Logging {
     }
     started = true
     correlationValue = resolveCorrelation()
-    if !isHeaderless() {
-      printHeaderOnce(correlationValue)
-    }
+    recordRunOnce(correlationValue)
     startExport(correlationValue)
   }
 
@@ -150,9 +140,8 @@ public enum Logging {
     if let logDirectoryOverride {
       return logDirectoryOverride
     }
-    // A nested make under swiftcheck/ (or any -C subdir) still joins the repo-root
-    // log tree when SWIFT_MK_ROOT points at the checkout root, so one TRACEPARENT
-    // keeps one sentinel and one header across packages.
+    // Nested make processes use the checkout root's log directory when
+    // SWIFT_MK_ROOT specifies that root.
     let root = Env.get("SWIFT_MK_ROOT").trimmingCharacters(in: .whitespacesAndNewlines)
     if !root.isEmpty {
       return (root as NSString).appendingPathComponent(logDirectory)
@@ -218,10 +207,8 @@ public enum Logging {
   }
 
   private static func startExport(_ correlation: Correlation) {
-    // Export the run's span when a collector endpoint is set. The exporter
-    // adopts the run's trace id, so a collector sees the same trace id the
-    // header prints. The flush runs at process exit through atexit, which
-    // fires even though the CLI subcommands return rather than call exit.
+    // Export the run's span when a collector endpoint exists. Flush pending
+    // records at process exit through atexit.
     OTelExport.start(correlation)
     atexit { OTelExport.shutdown() }
   }
@@ -260,21 +247,8 @@ public enum Logging {
     }
   }
 
-  private static func isHeaderless() -> Bool {
-    for argument in CommandLine.arguments.dropFirst() {
-      if argument.hasPrefix("-") {
-        continue
-      }
-      return headerlessCommands.contains(argument)
-    }
-    return false
-  }
-
-  private static func printHeaderOnce(
-    _ correlation: Correlation,
-    to handle: FileHandle = .standardError
-  ) {
-    if alreadyPrinted(correlation.traceID) {
+  private static func recordRunOnce(_ correlation: Correlation) {
+    if alreadyRecorded(correlation.traceID) {
       return
     }
     ensureLogDirectory()
@@ -283,18 +257,9 @@ public enum Logging {
     } catch {
       Output.error("swift-mk logging: write run sentinel: \(error)")
     }
-    let ids = "trace_id=\(correlation.traceID) span_id=\(correlation.spanID)"
-    let header = "🔎 logs=\(absoluteLogDirectory) \(ids)\n"
-    handle.write(Data(header.utf8))
   }
 
-  /// Absolute form of the active log directory for the printed header, so a
-  /// relative `.make/logs` still names a copyable path from any cwd.
-  private static var absoluteLogDirectory: String {
-    URL(fileURLWithPath: activeLogDirectory).standardizedFileURL.path
-  }
-
-  private static func alreadyPrinted(_ traceID: String) -> Bool {
+  private static func alreadyRecorded(_ traceID: String) -> Bool {
     guard FileManager.default.fileExists(atPath: activeSentinelPath) else {
       return false
     }

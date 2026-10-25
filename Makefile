@@ -39,9 +39,8 @@ ROOT_ARGS := \
 	SWIFTCHECK_EXTRA_EXCLUDE_PATHS='Sources/SwiftMkCore/Toolchain.swift,Sources/SwiftMkCore/Toolchain\+Generate\.swift,Sources/SwiftMkCore/Toolchain\+TuistCache\.swift,Sources/SwiftMkCore/BuildToolingAudit.swift,Sources/SwiftMkCore/SwiftPM.swift,Tests/SwiftMkCoreTests/ToolchainTests.swift,Tests/SwiftMkCoreTests/BuildToolingAuditTests.swift,Tests/SwiftMkCoreTests/SwiftPMTests.swift' \
 	SWIFTCHECK_EXTRA_BUILD_REPO='$(CURDIR)/swiftcheck'
 
-# SWIFT_MK_ROOT pins logging and the trace sentinel to the repo root even when
-# make -C swiftcheck changes the process cwd, so CHECK joins the same .make/logs
-# and does not print a second header for the same TRACEPARENT.
+# SWIFT_MK_ROOT selects the repository root log directory and run sentinel
+# when make -C swiftcheck changes the process directory.
 CHECK_ARGS := \
 	SWIFT_MK_ROOT='$(CURDIR)' \
 	SWIFT_MK_DEV_DIR='$(CURDIR)' \
@@ -252,7 +251,7 @@ check: lint
 # swift-makefile stamps its own Xcode file-header macros on every build from the
 # current git identity. Consumers invoke this target on demand instead. The build
 # recipe runs it in the same `make -f swift.mk` invocation as `build` so one
-# parse-time trace header covers both goals.
+# parse-time trace context applies to both goals.
 xcode-file-header:
 	$(ROOT_SWIFT_MK) xcode-file-header
 

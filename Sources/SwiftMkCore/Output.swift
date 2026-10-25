@@ -171,8 +171,7 @@ public enum Output {
   }
 
   private static func emit(_ text: String, to stream: Stream) {
-    // Resolve the run's trace and print the header before the first output, so
-    // the header is the first line a run produces.
+    // Resolve the run's trace before writing command output.
     Logging.ensureStarted()
     let data = Data(text.utf8)
     if appendCaptured(data) {
