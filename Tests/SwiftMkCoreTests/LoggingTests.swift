@@ -110,9 +110,7 @@ extension EnvironmentSerialized {
     }
 
     private static func expectLogDirectoryJoinsSwiftMkRoot() throws {
-      // A make -C swiftcheck process still writes the run sentinel under the checkout
-      // root when SWIFT_MK_ROOT is set, so a shared TRACEPARENT does not print a
-      // second header from a different .make/logs tree.
+      // Nested make processes write the run sentinel under SWIFT_MK_ROOT.
       let fileManager = FileManager.default
       let root = fileManager.temporaryDirectory.appendingPathComponent(
         "swift-mk-logging-root-\(UUID().uuidString)",

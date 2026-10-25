@@ -97,7 +97,6 @@ $(shell /usr/bin/env bash -c 'set -euo pipefail; \
 	fi; \
 	if [[ "$$prev" != "$$trace" ]]; then \
 		printf "%s\n" "$$trace" >"$$log_dir/.run"; \
-		printf "🔎 logs=%s trace_id=%s span_id=%s\n" "$$log_dir" "$$trace" "$$span" >&2; \
 	fi; \
 	printf "ok %s %s %s" "$$tp" "$$trace" "$$span"')
 endef

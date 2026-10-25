@@ -89,8 +89,7 @@ SWIFT_MK_TRACE_ID := $(TRACE_ID)
 SWIFT_MK_SPAN_ID := $(SPAN_ID)
 endif
 else
-# Reusing the existing make variables avoids another trace header and shell
-# interpolation of caller-supplied TRACEPARENT.
+# Reuse the existing make variables without shell interpolation of TRACEPARENT.
 # A caller can supply TRACEPARENT without separate trace and span identifiers.
 TRACE_ID := $(if $(strip $(TRACE_ID)),$(TRACE_ID),$(word 2,$(subst -, ,$(TRACEPARENT))))
 SPAN_ID := $(if $(strip $(SPAN_ID)),$(SPAN_ID),$(word 3,$(subst -, ,$(TRACEPARENT))))

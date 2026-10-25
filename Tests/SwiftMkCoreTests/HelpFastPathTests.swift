@@ -40,9 +40,11 @@ func standaloneHelpSkipsBootstrapWork() throws {
 
   let result = harness.runMake(["help"])
   #expect(result.status == 0, Comment(rawValue: result.combined))
+  #expect(result.stderr.isEmpty)
 
   let directHelp = harness.runDirectSwiftMkHelp()
   #expect(directHelp.status == 0, Comment(rawValue: directHelp.combined))
+  #expect(directHelp.stderr.isEmpty)
   #expect(result.stdout == directHelp.stdout)
   #expect(try harness.tripwireLogLines().isEmpty)
   #expect(!FileManager.default.fileExists(atPath: harness.swiftMkBinPath))
