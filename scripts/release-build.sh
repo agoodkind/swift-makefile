@@ -75,12 +75,10 @@ SWIFT_MK_ROOT="$engine_root" SWIFT_MK_BUILD_REPO="$engine_repo" bash scripts/swi
 engine="$(SWIFT_MK_ROOT="$engine_root" bash scripts/swift-mk-build.sh path)"
 "$engine" release-package --tag "$tag" --dist-dir "$dist" --signing-engine "$engine"
 
-# 3. Run `shasum -a 256` in a subshell under `set -euo pipefail` to calculate
-# checksums. If a listed file is missing, shasum exits nonzero, and set -e stops
-# the script.
-(
-    cd "$dist"
-    shasum -a 256 "swift-makefile-$artifact_version.tar.gz" "${dmg_assets[@]}" > checksums.txt
-)
+# 3. Write checksums.txt for the source tarball and both dmg files.
+# The script exits with a nonzero status if a listed file does not exist.
+# The release workflow refreshes checksums.txt after the Notarize job
+# staples the dmg files.
+bash scripts/release-checksums.sh write "$dist" "swift-makefile-$artifact_version.tar.gz" "${dmg_assets[@]}"
 
 echo "release-build: built ${dmg_assets[*]} and checksums.txt in $dist for tag $tag"

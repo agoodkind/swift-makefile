@@ -70,6 +70,7 @@ enum ReleaseBuildScriptTests {
     let engineArgumentsFile: URL
     let fakeEngine: URL
     let releaseBuildScript: URL
+    let releaseChecksumsScript: URL
 
     init(directory: URL) throws {
       self.directory = directory
@@ -79,6 +80,7 @@ enum ReleaseBuildScriptTests {
       fakeEngine = binDirectory.appendingPathComponent("swift-mk")
       let scriptsDirectory = directory.appendingPathComponent("scripts", isDirectory: true)
       releaseBuildScript = scriptsDirectory.appendingPathComponent("release-build.sh")
+      releaseChecksumsScript = scriptsDirectory.appendingPathComponent("release-checksums.sh")
 
       try FileManager.default.createDirectory(
         at: binDirectory, withIntermediateDirectories: true)
@@ -124,6 +126,10 @@ enum ReleaseBuildScriptTests {
       try FileManager.default.copyItem(
         at: URL(fileURLWithPath: source),
         to: releaseBuildScript)
+      let checksumsSource = try Self.repositoryPath(for: "scripts/release-checksums.sh")
+      try FileManager.default.copyItem(
+        at: URL(fileURLWithPath: checksumsSource),
+        to: releaseChecksumsScript)
     }
 
     private func writeFakeGit() throws {
