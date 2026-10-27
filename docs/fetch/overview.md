@@ -1,10 +1,10 @@
 # Consumer fetch
 
-A consumer does not clone the engine. It commits a bootstrap stub, includes it from its Makefile, and provisions one engine snapshot into `.make`. The snapshot carries the whole engine tree, shared configs, helper scripts, and selected modules. [`swift-mk-build.sh`](../../scripts/swift-mk-build.sh) builds the binary from that tree, resolving the package path to `.make` when no `SWIFT_MK_DEV_DIR` override points at a full checkout.
+A consumer does not clone the engine. It commits a bootstrap stub, includes it from its Makefile, and provisions one engine snapshot into `.make`. The snapshot carries the whole engine tree, shared configs, helper scripts, and selected modules. Outside release mode, [`swift-mk-build.sh`](../../scripts/swift-mk-build.sh) builds the binary from that tree, resolving the package path to `.make` when no `SWIFT_MK_DEV_DIR` override points at a full checkout.
 
 ## Bootstrap and provisioning
 
-The bootstrap stub obtains the provisioning helper and runs it. A helper already on disk is left alone. `SWIFT_MK_DEV_DIR` wins when it supplies the helper from a local checkout. Only a missing helper downloads the pinned-ref tarball from the same codeload host, repository, and ref the snapshot uses elsewhere. That download does not use the raw `main` URL, so a ref-pinned consumer does not pin its helper to `main` forever. A cold offline start fails.
+The bootstrap stub obtains the provisioning helper and runs it. A helper already on disk is left alone. `SWIFT_MK_DEV_DIR` wins when it supplies the helper from a local checkout. Only a missing helper downloads the `SWIFT_MK_API_REF` tarball from the same codeload host and repository the snapshot uses elsewhere. That download does not use the raw `main` URL, so a ref-pinned consumer does not pin its helper to `main` forever. A cold offline start fails.
 
 The helper provisions the whole `.make` snapshot, including `swift.mk`, shared lint and audit configs, and every selected module. It owns validation, reuse, and failure from that point on, so a policy change there reaches every consumer on its next parse with no consumer-repo change.
 
@@ -25,11 +25,34 @@ Mixing a single-colon consumer `help:` with the engine `help::` is a Make error.
 
 ## The engine snapshot
 
-The helper downloads the archive for the pinned ref from GitHub and extracts it with `tar --strip-components=1` so the tree lands flat under `.make`. The result is a real SwiftPM package: `.make/Package.swift`, every engine source under `.make/Sources` and `.make/Tests`, the helper scripts under `.make/scripts`, and the swiftcheck package under `.make/swiftcheck`. A source added to the engine is present in the snapshot with no manifest to maintain, so a new engine file can never leave a consumer's cold build with a declared target and missing sources.
+The helper downloads the archive for the pinned ref, or the selected release tag in release mode, from GitHub and extracts it with `tar --strip-components=1` directly under `.make`. The result is a real SwiftPM package: `.make/Package.swift`, every engine source under `.make/Sources` and `.make/Tests`, the helper scripts under `.make/scripts`, and the swiftcheck package under `.make/swiftcheck`. A source added to the engine is present in the snapshot with no manifest to maintain, so a new engine file can never leave a consumer's cold build with a declared target and missing sources.
 
-The extract is idempotent. It records an ETag in `.make/.swift-mk-snapshot-ref`, and a later run whose marker validates against upstream with a present `.make/Package.swift` skips the re-extract, so file mtimes stay stable and the tool-binary staleness guard does not force a rebuild. The extract only adds files, so it leaves `.make/logs`, `.make/build.lock`, and the built binary in place.
+The extract is idempotent. It records an ETag in `.make/.swift-mk-snapshot-ref`, and a later run whose marker validates against upstream with a present `.make/Package.swift` skips the re-extract, so file mtimes stay stable and the tool-binary staleness guard does not force a rebuild. The snapshot swap keeps `.make/logs`, `.make/build.lock`, the binary, and its resource bundles in place. Both the swap and `make update-swift-mk` also preserve `.make/swift-mk.release-tag` and `.make/libIndexStore.dylib`.
 
 The engine repository commits `Package.resolved`, and the snapshot carries it into `.make`, so a consumer resolves the same dependency graph the engine reviewed with the lockfile change that selected it. That file records the macOS graph; a Linux Dependabot resolve that drops Darwin-only pins fails Verify until the lockfile is re-resolved on macOS with `swift package resolve`.
+
+## Release mode
+
+A consumer parse selects release mode only when all of these conditions apply:
+
+- The host runs macOS on Apple silicon: `uname -s` reports `Darwin`, and `uname -m` reports `arm64`.
+- `SWIFT_MK_DEV_DIR` is empty.
+- `SWIFT_MK_BUILD_REPO` is empty.
+- `SWIFT_MK_API_REF` has the default value `main`, and neither the make command line nor the environment sets it.
+
+Every other parse uses the existing `SWIFT_MK_API_REF` snapshot and source build behavior, including a consumer Makefile that sets `SWIFT_MK_API_REF` to another ref.
+
+The provisioning helper sends a HEAD request to `https://github.com/<repo>/releases/latest` and extracts the tag from the redirect to `/releases/tag/<tag>`. GitHub excludes drafts and prereleases from this lookup. The helper extracts the tag's codeload tarball into `.make`, applies the existing ETag validation to that tag, and records the repository and tag in `.make/.swift-mk-release`.
+
+If the latest-release lookup fails outside CI, the helper reuses the installed release only when the release record matches the repository, its tag matches the installed release tag and snapshot marker, and the marker is less than one hour old. As in ref mode, this window starts when the helper provisions the tarball; a later `304` response does not renew it. On reuse, the helper prints a `swift-mk:` warning with the failure reason, lookup URL, reused tag, and marker age, then continues the parse without writing under `.make`. Otherwise, the helper fails the parse with an `error:` line containing the failure reason and lookup URL.
+
+In release mode, `swift-mk-build.sh resolve` does not run `swift build`. It downloads `checksums.txt` and `swift-mk-engine_darwin_arm64.dmg` from the selected release and compares the disk image's SHA-256 digest with the matching line in `checksums.txt`. After the checksum matches, the script mounts the disk image read-only with `hdiutil`, copies `swift-mk` and every `*.bundle` folder into `.make`, and detaches the disk image. A failed download or checksum mismatch fails resolve with the tag, asset name, and URL in the error message.
+
+The engine loads `libIndexStore.dylib` through `@rpath`, which lets dyld, the macOS dynamic linker, search configured library folders. The release build records folders inside the build host's Xcode. dyld searches the folder containing `swift-mk` (`@loader_path`) before those folders.
+
+On every resolve, the script links `.make/libIndexStore.dylib` to the library under the active developer folder that `xcode-select -p` reports. It uses the XcodeDefault toolchain for Xcode or `usr/lib` for the Command Line Tools. The link lets the downloaded engine launch with Xcode at any path without changing the signed binary. Resolve fails with an instruction to select Xcode or the Command Line Tools when neither library exists.
+
+The script runs `swift-mk version` to confirm that the installed binary launches, then records the installed tag in `.make/swift-mk.release-tag`. It skips the download when that tag matches the selected release and the binary exists. Each resolve still checks the library link and confirms that the binary launches.
 
 ## Dev-dir mode
 

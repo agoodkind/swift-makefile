@@ -203,12 +203,312 @@ swift_mk_build_from_repo() {
     printf '%s\n' "${content_key}" > "${output_path}.key"
 }
 
+# The checksum entry must match the published engine asset's filename.
+SWIFT_MK_ENGINE_ASSET="swift-mk-engine_darwin_arm64.dmg"
+SWIFT_MK_CHECKSUMS_ASSET="checksums.txt"
+# The release engine needs the active local toolchain's copy of this library.
+SWIFT_MK_INDEX_STORE_LIBRARY="libIndexStore.dylib"
+# These limits bound engine resolution when an asset request stalls.
+SWIFT_MK_DOWNLOAD_CONNECT_TIMEOUT=10
+SWIFT_MK_DOWNLOAD_MAX_TIME=300
+
+# A custom binary output path does not relocate bootstrap's release record.
+swift_mk_release_record_path() {
+    printf "%s/.make/.swift-mk-release\n" "${SWIFT_MK_ROOT:-${PWD}}"
+}
+
+# Explicit source checkouts take priority over an existing bootstrap release record.
+swift_mk_release_mode() {
+    if [[ -n "${SWIFT_MK_BUILD_REPO:-}" || -n "${SWIFT_MK_DEV_DIR:-}" ]]; then
+        return 1
+    fi
+    [[ -f "$(swift_mk_release_record_path)" ]]
+}
+
+# Read bootstrap's key=value record without evaluating it as shell code.
+swift_mk_record_field() {
+    local record_path
+    local field_name
+    record_path="$1"
+    field_name="$2"
+    awk -v name="${field_name}" 'index($0, name "=") == 1 { print substr($0, length(name) + 2) }' \
+        "${record_path}"
+}
+
+# Failure messages use a short, single-line excerpt instead of the full command log.
+swift_mk_stderr_sample() {
+    tr '\n' ' ' < "$1" | cut -c1-200
+}
+
+# The engine loads @rpath/libIndexStore.dylib. dyld searches beside swift-mk
+# through @loader_path before checking the build host's Xcode paths.
+# The link does not modify the binary or invalidate its Developer ID signature.
+# Every resolve checks the active developer directory and honors DEVELOPER_DIR.
+swift_mk_link_index_store() {
+    local output_dir
+    local developer_dir
+    local candidate
+    local library_path
+    local link_path
+
+    output_dir="$1"
+    if ! developer_dir=$(xcode-select -p); then
+        printf "swift-mk: xcode-select -p failed; select Xcode or the Command Line Tools with xcode-select -s\n" >&2
+        return 1
+    fi
+    library_path=""
+    for candidate in \
+        "${developer_dir}/Toolchains/XcodeDefault.xctoolchain/usr/lib/${SWIFT_MK_INDEX_STORE_LIBRARY}" \
+        "${developer_dir}/usr/lib/${SWIFT_MK_INDEX_STORE_LIBRARY}"; do
+        if [[ -f "${candidate}" ]]; then
+            library_path="${candidate}"
+            break
+        fi
+    done
+    if [[ -z "${library_path}" ]]; then
+        printf "swift-mk: %s not found under %s; install Xcode or the Command Line Tools and select it with xcode-select -s\n" \
+            "${SWIFT_MK_INDEX_STORE_LIBRARY}" "${developer_dir}" >&2
+        return 1
+    fi
+    link_path="${output_dir}/${SWIFT_MK_INDEX_STORE_LIBRARY}"
+    if [[ -L "${link_path}" && "$(readlink "${link_path}")" == "${library_path}" ]]; then
+        return 0
+    fi
+    ln -sfn "${library_path}" "${link_path}"
+}
+
+# An executable bit does not prove that dyld can load the engine's libraries.
+swift_mk_verify_launch() {
+    local output_path
+    local tag
+    local launch_log
+    local launch_status=0
+
+    output_path="$1"
+    tag="$2"
+    launch_log=$(mktemp "${TMPDIR:-/tmp}/swift-mk-launch.XXXXXXXX")
+    "${output_path}" version >/dev/null 2>"${launch_log}" || launch_status=$?
+    if [[ ${launch_status} -ne 0 ]]; then
+        printf "swift-mk: %s from release %s failed to launch (exit %d): %s\n" \
+            "${output_path}" "${tag}" "${launch_status}" "$(swift_mk_stderr_sample "${launch_log}")" >&2
+        rm -f "${launch_log}"
+        return 1
+    fi
+    rm -f "${launch_log}"
+}
+
+# Download failures must identify the release tag, asset, and URL.
+swift_mk_download_asset() {
+    local url
+    local destination
+    local tag
+    local asset
+    local curl_log
+    local curl_status=0
+
+    url="$1"
+    destination="$2"
+    tag="$3"
+    asset="$4"
+    curl_log="${destination}.curl.log"
+    curl -fsSL --connect-timeout "${SWIFT_MK_DOWNLOAD_CONNECT_TIMEOUT}" \
+        --max-time "${SWIFT_MK_DOWNLOAD_MAX_TIME}" \
+        -o "${destination}" "${url}" 2>"${curl_log}" || curl_status=$?
+    if [[ ${curl_status} -ne 0 ]]; then
+        printf "swift-mk: could not download %s for release %s from %s (curl exit %d): %s\n" \
+            "${asset}" "${tag}" "${url}" "${curl_status}" "$(swift_mk_stderr_sample "${curl_log}")" >&2
+        return 1
+    fi
+}
+
+# Bash suppresses -e here because the caller tests the staging subshell in an if.
+# Every fallible staging step must check its status and return on failure.
+swift_mk_stage_release_engine() {
+    local work_dir
+    local repo
+    local tag
+    local download_base
+    local dmg_url
+    local checksums_url
+    local dmg_path
+    local checksums_path
+    local expected_digest
+    local actual_digest
+    local mount_dir
+    local stage_dir
+    local attach_log
+    local detach_log
+    local bundle_path
+    local bundle_count
+
+    work_dir="$1"
+    repo="$2"
+    tag="$3"
+    download_base="${SWIFT_MK_RELEASE_BASE:-https://github.com}/${repo}/releases/download/${tag}"
+    dmg_url="${download_base}/${SWIFT_MK_ENGINE_ASSET}"
+    checksums_url="${download_base}/${SWIFT_MK_CHECKSUMS_ASSET}"
+    dmg_path="${work_dir}/${SWIFT_MK_ENGINE_ASSET}"
+    checksums_path="${work_dir}/${SWIFT_MK_CHECKSUMS_ASSET}"
+    mount_dir="${work_dir}/mount"
+    stage_dir="${work_dir}/stage"
+    attach_log="${work_dir}/attach.log"
+    detach_log="${work_dir}/detach.log"
+
+    if ! swift_mk_download_asset "${checksums_url}" "${checksums_path}" "${tag}" "${SWIFT_MK_CHECKSUMS_ASSET}"; then
+        return 1
+    fi
+    if ! swift_mk_download_asset "${dmg_url}" "${dmg_path}" "${tag}" "${SWIFT_MK_ENGINE_ASSET}"; then
+        return 1
+    fi
+
+    expected_digest=$(awk -v name="${SWIFT_MK_ENGINE_ASSET}" '$2 == name { print $1 }' "${checksums_path}")
+    if [[ -z "${expected_digest}" ]]; then
+        printf "swift-mk: %s for release %s at %s does not list %s\n" \
+            "${SWIFT_MK_CHECKSUMS_ASSET}" "${tag}" "${checksums_url}" "${SWIFT_MK_ENGINE_ASSET}" >&2
+        return 1
+    fi
+    if ! actual_digest=$(shasum -a 256 "${dmg_path}" | awk '{ print $1 }'); then
+        printf "swift-mk: shasum could not hash %s\n" "${dmg_path}" >&2
+        return 1
+    fi
+    if [[ "${actual_digest}" != "${expected_digest}" ]]; then
+        printf "swift-mk: %s for release %s from %s has sha256 %s; %s lists %s\n" \
+            "${SWIFT_MK_ENGINE_ASSET}" "${tag}" "${dmg_url}" "${actual_digest}" \
+            "${SWIFT_MK_CHECKSUMS_ASSET}" "${expected_digest}" >&2
+        return 1
+    fi
+
+    if ! mkdir -p "${mount_dir}" "${stage_dir}"; then
+        printf "swift-mk: could not create %s and %s\n" "${mount_dir}" "${stage_dir}" >&2
+        return 1
+    fi
+    if ! hdiutil attach "${dmg_path}" -readonly -nobrowse -noautoopen \
+        -mountpoint "${mount_dir}" >"${attach_log}" 2>&1; then
+        printf "swift-mk: hdiutil could not mount %s for release %s from %s: %s\n" \
+            "${SWIFT_MK_ENGINE_ASSET}" "${tag}" "${dmg_url}" "$(swift_mk_stderr_sample "${attach_log}")" >&2
+        return 1
+    fi
+    if ! printf "%s\n" "${mount_dir}" > "${work_dir}/mounted"; then
+        printf "swift-mk: could not record the mount point %s\n" "${mount_dir}" >&2
+        return 1
+    fi
+    if [[ ! -x "${mount_dir}/swift-mk" ]]; then
+        printf "swift-mk: %s for release %s from %s does not contain an executable swift-mk\n" \
+            "${SWIFT_MK_ENGINE_ASSET}" "${tag}" "${dmg_url}" >&2
+        return 1
+    fi
+    if ! cp "${mount_dir}/swift-mk" "${stage_dir}/swift-mk"; then
+        printf "swift-mk: could not copy swift-mk from %s\n" "${mount_dir}" >&2
+        return 1
+    fi
+    bundle_count=0
+    shopt -s nullglob
+    for bundle_path in "${mount_dir}"/*.bundle; do
+        if ! cp -R "${bundle_path}" "${stage_dir}/"; then
+            printf "swift-mk: could not copy %s\n" "${bundle_path}" >&2
+            return 1
+        fi
+        bundle_count=$((bundle_count + 1))
+    done
+    shopt -u nullglob
+    if ! hdiutil detach "${mount_dir}" -quiet >"${detach_log}" 2>&1; then
+        printf "swift-mk: hdiutil could not detach %s: %s\n" \
+            "${mount_dir}" "$(swift_mk_stderr_sample "${detach_log}")" >&2
+        return 1
+    fi
+    if ! rm -f "${work_dir}/mounted"; then
+        printf "swift-mk: could not remove %s\n" "${work_dir}/mounted" >&2
+        return 1
+    fi
+    if [[ ${bundle_count} -eq 0 ]]; then
+        printf "swift-mk: %s for release %s from %s does not contain a *.bundle folder\n" \
+            "${SWIFT_MK_ENGINE_ASSET}" "${tag}" "${dmg_url}" >&2
+        return 1
+    fi
+}
+
+# A failed staging step can leave the image attached. The mounted file records
+# its mount point for cleanup outside the staging subshell.
+swift_mk_cleanup_release_work_dir() {
+    local work_dir
+    local mount_dir
+    work_dir="$1"
+    if [[ -f "${work_dir}/mounted" ]]; then
+        mount_dir=$(cat "${work_dir}/mounted")
+        if ! hdiutil detach "${mount_dir}" -force -quiet; then
+            printf "swift-mk: hdiutil could not detach %s; detach it with hdiutil detach\n" "${mount_dir}" >&2
+        fi
+    fi
+    rm -rf "${work_dir}"
+}
+
+# Release binaries use a tag record because source content keys apply only to
+# locally compiled engines.
+swift_mk_install_release() {
+    local record_path
+    local output_path
+    local output_dir
+    local tag_path
+    local repo
+    local tag
+    local work_dir
+    local bundle_path
+    local bundle_name
+
+    record_path=$(swift_mk_release_record_path)
+    output_path=$(swift_mk_output_path)
+    output_dir=$(dirname "${output_path}")
+    tag_path="${output_path}.release-tag"
+    repo=$(swift_mk_record_field "${record_path}" repo)
+    tag=$(swift_mk_record_field "${record_path}" tag)
+    if [[ -z "${repo}" || -z "${tag}" ]]; then
+        printf "swift-mk: %s does not record a repo and a tag\n" "${record_path}" >&2
+        return 1
+    fi
+
+    mkdir -p "${output_dir}"
+    if [[ -x "${output_path}" && -f "${tag_path}" && "$(cat "${tag_path}")" == "${tag}" ]]; then
+        swift_mk_link_index_store "${output_dir}"
+        swift_mk_verify_launch "${output_path}" "${tag}"
+        return
+    fi
+
+    work_dir=$(mktemp -d "${output_dir}/.swift-mk-engine-download.XXXXXXXX")
+    if ! (swift_mk_stage_release_engine "${work_dir}" "${repo}" "${tag}"); then
+        swift_mk_cleanup_release_work_dir "${work_dir}"
+        return 1
+    fi
+    shopt -s nullglob
+    for bundle_path in "${work_dir}/stage"/*.bundle; do
+        bundle_name=$(basename "${bundle_path}")
+        rm -rf "${output_dir:?}/${bundle_name}"
+        mv "${bundle_path}" "${output_dir}/${bundle_name}"
+    done
+    shopt -u nullglob
+    mv "${work_dir}/stage/swift-mk" "${output_path}"
+    swift_mk_cleanup_release_work_dir "${work_dir}"
+    # Deleting the source key requires a rebuild after a switch to source mode.
+    rm -f "${output_path}.key" "${tag_path}"
+    swift_mk_link_index_store "${output_dir}"
+    swift_mk_verify_launch "${output_path}" "${tag}"
+    # Write the tag last. If this new binary fails its launch check, the next
+    # resolve must download it again.
+    printf "%s\n" "${tag}" > "${tag_path}"
+}
+
 swift_mk_resolve_bin() {
     local package_path
     local output_path
     local key_path
     local computed_key
     local stored_key
+
+    # Computing a source key runs `swift --version`. Resolve releases first to
+    # avoid invoking the source-build toolchain.
+    if swift_mk_release_mode; then
+        swift_mk_install_release
+        return
+    fi
 
     output_path=$(swift_mk_output_path)
 

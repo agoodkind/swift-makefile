@@ -3,6 +3,11 @@ SWIFT_MK := .make/swift.mk
 SWIFT_MK_BASE_URL ?= https://raw.githubusercontent.com/agoodkind/swift-makefile/main
 SWIFT_MK_API_REPO ?= agoodkind/swift-makefile
 SWIFT_MK_API_REF ?= main
+# Environment, command-line, and override assignments keep source mode even for main.
+# A Makefile assignment pins only when its value differs from main.
+SWIFT_MK_API_REF_PINNED := $(if $(filter-out file default undefined automatic,$(origin SWIFT_MK_API_REF)),1,)
+# A build checkout must disable release selection during bootstrap as well as resolve.
+SWIFT_MK_BUILD_REPO ?=
 SWIFT_MK_CODELOAD_BASE ?= https://codeload.github.com
 
 SWIFT_MK_BOOTSTRAP := .make/scripts/swift-mk-bootstrap.sh
@@ -121,7 +126,7 @@ ifneq ($(strip $(SWIFT_MK_DEV_DIR)),)
 $(if $(filter ok,$(shell mkdir -p .make && cp "$(SWIFT_MK_DEV_DIR)/swift.mk" "$(SWIFT_MK)" && printf ok)),,$(error swift-makefile failed to copy swift.mk from $(SWIFT_MK_DEV_DIR)))
 endif
 
-$(if $(filter ok,$(shell SWIFT_MK_API_REPO="$(SWIFT_MK_API_REPO)" SWIFT_MK_API_REF="$(SWIFT_MK_API_REF)" SWIFT_MK_MODULES="$(SWIFT_MK_MODULES)" SWIFT_MK_CODELOAD_BASE="$(SWIFT_MK_CODELOAD_BASE)" SWIFT_MK_DEV_DIR="$(SWIFT_MK_DEV_DIR)" _SWIFT_MK_PROVISIONED="$(_SWIFT_MK_PROVISIONED)" GITHUB_ACTIONS="$(GITHUB_ACTIONS)" GITHUB_RUN_ID="$(GITHUB_RUN_ID)" bash "$(SWIFT_MK_BOOTSTRAP)" >&2 && printf ok)),,$(error swift-makefile failed to provision the engine snapshot))
+$(if $(filter ok,$(shell SWIFT_MK_API_REPO="$(SWIFT_MK_API_REPO)" SWIFT_MK_API_REF="$(SWIFT_MK_API_REF)" SWIFT_MK_API_REF_PINNED="$(SWIFT_MK_API_REF_PINNED)" SWIFT_MK_BUILD_REPO="$(SWIFT_MK_BUILD_REPO)" SWIFT_MK_MODULES="$(SWIFT_MK_MODULES)" SWIFT_MK_CODELOAD_BASE="$(SWIFT_MK_CODELOAD_BASE)" SWIFT_MK_DEV_DIR="$(SWIFT_MK_DEV_DIR)" _SWIFT_MK_PROVISIONED="$(_SWIFT_MK_PROVISIONED)" GITHUB_ACTIONS="$(GITHUB_ACTIONS)" GITHUB_RUN_ID="$(GITHUB_RUN_ID)" bash "$(SWIFT_MK_BOOTSTRAP)" >&2 && printf ok)),,$(error swift-makefile failed to provision the engine snapshot))
 ifeq ($(strip $(SWIFT_MK_DEV_DIR)),)
 override _SWIFT_MK_PROVISIONED := 1
 endif
