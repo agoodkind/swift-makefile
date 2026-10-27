@@ -203,20 +203,33 @@ public enum DeadcodeCoverageMatrix {
 
   // MARK: Destination parsing
 
-  /// The coverage platforms named by an `xcodebuild -showdestinations` transcript. Only
-  /// the "Available destinations" section counts, so an ineligible destination never
-  /// enters the matrix. iOS device and iOS Simulator both map to `.iphonesimulator`,
-  /// since the coverage build compiles iOS on the simulator to avoid device signing.
+  /// `coveragePlatforms` counts destination lines only after a line starts with either
+  /// "Available destinations" (earlier Xcode) or "Destinations compatible with"
+  /// (Xcode 27.1, build 27A9275) in `xcodebuild -showdestinations` output.
+  static let availableSectionHeadings = ["Available destinations", "Destinations compatible with"]
+
+  /// `coveragePlatforms` stops counting when a line starts with "Ineligible destinations"
+  /// (earlier Xcode) or "Destinations incompatible with" (Xcode 27.1, build 27A9275).
+  /// The exact Xcode version that changed these headings is unknown.
+  static let unavailableSectionHeadings = [
+    "Ineligible destinations", "Destinations incompatible with",
+  ]
+
+  /// The function returns the coverage platform set from `xcodebuild -showdestinations`.
+  /// It counts destinations after headings start with `availableSectionHeadings` prefixes
+  /// until headings start with `unavailableSectionHeadings` prefixes, omitting ineligible
+  /// or incompatible ones. iOS device and iOS Simulator map to `.iphonesimulator`.
+  /// The coverage build compiles iOS on the simulator to avoid device signing.
   static func coveragePlatforms(showDestinationsOutput output: String) -> Set<CoveragePlatform> {
     var result: Set<CoveragePlatform> = []
     var inAvailableSection = false
     for rawLine in output.split(separator: "\n", omittingEmptySubsequences: false) {
       let line = rawLine.trimmingCharacters(in: .whitespaces)
-      if line.hasPrefix("Available destinations") {
+      if availableSectionHeadings.contains(where: line.hasPrefix) {
         inAvailableSection = true
         continue
       }
-      if line.hasPrefix("Ineligible destinations") {
+      if unavailableSectionHeadings.contains(where: line.hasPrefix) {
         inAvailableSection = false
         continue
       }
