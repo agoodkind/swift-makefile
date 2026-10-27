@@ -228,28 +228,28 @@ endef
 # A consumer with a bare-ref marker and no bootstrap helper requires exactly
 # one snapshot re-extraction to install the helper.
 SWIFT_MK_SNAPSHOT_HELPER := .make/scripts/swift-mk-bootstrap.sh
+# Make automatically exports only environment-origin variables to $(shell)
+# children. Later export statements do not affect this immediate call.
+# Explicit assignments supply Makefile and command-line values instead of
+# allowing the helper to use defaults.
+# GITHUB_ACTIONS and GITHUB_RUN_ID also need explicit assignments to preserve
+# the helper's CI rule when callers set them as make variables.
+define swift_mk_run_snapshot_helper
+$(if $(filter ok,$(shell SWIFT_MK_SNAPSHOT_FRESH="$(1)" SWIFT_MK_API_REPO="$(SWIFT_MK_API_REPO)" SWIFT_MK_API_REF="$(SWIFT_MK_API_REF)" SWIFT_MK_API_REF_PINNED="$(SWIFT_MK_API_REF_PINNED)" SWIFT_MK_BUILD_REPO="$(SWIFT_MK_BUILD_REPO)" SWIFT_MK_MODULES="$(SWIFT_MK_MODULES)" SWIFT_MK_CODELOAD_BASE="$(SWIFT_MK_CODELOAD_BASE)" SWIFT_MK_DEV_DIR="$(SWIFT_MK_DEV_DIR)" _SWIFT_MK_PROVISIONED="$(_SWIFT_MK_PROVISIONED)" GITHUB_ACTIONS="$(GITHUB_ACTIONS)" GITHUB_RUN_ID="$(GITHUB_RUN_ID)" bash "$(SWIFT_MK_SNAPSHOT_HELPER)" >&2 && printf ok)),,$(error swift-makefile failed to provision the engine snapshot))
+endef
 SWIFT_MK_SNAPSHOT_CURRENT := $(shell if [ -f .make/Package.swift ] && grep -q '^etag=..*' .make/.swift-mk-snapshot-ref 2>/dev/null; then printf 1; fi)
 ifeq ($(SWIFT_MK_HELPER_DIR),$(SWIFT_MK_FETCHED_SCRIPT_DIR))
 ifeq ($(strip $(_SWIFT_MK_PROVISIONED)),1)
 SWIFT_MK_SNAPSHOT := $(call swift-mk-require-one,.make/Package.swift)
 else ifneq ($(wildcard $(SWIFT_MK_SNAPSHOT_HELPER)),)
-# The bootstrap helper validates and reuses snapshots.
-# The helper reports snapshot failures.
-# The snapshot includes the helper. Consumers invoke the extracted helper on
-# the next unprovisioned parse without changing consumer configuration.
-# Explicit assignments are required because the later export statements do
-# not affect this immediate $(shell) call.
-# Make automatically exports only environment-origin variables to $(shell)
-# children. Command-line make variables require explicit assignments to
-# prevent the helper from silently using defaults.
-# The assignments forward every variable the helper reads.
-# Explicit GITHUB_ACTIONS and GITHUB_RUN_ID assignments preserve the helper's
-# CI rule when callers set these as make variables.
-SWIFT_MK_SNAPSHOT := $(if $(filter ok,$(shell SWIFT_MK_API_REPO="$(SWIFT_MK_API_REPO)" SWIFT_MK_API_REF="$(SWIFT_MK_API_REF)" SWIFT_MK_API_REF_PINNED="$(SWIFT_MK_API_REF_PINNED)" SWIFT_MK_BUILD_REPO="$(SWIFT_MK_BUILD_REPO)" SWIFT_MK_MODULES="$(SWIFT_MK_MODULES)" SWIFT_MK_CODELOAD_BASE="$(SWIFT_MK_CODELOAD_BASE)" SWIFT_MK_DEV_DIR="$(SWIFT_MK_DEV_DIR)" _SWIFT_MK_PROVISIONED="$(_SWIFT_MK_PROVISIONED)" GITHUB_ACTIONS="$(GITHUB_ACTIONS)" GITHUB_RUN_ID="$(GITHUB_RUN_ID)" bash "$(SWIFT_MK_SNAPSHOT_HELPER)" >&2 && printf ok)),,$(error swift-makefile failed to provision the engine snapshot))
+# The installed helper validates snapshots and selects release mode before
+# the binary resolver runs.
+SWIFT_MK_SNAPSHOT := $(call swift_mk_run_snapshot_helper,)
 else ifneq ($(strip $(SWIFT_MK_SNAPSHOT_CURRENT)),1)
-# The first snapshot extraction installs the bootstrap helper.
-# Subsequent unprovisioned make parses invoke the extracted helper.
-SWIFT_MK_SNAPSHOT := $(call swift_mk_snapshot)
+# Older bootstrap.mk copies fetch swift.mk without running the helper.
+# The first extraction installs the helper. Running it in this parse records
+# any selected release before the first binary resolve.
+SWIFT_MK_SNAPSHOT := $(call swift_mk_snapshot)$(call swift_mk_run_snapshot_helper,1)
 endif
 endif
 
