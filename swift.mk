@@ -64,6 +64,11 @@ ifneq ($(strip $(MAKECMDGOALS)),help)
 SWIFT_MK_BASE_URL ?= https://raw.githubusercontent.com/agoodkind/swift-makefile/main
 SWIFT_MK_API_REPO ?= agoodkind/swift-makefile
 SWIFT_MK_API_REF ?= main
+# Environment, command-line, and override assignments keep source mode even for main.
+# A Makefile assignment pins only when its value differs from main.
+SWIFT_MK_API_REF_PINNED := $(if $(filter-out file default undefined automatic,$(origin SWIFT_MK_API_REF)),1,)
+# A build checkout must disable release selection during bootstrap as well as resolve.
+SWIFT_MK_BUILD_REPO ?=
 # The download-host override permits local-server tests of the Makefile fetch
 # path.
 SWIFT_MK_CODELOAD_BASE ?= https://codeload.github.com
@@ -159,8 +164,9 @@ SWIFT_MK_NOTICES_FILE := $(if $(wildcard $(SWIFT_MK_LOCAL_NOTICES)),$(SWIFT_MK_L
 # checking required assets, or copying the stage into .make.next fails.
 # The required-asset check does not establish snapshot completeness.
 # The recipe uses find with cp -R to copy logs, build.lock, swift-mk,
-# swift-mk.key, *.bundle, swift-mk-build, dev, and *.log from .make into
-# .make.next without checking find's exit status.
+# swift-mk.key, swift-mk.release-tag, libIndexStore.dylib, *.bundle,
+# swift-mk-build, dev, and *.log from .make into .make.next without checking
+# find's exit status.
 #
 # Consumers with bootstrap.mk versions that predate the helper require this
 # inline shell before the swift-mk binary or a fetched script exists.
@@ -183,7 +189,7 @@ define _swift_mk_snapshot_commands
 	rm -rf .make.next .make.previous 2>>"$$stage_root/err" || { cat "$$stage_root/err" >&2 2>/dev/null || true; rm -rf "$$stage_root"; exit 1; }; \
 	mkdir -p .make.next || { rm -rf "$$stage_root"; exit 1; }; \
 	if [ -d .make ]; then \
-		find .make -mindepth 1 -maxdepth 1 \( -name logs -o -name build.lock -o -name swift-mk -o -name swift-mk.key -o -name '*.bundle' -o -name swift-mk-build -o -name dev -o -name '*.log' \) -exec cp -R {} .make.next/ \; ; \
+		find .make -mindepth 1 -maxdepth 1 \( -name logs -o -name build.lock -o -name swift-mk -o -name swift-mk.key -o -name swift-mk.release-tag -o -name libIndexStore.dylib -o -name '*.bundle' -o -name swift-mk-build -o -name dev -o -name '*.log' \) -exec cp -R {} .make.next/ \; ; \
 	fi; \
 	if ! cp -R "$$stage_dir/." .make.next/ 2>>"$$stage_root/err"; then cat "$$stage_root/err" >&2 2>/dev/null || true; rm -rf .make.next "$$stage_root"; exit 1; fi; \
 	rm -rf "$$stage_root"; \
@@ -239,7 +245,7 @@ else ifneq ($(wildcard $(SWIFT_MK_SNAPSHOT_HELPER)),)
 # The assignments forward every variable the helper reads.
 # Explicit GITHUB_ACTIONS and GITHUB_RUN_ID assignments preserve the helper's
 # CI rule when callers set these as make variables.
-SWIFT_MK_SNAPSHOT := $(if $(filter ok,$(shell SWIFT_MK_API_REPO="$(SWIFT_MK_API_REPO)" SWIFT_MK_API_REF="$(SWIFT_MK_API_REF)" SWIFT_MK_MODULES="$(SWIFT_MK_MODULES)" SWIFT_MK_CODELOAD_BASE="$(SWIFT_MK_CODELOAD_BASE)" SWIFT_MK_DEV_DIR="$(SWIFT_MK_DEV_DIR)" _SWIFT_MK_PROVISIONED="$(_SWIFT_MK_PROVISIONED)" GITHUB_ACTIONS="$(GITHUB_ACTIONS)" GITHUB_RUN_ID="$(GITHUB_RUN_ID)" bash "$(SWIFT_MK_SNAPSHOT_HELPER)" >&2 && printf ok)),,$(error swift-makefile failed to provision the engine snapshot))
+SWIFT_MK_SNAPSHOT := $(if $(filter ok,$(shell SWIFT_MK_API_REPO="$(SWIFT_MK_API_REPO)" SWIFT_MK_API_REF="$(SWIFT_MK_API_REF)" SWIFT_MK_API_REF_PINNED="$(SWIFT_MK_API_REF_PINNED)" SWIFT_MK_BUILD_REPO="$(SWIFT_MK_BUILD_REPO)" SWIFT_MK_MODULES="$(SWIFT_MK_MODULES)" SWIFT_MK_CODELOAD_BASE="$(SWIFT_MK_CODELOAD_BASE)" SWIFT_MK_DEV_DIR="$(SWIFT_MK_DEV_DIR)" _SWIFT_MK_PROVISIONED="$(_SWIFT_MK_PROVISIONED)" GITHUB_ACTIONS="$(GITHUB_ACTIONS)" GITHUB_RUN_ID="$(GITHUB_RUN_ID)" bash "$(SWIFT_MK_SNAPSHOT_HELPER)" >&2 && printf ok)),,$(error swift-makefile failed to provision the engine snapshot))
 else ifneq ($(strip $(SWIFT_MK_SNAPSHOT_CURRENT)),1)
 # The first snapshot extraction installs the bootstrap helper.
 # Subsequent unprovisioned make parses invoke the extracted helper.

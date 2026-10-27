@@ -57,6 +57,15 @@ private let trickleChunkIntervalMilliseconds: Int64 = 100
 private let loopbackHost = "127.0.0.1"
 private let listenBacklog: Int32 = 16
 
+// MARK: - FetchRoute
+
+/// A fixed response lets release redirects and assets share the tarball server.
+struct FetchRoute: Sendable {
+  let status: Int
+  let headers: [String: String]
+  let body: [UInt8]
+}
+
 // MARK: - FetchStateSnapshot
 
 /// One consistent read of the server state, taken under the lock so the handler
@@ -69,6 +78,7 @@ struct FetchStateSnapshot: Sendable {
   let forcedStatus: Int?
   let etagEnabled: Bool
   let trickleBytesPerSecond: Int?
+  let routes: [String: FetchRoute]
 }
 
 // MARK: - FetchState
@@ -84,6 +94,14 @@ final class FetchState: @unchecked Sendable {
   private var forcedStatus: Int?
   private var etagEnabled = true
   private var trickleBytesPerSecond: Int?
+  private var routes: [String: FetchRoute] = [:]
+
+  /// The lock serializes route updates with event-loop snapshots.
+  func setRoute(_ path: String, _ route: FetchRoute) {
+    lock.lock()
+    defer { lock.unlock() }
+    routes[path] = route
+  }
 
   /// Install an already-built archive. The build itself spawns `tar` and blocks
   /// waiting for it, so callers run it through `OffPoolWork` and hand the bytes here.
@@ -130,7 +148,8 @@ final class FetchState: @unchecked Sendable {
       stall: stallSeconds,
       forcedStatus: forcedStatus,
       etagEnabled: etagEnabled,
-      trickleBytesPerSecond: trickleBytesPerSecond
+      trickleBytesPerSecond: trickleBytesPerSecond,
+      routes: routes
     )
   }
 
@@ -264,6 +283,11 @@ final class FetchServer: @unchecked Sendable {
     state.requests()
   }
 
+  /// An exact path match overrides the normal tarball response for that request.
+  func setRoute(_ path: String, _ route: FetchRoute) {
+    state.setRoute(path, route)
+  }
+
   /// Close the listener and release the event-loop group.
   ///
   /// `syncShutdownGracefully` stood here and is what wedged the suite. NIO delivers its
@@ -323,6 +347,11 @@ private final class FetchHandler: ChannelInboundHandler, @unchecked Sendable {
 
   private func respond(context: ChannelHandlerContext) {
     let current = state.snapshot()
+
+    if let route = current.routes[requestPath] {
+      respond(route: route, context: context)
+      return
+    }
 
     let status: HTTPResponseStatus
     let contentBytes: [UInt8]
@@ -384,6 +413,26 @@ private final class FetchHandler: ChannelInboundHandler, @unchecked Sendable {
     }
     headers.add(name: "Content-Length", value: String(contentLength))
     return HTTPResponseHead(version: .http1_1, status: status, headers: headers)
+  }
+
+  /// HEAD must report the GET status and headers without transmitting the body.
+  private func respond(route: FetchRoute, context: ChannelHandlerContext) {
+    let status = HTTPResponseStatus(statusCode: route.status)
+    let transmittedBytes = requestMethod == .HEAD ? [] : route.body
+    var headers = HTTPHeaders()
+    for name in route.headers.keys.sorted() {
+      headers.add(name: name, value: route.headers[name] ?? "")
+    }
+    headers.add(name: "Content-Length", value: String(route.body.count))
+    let head = HTTPResponseHead(version: .http1_1, status: status, headers: headers)
+    context.write(wrapOutboundOut(.head(head)), promise: nil)
+    if !transmittedBytes.isEmpty {
+      var buffer = context.channel.allocator.buffer(capacity: transmittedBytes.count)
+      buffer.writeBytes(transmittedBytes)
+      context.write(wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
+    }
+    context.writeAndFlush(wrapOutboundOut(.end(nil)), promise: nil)
+    recordRequest(status: status, bytes: transmittedBytes.count)
   }
 
   private func recordRequest(status: HTTPResponseStatus, bytes: Int) {
