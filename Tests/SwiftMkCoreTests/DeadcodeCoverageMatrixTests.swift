@@ -278,6 +278,19 @@ enum DeadcodeCoverageMatrixDestinationTests {
   }
 
   @Test
+  static func coveragePlatformsReadsTheXcode27CompatibleSection() throws {
+    // Xcode 27.1 (27A9275) printed this xcodebuild -showdestinations transcript for the
+    // CellTunnelAgent macOS scheme. The fixture replaces two device identifiers and
+    // the iPhone name. The incompatible iOS device must not add .iphonesimulator.
+    let fixture = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()
+      .appendingPathComponent("Fixtures/xcode-27.1-showdestinations-macos.txt")
+    let output = try String(contentsOf: fixture, encoding: .utf8)
+    #expect(
+      DeadcodeCoverageMatrix.coveragePlatforms(showDestinationsOutput: output) == [.macosx])
+  }
+
+  @Test
   static func coveragePlatformsIsEmptyForNoUsableDestinations() {
     let output = """
         Available destinations for the "Watch" scheme:

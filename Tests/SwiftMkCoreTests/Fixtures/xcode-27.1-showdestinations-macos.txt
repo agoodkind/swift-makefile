@@ -1,0 +1,11 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -showdestinations -workspace CellTunnel.xcworkspace -scheme CellTunnelAgent
+
+
+
+	Destinations compatible with the "CellTunnelAgent" scheme:
+		{ platform:macOS, arch:arm64, id:00000000-0000000000000000, name:My Mac }
+		{ platform:macOS, name:Any Mac }
+
+	Destinations incompatible with the "CellTunnelAgent" scheme:
+		{ platform:iOS, arch:arm64e, id:00000000-0000000000000001, name:Example iPhone, error:Example iPhone’s iOS platform doesn’t match CellTunnelAgent.app’s supported platforms. You can change CellTunnelAgent.app’s Base SDK or Supported Platforms to support Example iPhone. }
