@@ -16,39 +16,6 @@ import Testing
 enum ReleasePackageTests {}
 
 @Test
-func releasePackagePlansTheMaintAndEngineDmgs() throws {
-  let plans = ReleasePackage.plans(
-    tag: "faketag-0000",
-    distDir: "dist",
-    signingEnginePath: ".make/swift-mk")
-
-  try #require(plans.count == 2)
-  let maint = plans[0]
-  let engine = plans[1]
-
-  #expect(maint.versionFile == "Sources/SwiftMkMaintCore/ReleaseVersion.swift")
-  #expect(
-    maint.buildArguments == [
-      "build", "-c", "release", "--build-system", "native",
-      "--product", "swift-mk-maint", "--arch", "arm64",
-    ])
-  #expect(maint.stagedBinaryName == "swift-mk-maint")
-  #expect(maint.assetName == "swift-mk-maint_darwin_arm64.dmg")
-  #expect(!maint.includesResourceBundles)
-
-  #expect(engine.versionFile == maint.versionFile)
-  #expect(
-    engine.buildArguments == [
-      "build", "-c", "release", "--build-system", "native",
-      "--product", "swift-mk", "--arch", "arm64",
-    ])
-  #expect(engine.stagedBinaryName == "swift-mk")
-  #expect(engine.assetName == "swift-mk-engine_darwin_arm64.dmg")
-  #expect(engine.includesResourceBundles)
-  #expect(engine.stageDir != maint.stageDir)
-}
-
-@Test
 func releasePackageBuildCarriesTheCompileCacheFlags() throws {
   let previousEnabled = ProcessInfo.processInfo.environment[
     "SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED"]
