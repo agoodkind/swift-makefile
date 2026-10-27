@@ -729,6 +729,16 @@ jobs:
     env:
       HAS_NOTARY: ${{ secrets.APPLE_NOTARY_KEY_BASE64 != '' }}
     steps:
+      # Use the checksum script from the swift-makefile revision that runs this
+      # workflow. The source job checks out the same revision.
+      - name: Check out the swift-makefile engine
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .swift-makefile
+          fetch-depth: 1
+
       - uses: actions/download-artifact@v8
         with:
           name: release-dist-${{ needs.meta.outputs.tag }}
@@ -756,6 +766,17 @@ jobs:
           notary-key-base64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
           notary-key-id: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           notary-issuer-id: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+
+      # Stapling writes the notarization ticket into each file and changes its
+      # SHA-256 digest.
+      # This step rewrites checksums.txt from the final file bytes after the last
+      # step that changes an asset. It runs on every release.
+      # The digests do not change when Notarize does not staple any files.
+      - name: Refresh release checksums
+        shell: bash
+        env:
+          DIST_DIR: ${{ inputs.dist-dir }}
+        run: bash .swift-makefile/scripts/release-checksums.sh refresh "${DIST_DIR}"
 
       - name: Attest provenance
         if: ${{ (inputs.ephemeral || inputs.attest) && steps.artifacts.outputs.list != '' }}
@@ -789,10 +810,25 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.meta.outputs.source_sha }}
+      # The source checkout cleans the workspace. Check out swift-makefile into
+      # .swift-makefile afterward.
+      - name: Check out the swift-makefile engine
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .swift-makefile
+          fetch-depth: 1
       - uses: actions/download-artifact@v8
         with:
           name: release-dist-stapled-${{ needs.meta.outputs.tag }}
           path: ${{ inputs.dist-dir }}
+      # Fail before upload if an asset's digest differs from checksums.txt.
+      - name: Verify release checksums
+        shell: bash
+        env:
+          DIST_DIR: ${{ inputs.dist-dir }}
+        run: bash .swift-makefile/scripts/release-checksums.sh verify "${DIST_DIR}"
       - name: Publish release
         env:
           RELEASE_TAG: ${{ needs.meta.outputs.tag }}
