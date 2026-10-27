@@ -94,8 +94,12 @@ public enum ReleasePackage {
         distDir: distDir,
         signingEnginePath: signingEnginePath,
         versionFile: versionFile,
+        // With compilation-cache flags, Swift Build failed on Xcode's macOS 27.0 SDK.
+        // The compiler reported an existing SDK stat cache file as missing.
+        // The same release builds completed with --build-system native.
         buildArguments: [
-          "build", "-c", "release", "--product", product.productName, "--arch", "arm64",
+          "build", "-c", "release", "--build-system", "native",
+          "--product", product.productName, "--arch", "arm64",
         ],
         builtProductName: product.productName,
         stagedBinaryName: product.productName,

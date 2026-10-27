@@ -29,7 +29,8 @@ func releasePackagePlansTheMaintAndEngineDmgs() throws {
   #expect(maint.versionFile == "Sources/SwiftMkMaintCore/ReleaseVersion.swift")
   #expect(
     maint.buildArguments == [
-      "build", "-c", "release", "--product", "swift-mk-maint", "--arch", "arm64",
+      "build", "-c", "release", "--build-system", "native",
+      "--product", "swift-mk-maint", "--arch", "arm64",
     ])
   #expect(maint.stagedBinaryName == "swift-mk-maint")
   #expect(maint.assetName == "swift-mk-maint_darwin_arm64.dmg")
@@ -38,7 +39,8 @@ func releasePackagePlansTheMaintAndEngineDmgs() throws {
   #expect(engine.versionFile == maint.versionFile)
   #expect(
     engine.buildArguments == [
-      "build", "-c", "release", "--product", "swift-mk", "--arch", "arm64",
+      "build", "-c", "release", "--build-system", "native",
+      "--product", "swift-mk", "--arch", "arm64",
     ])
   #expect(engine.stagedBinaryName == "swift-mk")
   #expect(engine.assetName == "swift-mk-engine_darwin_arm64.dmg")
