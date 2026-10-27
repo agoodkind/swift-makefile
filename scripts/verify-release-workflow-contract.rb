@@ -175,6 +175,75 @@ publish_step = find_step(publish_job.fetch("steps"), "Publish release")
 require_value(publish_step.dig("env", "RELEASE_SOURCE_SHA"), "${{ needs.meta.outputs.source_sha }}", "publish source SHA")
 require_value(publish_step.dig("env", "RELEASE_TRACK"), "${{ needs.meta.outputs.release_track }}", "publish release track")
 
+def step_index(steps, name, label)
+    index = steps.index { |step| step["name"] == name }
+    abort "release workflow contract: #{label} step #{name.inspect} is missing" if index.nil?
+
+    index
+end
+
+def require_engine_checkout(steps, label)
+    checkout = find_step(steps, "Check out the swift-makefile engine")
+    abort "release workflow contract: #{label} engine checkout is missing" if checkout.nil?
+    require_value(checkout.fetch("uses"), "actions/checkout@v7", "#{label} engine checkout action")
+    require_value(checkout.dig("with", "repository"), "${{ job.workflow_repository }}", "#{label} engine repository")
+    require_value(checkout.dig("with", "ref"), "${{ job.workflow_sha }}", "#{label} engine revision")
+    require_value(checkout.dig("with", "path"), ".swift-makefile", "#{label} engine path")
+end
+
+# Notarize refreshes checksums.txt after stapling and before uploading the
+# stapled artifact. Publish verifies checksums.txt after downloading that
+# artifact and before creating the release.
+checksum_script = ".swift-makefile/scripts/release-checksums.sh"
+notarize_job = workflow.dig("jobs", "notarize")
+notarize_steps = notarize_job.fetch("steps")
+require_engine_checkout(notarize_steps, "notarize")
+staple_index = step_index(notarize_steps, "Notarize and staple", "notarize")
+refresh_index = step_index(notarize_steps, "Refresh release checksums", "notarize")
+stapled_upload_index = notarize_steps.index do |step|
+    step["uses"] == "actions/upload-artifact@v7" &&
+        step.dig("with", "name") == "release-dist-stapled-${{ needs.meta.outputs.tag }}"
+end
+abort "release workflow contract: stapled artifact upload is missing" if stapled_upload_index.nil?
+abort "release workflow contract: checksum refresh runs before stapling" unless staple_index < refresh_index
+abort "release workflow contract: checksum refresh runs after the stapled upload" unless
+  refresh_index < stapled_upload_index
+refresh_step = notarize_steps[refresh_index]
+require_value(refresh_step["if"], nil, "checksum refresh gate")
+require_value(
+    refresh_step.fetch("run"),
+    "bash #{checksum_script} refresh \"${DIST_DIR}\"",
+    "checksum refresh command",
+)
+require_value(refresh_step.dig("env", "DIST_DIR"), "${{ inputs.dist-dir }}", "checksum refresh dist folder")
+
+require_value(publish_job.fetch("needs"), ["meta", "build", "notarize"], "publish needs")
+publish_steps = publish_job.fetch("steps")
+require_engine_checkout(publish_steps, "publish")
+publish_source_checkout_index = publish_steps.index(publish_checkout)
+publish_engine_checkout_index = step_index(publish_steps, "Check out the swift-makefile engine", "publish")
+abort "release workflow contract: publish source checkout runs after the engine checkout" unless
+  publish_source_checkout_index < publish_engine_checkout_index
+publish_download_index = publish_steps.index do |step|
+    step["uses"] == "actions/download-artifact@v8" &&
+        step.dig("with", "name") == "release-dist-stapled-${{ needs.meta.outputs.tag }}"
+end
+abort "release workflow contract: publish does not download the stapled artifact" if publish_download_index.nil?
+verify_index = step_index(publish_steps, "Verify release checksums", "publish")
+publish_release_index = step_index(publish_steps, "Publish release", "publish")
+abort "release workflow contract: checksum verification runs before the stapled download" unless
+  publish_download_index < verify_index
+abort "release workflow contract: checksum verification runs after publishing" unless
+  verify_index < publish_release_index
+verify_step = publish_steps[verify_index]
+require_value(verify_step["if"], nil, "checksum verification gate")
+require_value(
+    verify_step.fetch("run"),
+    "bash #{checksum_script} verify \"${DIST_DIR}\"",
+    "checksum verification command",
+)
+require_value(verify_step.dig("env", "DIST_DIR"), "${{ inputs.dist-dir }}", "checksum verification dist folder")
+
 post_publish_inputs = {
     "post-publish-command" => "",
     "post-publish-working-directory" => "",

@@ -22,8 +22,28 @@ SWIFT_MK_API_REF="${SWIFT_MK_API_REF:-main}"
 SWIFT_MK_CODELOAD_BASE="${SWIFT_MK_CODELOAD_BASE:-https://codeload.github.com}"
 SWIFT_MK_DEV_DIR="${SWIFT_MK_DEV_DIR:-}"
 SWIFT_MK_MODULES="${SWIFT_MK_MODULES:-}"
+# Make must pass Makefile assignments explicitly to $(shell) children.
+# Empty defaults support older bootstrap.mk copies that omit both values.
+SWIFT_MK_BUILD_REPO="${SWIFT_MK_BUILD_REPO:-}"
+SWIFT_MK_API_REF_PINNED="${SWIFT_MK_API_REF_PINNED:-}"
+# SWIFT_MK_SNAPSHOT_FRESH=1 means swift.mk extracted the SWIFT_MK_API_REF
+# tarball earlier in this make parse.
+SWIFT_MK_SNAPSHOT_FRESH="${SWIFT_MK_SNAPSHOT_FRESH:-}"
+# Tests use this internal host override for local release discovery and downloads.
+SWIFT_MK_RELEASE_BASE="${SWIFT_MK_RELEASE_BASE:-https://github.com}"
 
 MAKE_DIR=".make"
+# The default main ref follows releases. The record selects the repository and tag
+# for the separate binary resolver.
+DEFAULT_API_REF="main"
+RELEASE_RECORD_PATH="${MAKE_DIR}/.swift-mk-release"
+# swift-mk-build.sh writes this tag after installing and launching the engine
+# from a release dmg.
+INSTALLED_RELEASE_TAG_PATH="${MAKE_DIR}/swift-mk.release-tag"
+# Release lookup requires a 302 tag redirect. Tags become URL components and must
+# exclude path separators and URL escapes.
+RELEASE_TAG_PATTERN='^[A-Za-z0-9._+-]+$'
+HTTP_FOUND_STATUS="302"
 # FETCH_MAX_TIME bounds transfers that continue above the low-speed threshold.
 # FETCH_SPEED_LIMIT and FETCH_SPEED_TIME abort stalled transfers sooner.
 # Measured codeload downloads took 2.06-2.4 seconds on a good link.
@@ -484,6 +504,7 @@ install_from_stage() {
         # a name added there belongs here too.
         if ! find "${MAKE_DIR}" -mindepth 1 -maxdepth 1 \
             \( -name logs -o -name build.lock -o -name swift-mk -o -name swift-mk.key \
+               -o -name swift-mk.release-tag -o -name libIndexStore.dylib \
                -o -name '*.bundle' \
                -o -name swift-mk-build -o -name dev -o -name .swift-mk-snapshot-ref \
                -o -name .gate -o -name signing.xcconfig \
@@ -666,6 +687,158 @@ serve_from_disk_with_warning() {
     printf '%s\n' "swift-mk: upstream unreachable; serving the .make snapshot validated $(format_age $(( now - recorded ))) ago (etag ${etag_value}); validation curl exit ${validate_status}: $(stderr_sample "${log_path}"). Check network access to ${SWIFT_MK_CODELOAD_BASE}" >&2
 }
 
+# Published engine assets support Darwin arm64. When this function returns 1, the helper
+# provisions the SWIFT_MK_API_REF tarball; swift-mk-build.sh builds swift-mk from source.
+release_mode_selected() {
+    if [[ "$(uname -s)" != "Darwin" ]]; then
+        return 1
+    fi
+    if [[ "$(uname -m)" != "arm64" ]]; then
+        return 1
+    fi
+    if [[ -n "${SWIFT_MK_DEV_DIR}" || -n "${SWIFT_MK_BUILD_REPO}" ]]; then
+        return 1
+    fi
+    if [[ "${SWIFT_MK_API_REF}" != "${DEFAULT_API_REF}" ]]; then
+        return 1
+    fi
+    if [[ "${SWIFT_MK_API_REF_PINNED}" == "1" ]]; then
+        return 1
+    fi
+    return 0
+}
+
+# GitHub's /releases/latest redirect excludes drafts and prereleases.
+# This web URL does not count against the REST API's unauthenticated rate limit.
+# On failure, this function writes the reason and lookup URL to the file path
+# in its second argument. The caller decides whether the failure is fatal.
+resolve_latest_release_tag() {
+    local log_path="$1"
+    local reason_path="$2"
+    local url="${SWIFT_MK_RELEASE_BASE}/${SWIFT_MK_API_REPO}/releases/latest"
+    local response
+    local curl_status=0
+    local status_code
+    local location
+    local tag
+    response=$(curl -sS --head --connect-timeout "${FETCH_CONNECT_TIMEOUT}" \
+        --max-time "${FETCH_MAX_TIME}" \
+        -o /dev/null -w '%{http_code} %{redirect_url}' \
+        "${url}" 2>"${log_path}") || curl_status=$?
+    if [[ ${curl_status} -ne 0 ]]; then
+        printf 'latest release lookup failed (curl exit %d) for %s: %s' \
+            "${curl_status}" "${url}" "$(stderr_sample "${log_path}")" > "${reason_path}"
+        return 1
+    fi
+    status_code="${response%% *}"
+    location="${response#* }"
+    if [[ "${status_code}" != "${HTTP_FOUND_STATUS}" ]]; then
+        printf 'latest release lookup returned HTTP %s for %s' \
+            "${status_code}" "${url}" > "${reason_path}"
+        return 1
+    fi
+    tag="${location##*/releases/tag/}"
+    if [[ "${tag}" == "${location}" || ! "${tag}" =~ ${RELEASE_TAG_PATTERN} ]]; then
+        printf 'latest release lookup for %s redirected to %s, which does not name a release tag' \
+            "${url}" "${location}" > "${reason_path}"
+        return 1
+    fi
+    printf '%s' "${tag}"
+}
+
+# The reader extracts key=value fields without evaluating the record as shell code.
+read_release_record_field() {
+    local field_name="$1"
+    local line
+    if [[ ! -s "${RELEASE_RECORD_PATH}" ]]; then
+        return 1
+    fi
+    while IFS= read -r line; do
+        if [[ "${line}" == "${field_name}="* ]]; then
+            printf '%s' "${line#"${field_name}="}"
+            return 0
+        fi
+    done < "${RELEASE_RECORD_PATH}"
+    return 1
+}
+
+# Reuse requires matching installed and snapshot tags for this repository's
+# recorded release, with all required snapshot assets present. CI rejects reuse.
+# Release mode uses ref mode's one-hour window from snapshot provisioning.
+# A 304 response does not renew the marker timestamp.
+recorded_release_reusable() {
+    local recorded_repo
+    local recorded_tag
+    local installed_tag
+    local marker_ref
+    if running_in_ci; then
+        return 1
+    fi
+    if [[ ! -f "${INSTALLED_RELEASE_TAG_PATH}" ]]; then
+        return 1
+    fi
+    if ! recorded_repo=$(read_release_record_field "repo"); then
+        return 1
+    fi
+    if ! recorded_tag=$(read_release_record_field "tag"); then
+        return 1
+    fi
+    if [[ "${recorded_repo}" != "${SWIFT_MK_API_REPO}" || -z "${recorded_tag}" ]]; then
+        return 1
+    fi
+    installed_tag=$(cat "${INSTALLED_RELEASE_TAG_PATH}")
+    if [[ "${installed_tag}" != "${recorded_tag}" ]]; then
+        return 1
+    fi
+    marker_ref=$(read_marker_field "ref" || printf '')
+    if [[ "${marker_ref}" != "${recorded_tag}" ]]; then
+        return 1
+    fi
+    if ! assets_complete "${MAKE_DIR}"; then
+        return 1
+    fi
+    marker_is_recent
+}
+
+# Successful reuse still reports the lookup failure on stderr.
+# The warning includes its URL, the reused tag, and the snapshot provisioning age.
+serve_recorded_release_with_warning() {
+    local reason="$1"
+    local recorded
+    local recorded_tag
+    local now
+    recorded=$(read_marker_field "timestamp")
+    recorded_tag=$(read_release_record_field "tag")
+    now=$(current_epoch_seconds)
+    printf 'swift-mk: %s; serving release %s from .make, provisioned %s ago\n' \
+        "${reason}" "${recorded_tag}" "$(format_age $(( now - recorded )))" >&2
+}
+
+# An unchanged record must not cause a write under .make after a 304 response.
+record_release() {
+    local tag="$1"
+    local record
+    record=$(printf 'repo=%s\ntag=%s' "${SWIFT_MK_API_REPO}" "${tag}")
+    if [[ -f "${RELEASE_RECORD_PATH}" && "$(cat "${RELEASE_RECORD_PATH}")" == "${record}" ]]; then
+        return 0
+    fi
+    if ! printf '%s\n' "${record}" > "${RELEASE_RECORD_PATH}"; then
+        printf 'error: could not write %s\n' "${RELEASE_RECORD_PATH}" >&2
+        return 1
+    fi
+}
+
+# A previous release selection must not control a later source-mode resolve.
+clear_release_record() {
+    if [[ ! -e "${RELEASE_RECORD_PATH}" ]]; then
+        return 0
+    fi
+    if ! rm -f "${RELEASE_RECORD_PATH}"; then
+        printf 'error: could not remove %s\n' "${RELEASE_RECORD_PATH}" >&2
+        return 1
+    fi
+}
+
 # running_in_ci matches the test Build.runsInlineGates already uses.
 # GITHUB_ACTIONS alone is not a CI run.
 running_in_ci() {
@@ -713,11 +886,10 @@ provision() {
 }
 
 main() {
-    local known_etag=""
-    local status_code=""
-    local stored_ref=""
-    local validate_status=0
-    local validation_log=""
+    local release_tag=""
+    local lookup_log=""
+    local lookup_reason=""
+    local reason_text=""
 
     mkdir -p "${MAKE_DIR}"
 
@@ -741,6 +913,58 @@ main() {
         printf '%s\n' "error: engine snapshot is missing a required asset" >&2
         return 1
     fi
+
+    # Resolve the tag before snapshot validation. The source archive and binary
+    # must use the same release.
+    if release_mode_selected; then
+        if ! lookup_log=$(mktemp "${TMPDIR:-/tmp}/swift-mk-release-lookup.XXXXXXXX"); then
+            printf 'error: could not create a temporary file for the release lookup (mktemp failed); check TMPDIR access\n' >&2
+            return 1
+        fi
+        lookup_reason="${lookup_log}.reason"
+        if ! release_tag=$(resolve_latest_release_tag "${lookup_log}" "${lookup_reason}"); then
+            reason_text=$(cat "${lookup_reason}")
+            rm -f "${lookup_log}" "${lookup_reason}"
+            # Reuse must leave .make unchanged, including the release record.
+            if recorded_release_reusable; then
+                serve_recorded_release_with_warning "${reason_text}"
+                return 0
+            fi
+            printf 'error: %s\n' "${reason_text}" >&2
+            return 1
+        fi
+        rm -f "${lookup_log}" "${lookup_reason}"
+        SWIFT_MK_API_REF="${release_tag}"
+    else
+        if ! clear_release_record; then
+            return 1
+        fi
+        # Ref mode already has the requested snapshot from this parse and does not
+        # need another validation request. Release mode must still provision the
+        # selected tag because the inline extraction used main.
+        if [[ "${SWIFT_MK_SNAPSHOT_FRESH}" == "1" ]]; then
+            return 0
+        fi
+    fi
+
+    if ! ensure_snapshot; then
+        return 1
+    fi
+    # Record the release selection only after the matching snapshot succeeds.
+    if [[ -n "${release_tag}" ]]; then
+        record_release "${release_tag}"
+        return
+    fi
+    return 0
+}
+
+# Release binaries still need the snapshot's Makefiles, scripts, and configs.
+ensure_snapshot() {
+    local known_etag=""
+    local status_code=""
+    local stored_ref=""
+    local validate_status=0
+    local validation_log=""
 
     # CI skips marker reads and conditional requests.
     # A failed fetch never falls back to reusing the snapshot on disk.

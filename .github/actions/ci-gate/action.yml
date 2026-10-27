@@ -488,6 +488,21 @@ runs:
         # shellcheck disable=SC2086
         "${SWIFT_MK_BIN}" notarize $ARTIFACT_PATH
 
+    # This step runs refresh and then verify. The release workflow runs
+    # refresh after stapling and verify before uploading the assets.
+    - name: Refresh and verify release checksums
+      id: release-checksums
+      if: ${{ inputs.run != 'false' && inputs.gate == 'verify' && inputs.release-dry-run == 'true' && inputs.sign-release == 'true' }}
+      shell: bash
+      env:
+        SWIFT_MK_HELPER_ROOT: ${{ github.repository == 'agoodkind/swift-makefile' && '.' || '.swift-makefile' }}
+        DIST_DIR: ${{ inputs.dist-dir }}
+      run: |
+        set -euo pipefail
+
+        bash "${SWIFT_MK_HELPER_ROOT}/scripts/release-checksums.sh" refresh "${DIST_DIR}"
+        bash "${SWIFT_MK_HELPER_ROOT}/scripts/release-checksums.sh" verify "${DIST_DIR}"
+
     - name: Publish Release dry run check
       id: publish-release
       if: ${{ inputs.run != 'false' && inputs.gate == 'verify' && inputs.release-dry-run == 'true' && inputs.sign-release == 'true' }}
@@ -520,7 +535,7 @@ runs:
         # outcome, which separates a cancellation from a real stage failure
         # without a status-check function; those are defined for `if` conditions,
         # not for a step environment.
-        UNFINISHED_CONCLUSION: ${{ (steps.verify-build.outcome == 'cancelled' || steps.verify-test.outcome == 'cancelled' || steps.verify-quality.outcome == 'cancelled' || steps.release-build.outcome == 'cancelled' || steps.notarize.outcome == 'cancelled') && 'cancelled' || 'failure' }}
+        UNFINISHED_CONCLUSION: ${{ (steps.verify-build.outcome == 'cancelled' || steps.verify-test.outcome == 'cancelled' || steps.verify-quality.outcome == 'cancelled' || steps.release-build.outcome == 'cancelled' || steps.notarize.outcome == 'cancelled' || steps.release-checksums.outcome == 'cancelled') && 'cancelled' || 'failure' }}
         BUILD_PUBLISHED: ${{ steps.publish-build.outcome }}
         TESTS_PUBLISHED: ${{ steps.publish-tests.outcome }}
         QUALITY_PUBLISHED: ${{ steps.publish-quality.outcome }}

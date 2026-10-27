@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 #
-# install.sh downloads the signed, notarized swift-mk maintenance CLI
-# (version, update, cache prune) from the latest GitHub release and installs it
-# into a user bin directory. Running the lint, build, and dead-code gates stays
-# a build-from-source concern; this installs the lean host tool only.
+# install.sh downloads the signed, notarized swift-mk-maint_darwin_arm64.dmg from
+# the latest GitHub release of agoodkind/swift-makefile or the tag passed with
+# --version. It checks the notarization staple and the Developer ID team, then
+# installs swift-mk-maint into $XDG_BIN_HOME, $HOME/.local/bin, or the folder passed
+# with --bin-dir. swift-mk-maint provides the version, update, and cache prune
+# commands. The full swift-mk engine runs the lint, build, and dead-code gates.
+# install.sh does not install the engine.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/agoodkind/swift-makefile/main/install.sh | bash
@@ -24,7 +27,8 @@
 set -euo pipefail
 
 REPO="agoodkind/swift-makefile"
-ASSET="swift-mk_darwin_arm64.dmg"
+ASSET="swift-mk-maint_darwin_arm64.dmg"
+BINARY="swift-mk-maint"
 # Pin the expected Developer ID team so a validly-signed binary from a different
 # team cannot pass verification (the update engine pins the same team).
 TEAM_ID="H3BMXM4W7H"
@@ -35,9 +39,13 @@ usage() {
     # Embed the help text rather than reading $0, which is `bash` (not this
     # script) under the documented `curl | bash` pattern.
     cat <<'USAGE'
-install.sh downloads the signed, notarized swift-mk maintenance CLI
-(version, update, cache prune) from the latest GitHub release and installs it
-into a user bin directory.
+install.sh downloads the signed, notarized swift-mk-maint_darwin_arm64.dmg from
+the latest GitHub release of agoodkind/swift-makefile or the tag passed with
+--version. It checks the notarization staple and the Developer ID team, then
+installs swift-mk-maint into $XDG_BIN_HOME, $HOME/.local/bin, or the folder passed
+with --bin-dir. swift-mk-maint provides the version, update, and cache prune
+commands. The full swift-mk engine runs the lint, build, and dead-code gates.
+install.sh does not install the engine.
 
 Usage:
   curl -fsSL https://raw.githubusercontent.com/agoodkind/swift-makefile/main/install.sh | bash
@@ -109,8 +117,8 @@ install_bin() {
     hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mnt" >/dev/null \
         || die "could not mount $dmg" 2
 
-    local extracted="$mnt/swift-mk"
-    [[ -x "$extracted" ]] || die "swift-mk not found in $dmg at $extracted" 2
+    local extracted="$mnt/$BINARY"
+    [[ -x "$extracted" ]] || die "$BINARY not found in $dmg at $extracted" 2
 
     # Verify the mounted binary BEFORE writing it into the bin dir, so a binary
     # that fails verification is never left on disk. Pin the Developer ID team.
@@ -123,9 +131,9 @@ install_bin() {
     esac
 
     mkdir -p "$BIN_DIR"
-    install -m 0755 "$extracted" "$BIN_DIR/swift-mk" || die "install failed: $BIN_DIR/swift-mk" 2
-    printf 'install.sh: installed %s (%s)\n' "$BIN_DIR/swift-mk" "$tag"
-    "$BIN_DIR/swift-mk" version
+    install -m 0755 "$extracted" "$BIN_DIR/$BINARY" || die "install failed: $BIN_DIR/$BINARY" 2
+    printf 'install.sh: installed %s (%s)\n' "$BIN_DIR/$BINARY" "$tag"
+    "$BIN_DIR/$BINARY" version
 }
 
 while [[ $# -gt 0 ]]; do

@@ -6,17 +6,22 @@
 #
 # Artifacts:
 #   - swift-makefile-<artifact-version>.tar.gz  the source snapshot (unsigned)
-#   - swift-mk_darwin_arm64.dmg    the signed swift-mk CLI, ready for notarize+staple
-#   - checksums.txt                sha256 of both artifacts
+#   - swift-mk-maint_darwin_arm64.dmg   the signed swift-mk-maint maintenance tool
+#   - swift-mk-engine_darwin_arm64.dmg  the signed swift-mk engine and its
+#                                       *.bundle resource folders. The engine
+#                                       reads its lint configs from these folders.
+#   - checksums.txt                     sha256 digests of the source tarball
+#                                       and both dmg files.
 #
 # Signing: the full swift-mk engine resolves the identity and runs codesign-run.
 # When no identity resolves (a secretless fork run) signing is skipped so CI stays
 # green; the workflow's notarize step is already gated on the notary secrets.
 #
-# Versioning: RELEASE_TAG is set by the workflow. When present and not "dev" the
-# full swift-mk engine stamps it into the maintenance ReleaseVersion.swift before
-# the lean release build, so the published binary reports its tag from
-# `swift-mk version`. The CI checkout is disposable, so the in-place edit is safe.
+# Versioning: When RELEASE_TAG is present and not "dev", the engine writes the tag
+# into Sources/SwiftMkMaintCore/ReleaseVersion.swift before both release builds.
+# Both products compile that file. `swift-mk-maint version` and `swift-mk version`
+# print the tag. The script edits ReleaseVersion.swift in place. CI runs the
+# script in a disposable checkout.
 
 set -euo pipefail
 
@@ -45,7 +50,7 @@ if [[ ! "$artifact_version" =~ ^[A-Za-z0-9._-]+$ ]]; then
     echo "release-build: ARTIFACT_VERSION has unsafe characters (want [A-Za-z0-9._-]): $artifact_version" >&2
     exit 1
 fi
-asset="swift-mk_darwin_arm64.dmg"
+dmg_assets=("swift-mk-maint_darwin_arm64.dmg" "swift-mk-engine_darwin_arm64.dmg")
 # Anchor the engine SOURCE tree to the current checkout ($PWD) rather than
 # inheriting SWIFT_MK_ROOT / SWIFT_MK_BUILD_REPO from the environment, so a caller
 # that has those set for another swift-mk workflow cannot build this release
@@ -63,15 +68,17 @@ mkdir -p "$dist"
 # 1. Source snapshot (kept for parity with the prior self-release; unsigned).
 git archive --format tar.gz --output "$dist/swift-makefile-$artifact_version.tar.gz" HEAD
 
-# 2. Resolve the full engine that owns stamping, lean build, dmg assembly, and signing.
+# 2. Resolve the engine and run `swift-mk release-package`. The engine stamps the
+# version, builds both release products from the same checkout, and assembles
+# both dmg files in the dist folder. It signs them when a signing identity resolves.
 SWIFT_MK_ROOT="$engine_root" SWIFT_MK_BUILD_REPO="$engine_repo" bash scripts/swift-mk-build.sh resolve
 engine="$(SWIFT_MK_ROOT="$engine_root" bash scripts/swift-mk-build.sh path)"
-"$engine" release-package-maint --tag "$tag" --dist-dir "$dist" --signing-engine "$engine"
+"$engine" release-package --tag "$tag" --dist-dir "$dist" --signing-engine "$engine"
 
-# 3. Checksums over every published artifact.
-(
-    cd "$dist"
-    shasum -a 256 "swift-makefile-$artifact_version.tar.gz" "$asset" > checksums.txt
-)
+# 3. Write checksums.txt for the source tarball and both dmg files.
+# The script exits with a nonzero status if a listed file does not exist.
+# The release workflow refreshes checksums.txt after the Notarize job
+# staples the dmg files.
+bash scripts/release-checksums.sh write "$dist" "swift-makefile-$artifact_version.tar.gz" "${dmg_assets[@]}"
 
-echo "release-build: built $dist/$asset and checksums.txt for tag $tag"
+echo "release-build: built ${dmg_assets[*]} and checksums.txt in $dist for tag $tag"

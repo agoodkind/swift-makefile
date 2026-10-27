@@ -30,8 +30,10 @@ enum ReleaseBuildScriptTests {
         FileManager.default.fileExists(atPath: harness.sourceArchive(version: artifactVersion).path)
       )
       #expect(!FileManager.default.fileExists(atPath: harness.sourceArchive(version: tag).path))
-      #expect(engineArguments.contains("--tag \(tag)"))
+      #expect(engineArguments.hasPrefix("release-package --tag \(tag)"))
       #expect(checksums.contains("swift-makefile-\(artifactVersion).tar.gz"))
+      #expect(checksums.contains("swift-mk-maint_darwin_arm64.dmg"))
+      #expect(checksums.contains("swift-mk-engine_darwin_arm64.dmg"))
     }
   }
 
@@ -68,6 +70,7 @@ enum ReleaseBuildScriptTests {
     let engineArgumentsFile: URL
     let fakeEngine: URL
     let releaseBuildScript: URL
+    let releaseChecksumsScript: URL
 
     init(directory: URL) throws {
       self.directory = directory
@@ -77,6 +80,7 @@ enum ReleaseBuildScriptTests {
       fakeEngine = binDirectory.appendingPathComponent("swift-mk")
       let scriptsDirectory = directory.appendingPathComponent("scripts", isDirectory: true)
       releaseBuildScript = scriptsDirectory.appendingPathComponent("release-build.sh")
+      releaseChecksumsScript = scriptsDirectory.appendingPathComponent("release-checksums.sh")
 
       try FileManager.default.createDirectory(
         at: binDirectory, withIntermediateDirectories: true)
@@ -122,6 +126,10 @@ enum ReleaseBuildScriptTests {
       try FileManager.default.copyItem(
         at: URL(fileURLWithPath: source),
         to: releaseBuildScript)
+      let checksumsSource = try Self.repositoryPath(for: "scripts/release-checksums.sh")
+      try FileManager.default.copyItem(
+        at: URL(fileURLWithPath: checksumsSource),
+        to: releaseChecksumsScript)
     }
 
     private func writeFakeGit() throws {
@@ -187,7 +195,8 @@ enum ReleaseBuildScriptTests {
             printf 'missing --dist-dir\\n' >&2
             exit 2
         fi
-        printf 'dmg\\n' > "${dist_dir}/swift-mk_darwin_arm64.dmg"
+        printf 'maint dmg\\n' > "${dist_dir}/swift-mk-maint_darwin_arm64.dmg"
+        printf 'engine dmg\\n' > "${dist_dir}/swift-mk-engine_darwin_arm64.dmg"
         """
       try writeExecutable(script, to: fakeEngine)
     }

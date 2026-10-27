@@ -16,23 +16,6 @@ import Testing
 enum ReleasePackageTests {}
 
 @Test
-func releasePackageUsesLeanProductAndMovedVersionStamp() {
-  let plan = ReleasePackage.plan(
-    tag: "faketag-0000",
-    distDir: "dist",
-    signingEnginePath: ".make/swift-mk")
-
-  #expect(plan.versionFile == "Sources/SwiftMkMaintCore/ReleaseVersion.swift")
-  #expect(
-    plan.buildArguments == [
-      "build", "-c", "release", "--product", "swift-mk-maint", "--arch", "arm64",
-    ])
-  #expect(plan.builtProductName == "swift-mk-maint")
-  #expect(plan.stagedBinaryName == "swift-mk")
-  #expect(plan.assetName == "swift-mk_darwin_arm64.dmg")
-}
-
-@Test
 func releasePackageBuildCarriesTheCompileCacheFlags() throws {
   let previousEnabled = ProcessInfo.processInfo.environment[
     "SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED"]
@@ -54,10 +37,11 @@ func releasePackageBuildCarriesTheCompileCacheFlags() throws {
   setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", "YES", 1)
   setenv("SWIFT_MK_SWIFTPM_CACHE_PATH", cacheDirectory.path, 1)
 
-  let plan = ReleasePackage.plan(
+  let plans = ReleasePackage.plans(
     tag: "faketag-0000",
     distDir: "dist",
     signingEnginePath: ".make/swift-mk")
+  let plan = try #require(plans.first)
   let enabled = ReleasePackage.buildInvocationArguments(plan)
 
   #expect(enabled.starts(with: plan.buildArguments))

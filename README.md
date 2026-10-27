@@ -26,24 +26,48 @@ Each subsystem has a present-tense overview under `docs/<area>/overview.md` that
 - `swift-release.mk` defines shared release wrapper targets from consumer-provided commands.
 - `xcconfig.mk` renders `*.template` files into `Derived/Generated/$(TARGET_NAME)/` for Tuist projects that treat one or more xcconfig files as the source of truth. The consumer Makefile `-include`s its xcconfig files, lists the keys it wants exposed (`XCCONFIG_EXPORTED_VARS`), points at its templates dir (`XCCONFIG_TEMPLATES_DIR`), and lists target names (`XCCONFIG_GENERATOR_TARGETS`). The `xcconfig-generate-config` target renders once per target; `xcconfig-generate-project` chains that into `tuist generate --no-open` so the glob inside `Project.swift` finds the generated files. Templates use `[[KEY]]` substitutions. See `swift-mk render-batch --help` for the underlying renderer.
 - `swift-app.mk` defines shared macOS app packaging for an app that ships as a signed `.app` inside a `.dmg`. A consumer loads it with `SWIFT_MK_MODULES := swift-build.mk swift-app.mk`, sets `SWIFT_APP_NAME` plus a few `SWIFT_APP_*` overrides, and gets `app`, `dmg`, and `release-assets`. `swift-build.mk` still owns `build`; `swift-app.mk` owns everything after the build. The build line stays the consumer's `SWIFT_BUILD_CMD`. Framework-specific packaging, such as an auto-update framework's nested code signing or update feed, stays in the consumer, which signs nested code through the generic `codesign-run` primitive. See the header of `swift-app.mk` for the full variable surface.
-- `scripts/` holds only the bash bootstrap, fetch, build, and distribution layer that runs before the binary exists: `swift-mk-fetch-one.sh`, `swift-mk-build.sh`, `swift-mk-sync.sh`, `swift-mk-fleet-update.sh`, `install-hooks.sh`, and `release-build.sh` (the release dmg build hook).
+- `scripts/` holds only the bash bootstrap, fetch, build, and distribution layer that runs before the binary exists: `swift-mk-fetch-one.sh`, `swift-mk-build.sh`, `swift-mk-sync.sh`, `swift-mk-fleet-update.sh`, `install-hooks.sh`, `release-checksums.sh` (the release checksum helper), and `release-build.sh` (the release dmg build hook).
 - `swiftcheck/` contains the shared SwiftSyntax analyzer package.
 
 ## Install
 
-`swift-mk` builds from source by default at `.make/swift-mk`, which is how you run the lint, build, and dead-code gates. A host that only needs to self-update and prune caches (for example a CI pool runner) can install the prebuilt maintenance binary instead: a lean, index-free build that provides `version`, `update`, and `cache prune`. Install the signed, notarized build on an Apple Silicon Mac with:
+A consumer builds `swift-mk`, the full engine, from source at `.make/swift-mk`. The engine runs the lint, build, and dead-code gates.
+
+`swift-mk-maint` is a separate, smaller maintenance binary from the same package. It does not include the code index library. A typical host is a CI pool runner that only needs to self-update and prune caches.
+
+Each release publishes signed, notarized dmg files for Apple Silicon (arm64):
+
+| Asset | Contents |
+|---|---|
+| `swift-mk-maint_darwin_arm64.dmg` | `swift-mk-maint` |
+| `swift-mk-engine_darwin_arm64.dmg` | `swift-mk` and the `*.bundle` folders containing its lint config files |
+
+`swift-mk` reads its lint config files from bundle folders next to the executable.
+
+[install.sh](install.sh) downloads the maintenance dmg from the latest release, checks the notarization staple and Developer ID team, and installs `swift-mk-maint` into `$XDG_BIN_HOME` or `$HOME/.local/bin`.
+
+Install `swift-mk-maint` on an Apple Silicon Mac:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/agoodkind/swift-makefile/main/install.sh | bash
 ```
 
-To pin a release tag or change the install directory without a local checkout, pass flags through `bash -s --`:
+To select a release tag with `--version` or an install folder with `--bin-dir`, pass flags through `bash -s --`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/agoodkind/swift-makefile/main/install.sh | bash -s -- --version <TAG> --bin-dir <DIR>
 ```
 
-`swift-mk version` reports the installed release tag. `swift-mk update check` reports whether a newer release exists; `swift-mk update apply` verifies the new release's Developer ID signature and staple, then replaces the running binary in place. `swift-mk cache prune --path <dir> --max-bytes <n>` evicts the oldest entries by modification time from a cache directory to keep it under a byte cap. The `update` command is generic: point it at any consumer's dmg release with `--repo`, `--asset`, and `--target`.
+`swift-mk-maint` provides only these maintenance commands:
+
+| Command | Behavior |
+|---|---|
+| `swift-mk-maint version` | Prints the installed release tag. |
+| `swift-mk-maint update check` | Reports whether a newer release exists. |
+| `swift-mk-maint update apply` | Verifies the new release's Developer ID signature and staple, then replaces the running binary in place. |
+| `swift-mk-maint cache prune --path <dir> --max-bytes <n>` | Deletes the oldest entries by modification time from a cache folder until the folder is under the byte cap. |
+
+The `update` command also works with another repository's dmg release when the caller passes `--repo`, `--asset`, and `--target`.
 
 ## Public targets
 
@@ -245,6 +269,8 @@ jobs:
 `release-on-merge` defaults to `manual`, so main-branch pushes do not publish. Set it to `prerelease` or `stable` to opt into publishing after a merge. A stable dispatch with no source override releases the selected workflow ref.
 
 `_release.yml` runs meta, build, notarize, publish. The make layer owns the logic through `swift-release.mk`: set `SWIFT_MK_MODULES := swift-build.mk swift-release.mk` and define `SWIFT_MK_RELEASE_BUILD_CMD` to populate `dist/` (the workflow provides `RELEASE_TAG`, `MARKETING_VERSION`, `CURRENT_PROJECT_VERSION`, and signing variables). Signing, notarization, SBOM, and attestations all no-op silently when their secrets or inputs are absent.
+
+A consumer opts in by having `SWIFT_MK_RELEASE_BUILD_CMD` write `dist/checksums.txt` in `shasum -a 256` output format. Each line contains `<64 hex digest>  <file name>`, with file names relative to `dist/`. The notarize job refreshes the checksums after stapling the notarization ticket into the files, which changes their bytes. The publish job verifies the checksums before `make release-publish` uploads the files and fails if any digest differs. Consumers that do not write `checksums.txt` remain unaffected.
 
 Secrets (set per repo; all optional): `APPLE_DEVELOPER_ID_P12_BASE64`, `APPLE_DEVELOPER_ID_P12_PASSWORD`, `APPLE_NOTARY_KEY_BASE64`, `APPLE_NOTARY_KEY_ID`, `APPLE_NOTARY_ISSUER_ID`.
 

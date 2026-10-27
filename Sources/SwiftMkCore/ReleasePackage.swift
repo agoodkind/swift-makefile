@@ -21,9 +21,13 @@ public struct ReleasePackagePlan: Equatable, Sendable {
   public let assetName: String
   public let identifier: String
   public let volumeName: String
+  /// When this is true, the dmg includes every `*.bundle` folder next to the binary.
+  /// `swift-mk` loads its lint config files from a SwiftPM resource bundle next to
+  /// the running executable.
+  public let includesResourceBundles: Bool
 
   public var stageDir: String {
-    (distDir as NSString).appendingPathComponent(".stage")
+    (distDir as NSString).appendingPathComponent(".stage-\(builtProductName)")
   }
 
   public var dmgPath: String {
@@ -37,6 +41,7 @@ public enum ReleasePackageError: Error, Equatable, CustomStringConvertible {
   case binPathUnresolved(String)
   case builtBinaryMissing(String)
   case commandFailed(String, Int32)
+  case resourceBundlesMissing(String)
   case signingIdentityUnavailable(String)
   case unsafeTag(String)
   case versionStampFailed(String, String)
@@ -49,6 +54,8 @@ public enum ReleasePackageError: Error, Equatable, CustomStringConvertible {
       return "built binary not found at \(path)"
     case let .commandFailed(command, status):
       return "\(command) failed with status \(status)"
+    case .resourceBundlesMissing(let binDir):
+      return "build did not write a resource bundle in \(binDir)"
     case .signingIdentityUnavailable(let reason):
       return "signing identity unavailable: \(reason)"
     case .unsafeTag(let tag):
@@ -69,82 +76,119 @@ public enum ReleasePackage {
   private static let safeTagScalars = CharacterSet(
     charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._+-")
 
-  public static func plan(
+  /// run() writes the release tag into this file before building both products.
+  /// `swift-mk-maint` and `swift-mk` compile it, and `version` prints that tag.
+  private static let versionFile = "Sources/SwiftMkMaintCore/ReleaseVersion.swift"
+
+  /// plans() returns the `swift-mk-maint` plan before the `swift-mk` plan.
+  /// install.sh and the self-updater install the small `swift-mk-maint` tool.
+  /// `swift-mk` is the full engine for the lint, baseline, and gate commands.
+  public static func plans(
     tag: String,
     distDir: String,
     signingEnginePath: String?
-  ) -> ReleasePackagePlan {
-    ReleasePackagePlan(
-      tag: tag,
-      distDir: distDir,
-      signingEnginePath: signingEnginePath,
-      versionFile: "Sources/SwiftMkMaintCore/ReleaseVersion.swift",
-      buildArguments: [
-        "build", "-c", "release", "--product", "swift-mk-maint", "--arch", "arm64",
-      ],
-      builtProductName: "swift-mk-maint",
-      stagedBinaryName: "swift-mk",
-      assetName: "swift-mk_darwin_arm64.dmg",
-      identifier: "io.goodkind.swift-mk",
-      volumeName: "swift-mk")
+  ) -> [ReleasePackagePlan] {
+    releaseProducts.map { product in
+      ReleasePackagePlan(
+        tag: tag,
+        distDir: distDir,
+        signingEnginePath: signingEnginePath,
+        versionFile: versionFile,
+        // With compilation-cache flags, Swift Build failed on Xcode's macOS 27.0 SDK.
+        // The compiler reported an existing SDK stat cache file as missing.
+        // The same release builds completed with --build-system native.
+        buildArguments: [
+          "build", "-c", "release", "--build-system", "native",
+          "--product", product.productName, "--arch", "arm64",
+        ],
+        builtProductName: product.productName,
+        stagedBinaryName: product.productName,
+        assetName: product.assetName,
+        identifier: "io.goodkind.\(product.productName)",
+        volumeName: product.productName,
+        includesResourceBundles: product.includesResourceBundles)
+    }
   }
+
+  private struct ReleaseProduct {
+    let productName: String
+    let assetName: String
+    let includesResourceBundles: Bool
+  }
+
+  private static let releaseProducts = [
+    ReleaseProduct(
+      productName: "swift-mk-maint",
+      assetName: "swift-mk-maint_darwin_arm64.dmg",
+      includesResourceBundles: false),
+    ReleaseProduct(
+      productName: "swift-mk",
+      assetName: "swift-mk-engine_darwin_arm64.dmg",
+      includesResourceBundles: true),
+  ]
 
   public static func run(
     tag: String,
     distDir: String,
     signingEnginePath: String?
   ) throws {
-    let plan = plan(tag: tag, distDir: distDir, signingEnginePath: signingEnginePath)
+    let plans = plans(tag: tag, distDir: distDir, signingEnginePath: signingEnginePath)
     try validateTag(tag)
     try FileManager.default.createDirectory(
-      atPath: plan.distDir,
+      atPath: distDir,
       withIntermediateDirectories: true)
-    // Capture the version file before stamping so a later failure (build, stage,
-    // sign, or dmg) can restore it, leaving ReleaseVersion.swift unstamped rather
-    // than pinned to a tag whose release did not complete.
+    // run() reads the original ReleaseVersion.swift text before stamping.
+    // If a later build, stage, sign, or dmg step throws for either product,
+    // run() writes the saved text back and rethrows.
+    // After success, the file keeps the stamped tag.
     let originalVersionContents: String?
     if tag == devVersion {
       originalVersionContents = nil
     } else {
-      originalVersionContents = try String(contentsOfFile: plan.versionFile, encoding: .utf8)
+      originalVersionContents = try String(contentsOfFile: versionFile, encoding: .utf8)
     }
     do {
       if tag != devVersion {
-        try stampVersion(tag: tag, versionFile: plan.versionFile)
+        try stampVersion(tag: tag, versionFile: versionFile)
       }
-      let built = try buildProduct(plan)
-      // Arm the stage cleanup before staging, so a failure inside stageProduct (for
-      // example a copy error after the .stage directory is created) does not leave
-      // the stage directory behind on the throwing path.
-      defer {
-        cleanupPath(plan.stageDir, label: "stage")
-      }
-      try stageProduct(built: built, plan: plan)
       let shouldSign = try signingIdentityIsAvailable(signingEnginePath: signingEnginePath)
-      let stagedBinary = (plan.stageDir as NSString).appendingPathComponent(plan.stagedBinaryName)
-      if shouldSign {
-        try codesign(
-          signingEnginePath: signingEnginePath,
-          arguments: [
-            "codesign-run", "--mode", "binary", "--identifier", plan.identifier, stagedBinary,
-          ])
-      }
-      try createDmg(plan)
-      if shouldSign {
-        try codesign(
-          signingEnginePath: signingEnginePath,
-          arguments: ["codesign-run", "--mode", "dmg", plan.dmgPath])
+      for plan in plans {
+        try packageProduct(plan, shouldSign: shouldSign)
       }
     } catch {
       if let originalVersionContents {
         do {
           try originalVersionContents.write(
-            toFile: plan.versionFile, atomically: true, encoding: .utf8)
+            toFile: versionFile, atomically: true, encoding: .utf8)
         } catch {
-          Output.warning("release-build: failed to restore \(plan.versionFile): \(error)")
+          Output.warning("release-build: failed to restore \(versionFile): \(error)")
         }
       }
       throw error
+    }
+  }
+
+  private static func packageProduct(_ plan: ReleasePackagePlan, shouldSign: Bool) throws {
+    let built = try buildProduct(plan)
+    // The defer calls cleanupPath(plan.stageDir) on every packageProduct() exit,
+    // including when a copy fails after stageProduct creates the stage folder.
+    defer {
+      cleanupPath(plan.stageDir, label: "stage")
+    }
+    try stageProduct(built: built, plan: plan)
+    let stagedBinary = (plan.stageDir as NSString).appendingPathComponent(plan.stagedBinaryName)
+    if shouldSign {
+      try codesign(
+        signingEnginePath: plan.signingEnginePath,
+        arguments: [
+          "codesign-run", "--mode", "binary", "--identifier", plan.identifier, stagedBinary,
+        ])
+    }
+    try createDmg(plan)
+    if shouldSign {
+      try codesign(
+        signingEnginePath: plan.signingEnginePath,
+        arguments: ["codesign-run", "--mode", "dmg", plan.dmgPath])
     }
   }
 
@@ -175,7 +219,7 @@ public enum ReleasePackage {
     }
   }
 
-  /// The lean build's full argv: the plan's arguments plus the shared
+  /// The release build's full argv: the plan's arguments plus the shared
   /// compilation-cache flags. This build is an engine compile like any other, so
   /// it must run in the same module mode as the verify build and read the same
   /// content-addressed store; without the flags the release stage recompiles
@@ -223,6 +267,27 @@ public enum ReleasePackage {
       withIntermediateDirectories: true)
     let stagedBinary = (plan.stageDir as NSString).appendingPathComponent(plan.stagedBinaryName)
     try FileManager.default.copyItem(atPath: built, toPath: stagedBinary)
+    if plan.includesResourceBundles {
+      try stageResourceBundles(binDir: (built as NSString).deletingLastPathComponent, plan: plan)
+    }
+  }
+
+  /// stageResourceBundles() copies every `*.bundle` folder from the SwiftPM build
+  /// output folder into the stage folder. If the build output folder does not
+  /// contain a `*.bundle` folder, it throws
+  /// ReleasePackageError.resourceBundlesMissing.
+  private static func stageResourceBundles(binDir: String, plan: ReleasePackagePlan) throws {
+    let entries = try FileManager.default.contentsOfDirectory(atPath: binDir)
+    let bundleNames = entries.filter { $0.hasSuffix(".bundle") }.sorted()
+    guard !bundleNames.isEmpty else {
+      throw ReleasePackageError.resourceBundlesMissing(binDir)
+    }
+    for bundleName in bundleNames {
+      let source = (binDir as NSString).appendingPathComponent(bundleName)
+      let destination = (plan.stageDir as NSString).appendingPathComponent(bundleName)
+      Output.debug("release-build: staging \(source) into \(plan.stageDir)")
+      try FileManager.default.copyItem(atPath: source, toPath: destination)
+    }
   }
 
   private static func createDmg(_ plan: ReleasePackagePlan) throws {

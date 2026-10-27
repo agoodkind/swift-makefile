@@ -56,6 +56,8 @@ func makeEnvironmentWithoutInheritedMakeState(_ overrides: [String: String] = [:
     "MAKEFLAGS": "",
     "MFLAGS": "",
     "SWIFT_MK_DEV_DIR": "",
+    // Make must see an environment ref to keep these tests on the snapshot path.
+    "SWIFT_MK_API_REF": engineRef,
   ]
   for (key, value) in overrides {
     environment[key] = value
@@ -327,6 +329,8 @@ func runMakeHelp(
       "GITHUB_ACTIONS": "",
       "GITHUB_RUN_ID": "",
       "SWIFT_MK_DEV_DIR": "",
+      // Make must see an environment ref to keep these tests on the snapshot path.
+      "SWIFT_MK_API_REF": engineRef,
     ]
   }
   for (key, value) in environment {

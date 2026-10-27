@@ -58,6 +58,8 @@ enum BootstrapHelperRunner {
         "HOME": ProcessInfo.processInfo.environment["HOME"] ?? "",
         "SWIFT_MK_API_REPO": "agoodkind/swift-makefile",
         "SWIFT_MK_API_REF": "main",
+        // Snapshot tests pin main to avoid GitHub release discovery.
+        "SWIFT_MK_API_REF_PINNED": "1",
         "SWIFT_MK_DEV_DIR": "",
         "SWIFT_MK_MODULES": "",
         "GITHUB_ACTIONS": "",

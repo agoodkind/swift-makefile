@@ -30,7 +30,7 @@ on:
       candidate-asset-pattern:
         description: Candidate release asset required for stable promotion.
         required: false
-        default: "*.dmg"
+        default: swift-mk-engine_darwin_arm64.dmg
         type: string
 
 # One concurrency group per ref. Every run this workflow now takes is a real
@@ -63,10 +63,18 @@ jobs:
       candidate-tag: ${{ inputs.candidate-tag }}
       source-sha: ${{ inputs.source-sha }}
       allow-source-sha: ${{ inputs.allow-source-sha || false }}
-      candidate-asset-pattern: ${{ inputs.candidate-asset-pattern || '*.dmg' }}
-      # Notarize and staple the signed swift-mk dmg; a dmg is the CLI-friendly
-      # format that can carry a stapled ticket. Match only the dmg so the
-      # unsigned source tarball is skipped.
+      # candidate-asset-pattern sets the asset a candidate pre-release must contain
+      # before manual stable promotion. Its default is now
+      # swift-mk-engine_darwin_arm64.dmg. Earlier releases, such as 26.10.10,
+      # contain only swift-mk_darwin_arm64.dmg. resolve.sh lists the candidate
+      # release assets and rejects candidates that do not contain a matching asset:
+      # "candidate-tag does not contain an asset matching <pattern>".
+      candidate-asset-pattern: ${{ inputs.candidate-asset-pattern || 'swift-mk-engine_darwin_arm64.dmg' }}
+      # notarize-pattern is "*.dmg". The notarize job notarizes and staples every
+      # matching dist file, including swift-mk-maint_darwin_arm64.dmg and
+      # swift-mk-engine_darwin_arm64.dmg. The unsigned source tarball does not
+      # match the pattern. A dmg supports a stapled notarization ticket, but a bare
+      # command-line binary does not.
       notarize-pattern: "*.dmg"
       # The identity and team come from repository variables so a certificate or
       # team change is one settings edit, not a commit in every repository that
@@ -75,7 +83,18 @@ jobs:
       # Distribution, and one shared slot for both was a defect once already.
       signing-identity-name: ${{ vars.APPLE_DEVELOPER_ID_IDENTITY }}
       apple-team-id: ${{ vars.APPLE_TEAM_ID }}
-      # Smoke-verify the published dmg by downloading it and running the shipped
-      # swift-mk binary, so a non-launching release fails here.
-      smoke-asset: swift-mk_darwin_arm64.dmg
+      # smoke-asset sets the release asset that the post-publish job checks with
+      # swift-mk verify-release. smoke-binary sets the executable inside that dmg.
+      # swift-mk verify-release downloads the dmg, mounts it, checks the code
+      # signature, and runs the binary with the version argument. It fails the job
+      # if the binary does not run or does not print the release tag.
+      # The check uses swift-mk-maint_darwin_arm64.dmg because swift-mk-maint
+      # loads only operating system libraries. The swift-mk engine binary in
+      # swift-mk-engine_darwin_arm64.dmg loads libIndexStore.dylib through an
+      # rpath entry that records the build host's Xcode toolchain path.
+      # A post-publish runner with Xcode at a different path cannot launch
+      # the engine binary. The post-publish check does not use the engine dmg
+      # for that reason.
+      smoke-asset: swift-mk-maint_darwin_arm64.dmg
+      smoke-binary: swift-mk-maint
     secrets: inherit
