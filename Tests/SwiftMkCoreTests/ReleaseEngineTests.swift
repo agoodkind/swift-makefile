@@ -24,6 +24,8 @@ private let resourceFileName = "swiftlint.yml"
 private let indexStoreLibraryName = "libIndexStore.dylib"
 private let foundStatus = 302
 private let okStatus = 200
+/// The server uses this status to fail release discovery after installation.
+private let lookupFailureStatus = 503
 
 /// The dmg needs an executable that can pass the installer's version launch check.
 private let fakeEngineScript = """
@@ -132,6 +134,73 @@ func releaseModeRejectsAnEngineDmgThatDoesNotMatchChecksums() async throws {
     #expect(result.stderr.contains(server.codeloadBase + paths.engine))
     #expect(!FileManager.default.fileExists(atPath: makePath(directory, "swift-mk")))
   }
+}
+
+@Test
+func releaseModeReusesARecentReleaseWhenTheLookupFails() async throws {
+  let fixture = try await OffPoolWork.run { try EngineDmgFixture.make() }
+  defer { removeIfPresent(fixture.directory) }
+
+  try await FetchServer.withServer(files: engineFiles()) { server in
+    let paths = ReleasePaths(repository: engineRepository)
+    serveRelease(server, paths: paths, dmg: fixture.dmg, checksums: fixture.checksums)
+    let directory = try temporaryConsumer()
+    defer { removeIfPresent(directory) }
+    let swiftInvocations = (directory as NSString).appendingPathComponent("swift-invocations")
+
+    let online = await runReleaseHelper(directory: directory, server: server)
+    #expect(online.status == 0, "helper failed: \(online.stderr)")
+    let installed = await resolveEngine(
+      directory: directory, server: server, swiftInvocations: swiftInvocations)
+    #expect(installed.status == 0, "resolve failed: \(installed.stderr)")
+
+    server.setRoute(
+      paths.latest, FetchRoute(status: lookupFailureStatus, headers: [:], body: []))
+    let lookupURL = server.codeloadBase + paths.latest
+    let failedLookupReason =
+      "latest release lookup returned HTTP \(lookupFailureStatus) for \(lookupURL)"
+
+    let offline = await runReleaseHelper(directory: directory, server: server)
+    #expect(offline.status == 0, "recent release was not reused: \(offline.stderr)")
+    #expect(offline.stderr.contains(failedLookupReason))
+    #expect(offline.stderr.contains("serving release \(releaseTag)"))
+    #expect(
+      readMakeFile(directory, ".swift-mk-release")
+        == "repo=\(engineRepository)\ntag=\(releaseTag)\n")
+
+    let reused = await resolveEngine(
+      directory: directory, server: server, swiftInvocations: swiftInvocations)
+    #expect(reused.status == 0, "resolve failed: \(reused.stderr)")
+    let engineDownloads = server.requests().filter { $0.path == paths.engine }
+    #expect(engineDownloads.count == 1)
+
+    let marker = readMarker(directory)
+    let staleTimestamp = Int(Date().timeIntervalSince1970) - staleMarkerAge
+    try writeMarker(
+      directory, ref: releaseTag, etag: marker["etag"] ?? "", timestamp: staleTimestamp)
+    let stale = await runReleaseHelper(directory: directory, server: server)
+    #expect(stale.status != 0)
+    #expect(stale.stderr.contains("error: \(failedLookupReason)"))
+
+    let emptyDirectory = try temporaryConsumer()
+    defer { removeIfPresent(emptyDirectory) }
+    let cold = await runReleaseHelper(directory: emptyDirectory, server: server)
+    #expect(cold.status != 0)
+    #expect(cold.stderr.contains("error: \(failedLookupReason)"))
+  }
+}
+
+/// Run the bootstrap helper in release mode against the local test server.
+private func runReleaseHelper(
+  directory: String, server: FetchServer
+) async -> BootstrapHelperRunner.Result {
+  await runHelper(
+    directory: directory,
+    environment: [
+      "SWIFT_MK_API_REF_PINNED": "",
+      "SWIFT_MK_CODELOAD_BASE": server.codeloadBase,
+      "SWIFT_MK_RELEASE_BASE": server.codeloadBase,
+    ])
 }
 
 /// Keep release discovery and asset downloads on the local source-tarball server.

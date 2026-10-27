@@ -34,6 +34,9 @@ MAKE_DIR=".make"
 # for the separate binary resolver.
 DEFAULT_API_REF="main"
 RELEASE_RECORD_PATH="${MAKE_DIR}/.swift-mk-release"
+# swift-mk-build.sh writes this tag after installing and launching the engine
+# from a release dmg.
+INSTALLED_RELEASE_TAG_PATH="${MAKE_DIR}/swift-mk.release-tag"
 # Release lookup requires a 302 tag redirect. Tags become URL components and must
 # exclude path separators and URL escapes.
 RELEASE_TAG_PATTERN='^[A-Za-z0-9._+-]+$'
@@ -704,8 +707,11 @@ release_mode_selected() {
 
 # GitHub's /releases/latest redirect excludes drafts and prereleases.
 # This web URL does not count against the REST API's unauthenticated rate limit.
+# On failure, this function writes the reason and lookup URL to the file path
+# in its second argument. The caller decides whether the failure is fatal.
 resolve_latest_release_tag() {
     local log_path="$1"
+    local reason_path="$2"
     local url="${SWIFT_MK_RELEASE_BASE}/${SWIFT_MK_API_REPO}/releases/latest"
     local response
     local curl_status=0
@@ -717,24 +723,92 @@ resolve_latest_release_tag() {
         -o /dev/null -w '%{http_code} %{redirect_url}' \
         "${url}" 2>"${log_path}") || curl_status=$?
     if [[ ${curl_status} -ne 0 ]]; then
-        printf 'error: latest release lookup failed (curl exit %d) for %s: %s\n' \
-            "${curl_status}" "${url}" "$(stderr_sample "${log_path}")" >&2
+        printf 'latest release lookup failed (curl exit %d) for %s: %s' \
+            "${curl_status}" "${url}" "$(stderr_sample "${log_path}")" > "${reason_path}"
         return 1
     fi
     status_code="${response%% *}"
     location="${response#* }"
     if [[ "${status_code}" != "${HTTP_FOUND_STATUS}" ]]; then
-        printf 'error: latest release lookup returned HTTP %s for %s\n' \
-            "${status_code}" "${url}" >&2
+        printf 'latest release lookup returned HTTP %s for %s' \
+            "${status_code}" "${url}" > "${reason_path}"
         return 1
     fi
     tag="${location##*/releases/tag/}"
     if [[ "${tag}" == "${location}" || ! "${tag}" =~ ${RELEASE_TAG_PATTERN} ]]; then
-        printf 'error: latest release lookup for %s redirected to %s, which does not name a release tag\n' \
-            "${url}" "${location}" >&2
+        printf 'latest release lookup for %s redirected to %s, which does not name a release tag' \
+            "${url}" "${location}" > "${reason_path}"
         return 1
     fi
     printf '%s' "${tag}"
+}
+
+# The reader extracts key=value fields without evaluating the record as shell code.
+read_release_record_field() {
+    local field_name="$1"
+    local line
+    if [[ ! -s "${RELEASE_RECORD_PATH}" ]]; then
+        return 1
+    fi
+    while IFS= read -r line; do
+        if [[ "${line}" == "${field_name}="* ]]; then
+            printf '%s' "${line#"${field_name}="}"
+            return 0
+        fi
+    done < "${RELEASE_RECORD_PATH}"
+    return 1
+}
+
+# Reuse requires matching installed and snapshot tags for this repository's
+# recorded release, with all required snapshot assets present. CI rejects reuse.
+# Release mode uses ref mode's one-hour window from snapshot provisioning.
+# A 304 response does not renew the marker timestamp.
+recorded_release_reusable() {
+    local recorded_repo
+    local recorded_tag
+    local installed_tag
+    local marker_ref
+    if running_in_ci; then
+        return 1
+    fi
+    if [[ ! -f "${INSTALLED_RELEASE_TAG_PATH}" ]]; then
+        return 1
+    fi
+    if ! recorded_repo=$(read_release_record_field "repo"); then
+        return 1
+    fi
+    if ! recorded_tag=$(read_release_record_field "tag"); then
+        return 1
+    fi
+    if [[ "${recorded_repo}" != "${SWIFT_MK_API_REPO}" || -z "${recorded_tag}" ]]; then
+        return 1
+    fi
+    installed_tag=$(cat "${INSTALLED_RELEASE_TAG_PATH}")
+    if [[ "${installed_tag}" != "${recorded_tag}" ]]; then
+        return 1
+    fi
+    marker_ref=$(read_marker_field "ref" || printf '')
+    if [[ "${marker_ref}" != "${recorded_tag}" ]]; then
+        return 1
+    fi
+    if ! assets_complete "${MAKE_DIR}"; then
+        return 1
+    fi
+    marker_is_recent
+}
+
+# Successful reuse still reports the lookup failure on stderr.
+# The warning includes its URL, the reused tag, and the snapshot provisioning age.
+serve_recorded_release_with_warning() {
+    local reason="$1"
+    local recorded
+    local recorded_tag
+    local now
+    recorded=$(read_marker_field "timestamp")
+    recorded_tag=$(read_release_record_field "tag")
+    now=$(current_epoch_seconds)
+    printf 'swift-mk: %s; serving release %s from .make, provisioned %s ago\n' \
+        "${reason}" "${recorded_tag}" "$(format_age $(( now - recorded )))" >&2
 }
 
 # An unchanged record must not cause a write under .make after a 304 response.
@@ -811,6 +885,8 @@ provision() {
 main() {
     local release_tag=""
     local lookup_log=""
+    local lookup_reason=""
+    local reason_text=""
 
     mkdir -p "${MAKE_DIR}"
 
@@ -842,11 +918,19 @@ main() {
             printf 'error: could not create a temporary file for the release lookup (mktemp failed); check TMPDIR access\n' >&2
             return 1
         fi
-        if ! release_tag=$(resolve_latest_release_tag "${lookup_log}"); then
-            rm -f "${lookup_log}"
+        lookup_reason="${lookup_log}.reason"
+        if ! release_tag=$(resolve_latest_release_tag "${lookup_log}" "${lookup_reason}"); then
+            reason_text=$(cat "${lookup_reason}")
+            rm -f "${lookup_log}" "${lookup_reason}"
+            # Reuse must leave .make unchanged, including the release record.
+            if recorded_release_reusable; then
+                serve_recorded_release_with_warning "${reason_text}"
+                return 0
+            fi
+            printf 'error: %s\n' "${reason_text}" >&2
             return 1
         fi
-        rm -f "${lookup_log}"
+        rm -f "${lookup_log}" "${lookup_reason}"
         SWIFT_MK_API_REF="${release_tag}"
     elif ! clear_release_record; then
         return 1
