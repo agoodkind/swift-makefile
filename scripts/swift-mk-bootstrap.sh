@@ -26,6 +26,9 @@ SWIFT_MK_MODULES="${SWIFT_MK_MODULES:-}"
 # Empty defaults support older bootstrap.mk copies that omit both values.
 SWIFT_MK_BUILD_REPO="${SWIFT_MK_BUILD_REPO:-}"
 SWIFT_MK_API_REF_PINNED="${SWIFT_MK_API_REF_PINNED:-}"
+# SWIFT_MK_SNAPSHOT_FRESH=1 means swift.mk extracted the SWIFT_MK_API_REF
+# tarball earlier in this make parse.
+SWIFT_MK_SNAPSHOT_FRESH="${SWIFT_MK_SNAPSHOT_FRESH:-}"
 # Tests use this internal host override for local release discovery and downloads.
 SWIFT_MK_RELEASE_BASE="${SWIFT_MK_RELEASE_BASE:-https://github.com}"
 
@@ -932,8 +935,16 @@ main() {
         fi
         rm -f "${lookup_log}" "${lookup_reason}"
         SWIFT_MK_API_REF="${release_tag}"
-    elif ! clear_release_record; then
-        return 1
+    else
+        if ! clear_release_record; then
+            return 1
+        fi
+        # Ref mode already has the requested snapshot from this parse and does not
+        # need another validation request. Release mode must still provision the
+        # selected tag because the inline extraction used main.
+        if [[ "${SWIFT_MK_SNAPSHOT_FRESH}" == "1" ]]; then
+            return 0
+        fi
     fi
 
     if ! ensure_snapshot; then

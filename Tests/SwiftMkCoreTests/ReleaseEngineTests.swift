@@ -40,6 +40,32 @@ private let failingSwiftScript = """
   exit 1
   """
 
+/// Recording and rejecting --product swift-mk calls exposes a source build.
+/// Other calls use /usr/bin/swift because swift.mk runs swift build --help
+/// during makefile parsing.
+private let recordingSwiftScript = """
+  #!/bin/sh
+  case "$*" in
+      *"--product swift-mk"*)
+          printf 'swift %s\\n' "$*" >> "${SWIFT_INVOCATIONS_FILE}"
+          exit 1
+          ;;
+  esac
+  exec /usr/bin/swift "$@"
+  """
+
+/// The regression test must exercise the actual snapshot provisioning and
+/// binary resolution code.
+private let realEngineFiles = [
+  "swift.mk",
+  "scripts/swift-mk-bootstrap.sh",
+  "scripts/swift-mk-build.sh",
+]
+/// The old bootstrap.mk fetches swift.mk from SWIFT_MK_BASE_URL with curl
+/// because the test excludes gh from PATH.
+private let rawBasePath = "/raw"
+private let rawSwiftMkPath = "/raw/swift.mk"
+
 // MARK: - ReleasePaths
 
 /// ReleasePaths stores request paths for one repository and the fixed test tag.
@@ -187,6 +213,112 @@ func releaseModeReusesARecentReleaseWhenTheLookupFails() async throws {
     let cold = await runReleaseHelper(directory: emptyDirectory, server: server)
     #expect(cold.status != 0)
     #expect(cold.stderr.contains("error: \(failedLookupReason)"))
+  }
+}
+
+@Test
+func preHelperBootstrapInstallsTheEngineDmgOnTheFirstParse() async throws {
+  let fixture = try await OffPoolWork.run { try EngineDmgFixture.make() }
+  defer { removeIfPresent(fixture.directory) }
+
+  let root = BootstrapHelperRunner.repositoryRoot()
+  var files = engineFiles()
+  for relativePath in realEngineFiles {
+    files[relativePath] = try String(
+      contentsOfFile: (root as NSString).appendingPathComponent(relativePath), encoding: .utf8)
+  }
+  let swiftMk = try #require(files["swift.mk"])
+
+  try await FetchServer.withServer(files: files) { server in
+    let paths = ReleasePaths(repository: engineRepository)
+    serveRelease(server, paths: paths, dmg: fixture.dmg, checksums: fixture.checksums)
+    server.setRoute(
+      rawSwiftMkPath, FetchRoute(status: okStatus, headers: [:], body: Array(swiftMk.utf8)))
+    let directory = try temporaryConsumer()
+    defer { removeIfPresent(directory) }
+    let oldBootstrap = try String(
+      contentsOfFile: root + "/Tests/SwiftMkCoreTests/Fixtures/pre-helper-bootstrap.mk",
+      encoding: .utf8)
+    try oldBootstrap.write(
+      toFile: (directory as NSString).appendingPathComponent("bootstrap.mk"),
+      atomically: true,
+      encoding: .utf8)
+    try "include bootstrap.mk\n".write(
+      toFile: (directory as NSString).appendingPathComponent("Makefile"),
+      atomically: true,
+      encoding: .utf8)
+    let swiftInvocations = (directory as NSString).appendingPathComponent("swift-invocations")
+
+    let result = await runConsumerMake(
+      directory: directory, server: server, swiftInvocations: swiftInvocations)
+    #expect(result.status == 0, "\(result.output)")
+
+    #expect(
+      readMakeFile(directory, ".swift-mk-release")
+        == "repo=\(engineRepository)\ntag=\(releaseTag)\n")
+    #expect(readMakeFile(directory, "swift-mk.release-tag") == "\(releaseTag)\n")
+    let engineDownloads = server.requests().filter { $0.path == paths.engine }
+    #expect(engineDownloads.count == 1)
+    var swiftBuildCalls: String?
+    if FileManager.default.fileExists(atPath: swiftInvocations) {
+      swiftBuildCalls = try String(contentsOfFile: swiftInvocations, encoding: .utf8)
+    }
+    #expect(swiftBuildCalls == nil, "\(swiftBuildCalls ?? "")\n\(result.output)")
+    let launched = await OffPoolWork.run {
+      Shell.run(makePath(directory, "swift-mk"), ["version"])
+    }
+    #expect(launched.stdout == "version: \(releaseTag)\n")
+  }
+}
+
+/// The consumer must select release mode during makefile parsing before
+/// swift-mk-bin resolves the engine. The explicit environment omits
+/// SWIFT_MK_API_REF to keep the parse unpinned.
+private func runConsumerMake(
+  directory: String, server: FetchServer, swiftInvocations: String
+) async -> MakeResult {
+  let fakeBin = (directory as NSString).appendingPathComponent("fakebin")
+  let home = TestGlobalLock.withLock { ProcessInfo.processInfo.environment["HOME"] ?? "" }
+  let environment = [
+    "PATH": fakeBin + ":" + pathWithoutGh,
+    "HOME": home,
+    "MAKEFLAGS": "",
+    "MFLAGS": "",
+    "GITHUB_ACTIONS": "",
+    "GITHUB_RUN_ID": "",
+    "SWIFT_MK_DEV_DIR": "",
+    "SWIFT_MK_BASE_URL": server.codeloadBase + rawBasePath,
+    "SWIFT_MK_CODELOAD_BASE": server.codeloadBase,
+    "SWIFT_MK_RELEASE_BASE": server.codeloadBase,
+    "SWIFT_INVOCATIONS_FILE": swiftInvocations,
+  ]
+  return await OffPoolWork.run {
+    do {
+      try FileManager.default.createDirectory(
+        atPath: fakeBin, withIntermediateDirectories: true)
+      let swiftPath = (fakeBin as NSString).appendingPathComponent("swift")
+      try recordingSwiftScript.write(toFile: swiftPath, atomically: true, encoding: .utf8)
+      try FileManager.default.setAttributes(
+        [.posixPermissions: writableDirectoryMode], ofItemAtPath: swiftPath)
+    } catch {
+      return MakeResult(output: "test: could not write the fake swift: \(error)", status: -1)
+    }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/make")
+    process.arguments = ["swift-mk-bin"]
+    process.currentDirectoryURL = URL(fileURLWithPath: directory)
+    process.environment = environment
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
+    do {
+      try process.run()
+    } catch {
+      return MakeResult(output: "test: could not launch make: \(error)", status: -1)
+    }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return MakeResult(output: Output.decodeCapturedUTF8(data), status: process.terminationStatus)
   }
 }
 
