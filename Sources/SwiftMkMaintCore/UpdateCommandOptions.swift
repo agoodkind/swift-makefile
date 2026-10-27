@@ -21,7 +21,7 @@ public struct UpdateCommandOptions: ParsableArguments {
   public var repo = "agoodkind/swift-makefile"
 
   @Option(name: .customLong("asset"), help: "Release asset name to install.")
-  public var assetName = "swift-mk_darwin_arm64.dmg"
+  public var assetName = "swift-mk-maint_darwin_arm64.dmg"
 
   @Option(name: .customLong("target"), help: "Binary path to replace.")
   public var targetPath = SwiftMkUpdate.UpdateOptions.defaultTargetPath()

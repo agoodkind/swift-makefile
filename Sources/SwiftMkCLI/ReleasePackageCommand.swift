@@ -13,14 +13,16 @@ import SwiftMkCore
 
 struct ReleasePackageCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
-    commandName: "release-package-maint",
-    abstract: "Build and package the lean maintenance swift-mk release binary."
+    commandName: "release-package",
+    abstract: "Build swift-mk-maint and the swift-mk engine and write a dmg file for each."
   )
 
-  @Option(name: .long, help: "Release tag to stamp into the shipped binary.")
+  @Option(
+    name: .long,
+    help: "Set the release tag that both binaries print with their version command.")
   var tag: String
 
-  @Option(name: .customLong("dist-dir"), help: "Directory for the generated dmg.")
+  @Option(name: .customLong("dist-dir"), help: "Write both dmg files to this folder.")
   var distDir = "dist"
 
   @Option(

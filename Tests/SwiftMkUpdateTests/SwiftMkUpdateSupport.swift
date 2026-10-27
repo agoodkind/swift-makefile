@@ -35,7 +35,7 @@ enum SwiftMkUpdateSupport {
       binary: binary,
       teamID: teamID,
       currentVersion: currentVersion,
-      assetName: "swift-mk_darwin_arm64.dmg")
+      assetName: "swift-mk-maint_darwin_arm64.dmg")
   }
 
   static func releaseListData() -> Data {
@@ -49,7 +49,7 @@ enum SwiftMkUpdateSupport {
           "prerelease": true,
           "assets": [
             {
-              "name": "swift-mk_darwin_arm64.dmg",
+              "name": "swift-mk-maint_darwin_arm64.dmg",
               "browser_download_url": "https://example.test/swift-mk.dmg",
               "digest": "sha256:\(sha256)"
             }
@@ -69,7 +69,7 @@ enum SwiftMkUpdateSupport {
         "prerelease": true,
         "assets": [
           {
-            "name": "swift-mk_darwin_arm64.dmg",
+            "name": "swift-mk-maint_darwin_arm64.dmg",
             "browser_download_url": "https://example.test/swift-mk.dmg",
             "digest": "sha256:\(sha256)"
           }
@@ -384,7 +384,7 @@ extension CheckResult {
     CheckResult(
       currentVersion: SwiftMkUpdateSupport.currentTag,
       latestTag: SwiftMkUpdateSupport.newerTag,
-      assetName: "swift-mk_darwin_arm64.dmg",
+      assetName: "swift-mk-maint_darwin_arm64.dmg",
       assetURL: URL(string: "https://example.test/swift-mk.dmg"),
       updateAvailable: updateAvailable)
   }

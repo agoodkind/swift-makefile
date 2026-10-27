@@ -24,7 +24,7 @@ enum SwiftMkReleaseVerifierTests {
       let result = try updater.verifyRelease(tag: newerTag, requireSignature: true)
 
       #expect(result.tag == newerTag)
-      #expect(result.assetName == "swift-mk_darwin_arm64.dmg")
+      #expect(result.assetName == "swift-mk-maint_darwin_arm64.dmg")
       #expect(result.requireSignature)
       #expect(result.validationOutput.contains("version: \(newerTag)"))
     }

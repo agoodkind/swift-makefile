@@ -26,11 +26,11 @@ enum SwiftMkUpdateTests {
   static func configDefaultsAssetNameAndValidatesRequiredFields() throws {
     let config = UpdateConfig(
       repo: "agoodkind/swift-makefile",
-      binary: "swift-mk",
+      binary: "swift-mk-maint",
       teamID: teamID,
       currentVersion: currentTag)
 
-    #expect(config.assetName == "swift-mk_darwin_arm64.dmg")
+    #expect(config.assetName == "swift-mk-maint_darwin_arm64.dmg")
     try config.validate()
 
     let invalid = UpdateConfig(
@@ -58,13 +58,13 @@ enum SwiftMkUpdateTests {
   static func expectedSHA256ParsesChecksumLines() {
     let text = """
       111111 other.dmg
-      \(sha256)  swift-mk_darwin_arm64.dmg
+      \(sha256)  swift-mk-maint_darwin_arm64.dmg
       222222 *another.dmg
       """
 
     #expect(
-      ReleaseResolver.expectedSHA256(checksumsText: text, assetName: "swift-mk_darwin_arm64.dmg")
-        == sha256)
+      ReleaseResolver.expectedSHA256(
+        checksumsText: text, assetName: "swift-mk-maint_darwin_arm64.dmg") == sha256)
     #expect(ReleaseResolver.expectedSHA256(checksumsText: text, assetName: "missing.dmg") == nil)
   }
 
@@ -75,13 +75,13 @@ enum SwiftMkUpdateTests {
     let assets = [
       ReleaseAsset(name: "ignored.dmg", browserDownloadURL: ignoredURL, digest: nil),
       ReleaseAsset(
-        name: "swift-mk_darwin_arm64.dmg",
+        name: "swift-mk-maint_darwin_arm64.dmg",
         browserDownloadURL: wantedURL,
         digest: "sha256:\(sha256)"),
     ]
 
     #expect(
-      ReleaseResolver.assetURL(assets: assets, assetName: "swift-mk_darwin_arm64.dmg")
+      ReleaseResolver.assetURL(assets: assets, assetName: "swift-mk-maint_darwin_arm64.dmg")
         == wantedURL)
     #expect(ReleaseResolver.assetURL(assets: assets, assetName: "missing.dmg") == nil)
   }
