@@ -31,19 +31,43 @@ Each subsystem has a present-tense overview under `docs/<area>/overview.md` that
 
 ## Install
 
-`swift-mk` builds from source by default at `.make/swift-mk`, which is how you run the lint, build, and dead-code gates. A host that only needs to self-update and prune caches (for example a CI pool runner) can install the prebuilt maintenance binary instead: a lean, index-free build that provides `version`, `update`, and `cache prune`. Install the signed, notarized build on an Apple Silicon Mac with:
+A consumer builds `swift-mk`, the full engine, from source at `.make/swift-mk`. The engine runs the lint, build, and dead-code gates.
+
+`swift-mk-maint` is a separate, smaller maintenance binary from the same package. It does not include the code index library. A typical host is a CI pool runner that only needs to self-update and prune caches.
+
+Each release publishes signed, notarized dmg files for Apple Silicon (arm64):
+
+| Asset | Contents |
+|---|---|
+| `swift-mk-maint_darwin_arm64.dmg` | `swift-mk-maint` |
+| `swift-mk-engine_darwin_arm64.dmg` | `swift-mk` and the `*.bundle` folders containing its lint config files |
+
+`swift-mk` reads its lint config files from bundle folders next to the executable.
+
+[install.sh](install.sh) downloads the maintenance dmg from the latest release, checks the notarization staple and Developer ID team, and installs `swift-mk-maint` into `$XDG_BIN_HOME` or `$HOME/.local/bin`.
+
+Install `swift-mk-maint` on an Apple Silicon Mac:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/agoodkind/swift-makefile/main/install.sh | bash
 ```
 
-To pin a release tag or change the install directory without a local checkout, pass flags through `bash -s --`:
+To select a release tag with `--version` or an install folder with `--bin-dir`, pass flags through `bash -s --`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/agoodkind/swift-makefile/main/install.sh | bash -s -- --version <TAG> --bin-dir <DIR>
 ```
 
-`swift-mk version` reports the installed release tag. `swift-mk update check` reports whether a newer release exists; `swift-mk update apply` verifies the new release's Developer ID signature and staple, then replaces the running binary in place. `swift-mk cache prune --path <dir> --max-bytes <n>` evicts the oldest entries by modification time from a cache directory to keep it under a byte cap. The `update` command is generic: point it at any consumer's dmg release with `--repo`, `--asset`, and `--target`.
+`swift-mk-maint` provides only these maintenance commands:
+
+| Command | Behavior |
+|---|---|
+| `swift-mk-maint version` | Prints the installed release tag. |
+| `swift-mk-maint update check` | Reports whether a newer release exists. |
+| `swift-mk-maint update apply` | Verifies the new release's Developer ID signature and staple, then replaces the running binary in place. |
+| `swift-mk-maint cache prune --path <dir> --max-bytes <n>` | Deletes the oldest entries by modification time from a cache folder until the folder is under the byte cap. |
+
+The `update` command also works with another repository's dmg release when the caller passes `--repo`, `--asset`, and `--target`.
 
 ## Public targets
 
