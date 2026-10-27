@@ -16,20 +16,34 @@ import Testing
 enum ReleasePackageTests {}
 
 @Test
-func releasePackageUsesLeanProductAndMovedVersionStamp() {
-  let plan = ReleasePackage.plan(
+func releasePackagePlansTheMaintAndEngineDmgs() throws {
+  let plans = ReleasePackage.plans(
     tag: "faketag-0000",
     distDir: "dist",
     signingEnginePath: ".make/swift-mk")
 
-  #expect(plan.versionFile == "Sources/SwiftMkMaintCore/ReleaseVersion.swift")
+  try #require(plans.count == 2)
+  let maint = plans[0]
+  let engine = plans[1]
+
+  #expect(maint.versionFile == "Sources/SwiftMkMaintCore/ReleaseVersion.swift")
   #expect(
-    plan.buildArguments == [
+    maint.buildArguments == [
       "build", "-c", "release", "--product", "swift-mk-maint", "--arch", "arm64",
     ])
-  #expect(plan.builtProductName == "swift-mk-maint")
-  #expect(plan.stagedBinaryName == "swift-mk")
-  #expect(plan.assetName == "swift-mk_darwin_arm64.dmg")
+  #expect(maint.stagedBinaryName == "swift-mk-maint")
+  #expect(maint.assetName == "swift-mk-maint_darwin_arm64.dmg")
+  #expect(!maint.includesResourceBundles)
+
+  #expect(engine.versionFile == maint.versionFile)
+  #expect(
+    engine.buildArguments == [
+      "build", "-c", "release", "--product", "swift-mk", "--arch", "arm64",
+    ])
+  #expect(engine.stagedBinaryName == "swift-mk")
+  #expect(engine.assetName == "swift-mk-engine_darwin_arm64.dmg")
+  #expect(engine.includesResourceBundles)
+  #expect(engine.stageDir != maint.stageDir)
 }
 
 @Test
@@ -54,10 +68,11 @@ func releasePackageBuildCarriesTheCompileCacheFlags() throws {
   setenv("SWIFT_MK_SWIFTPM_COMPILE_CACHE_ENABLED", "YES", 1)
   setenv("SWIFT_MK_SWIFTPM_CACHE_PATH", cacheDirectory.path, 1)
 
-  let plan = ReleasePackage.plan(
+  let plans = ReleasePackage.plans(
     tag: "faketag-0000",
     distDir: "dist",
     signingEnginePath: ".make/swift-mk")
+  let plan = try #require(plans.first)
   let enabled = ReleasePackage.buildInvocationArguments(plan)
 
   #expect(enabled.starts(with: plan.buildArguments))
