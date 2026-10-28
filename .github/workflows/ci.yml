@@ -40,3 +40,11 @@ jobs:
       apple-team-id: ${{ vars.APPLE_TEAM_ID }}
       import-signing-cert: true
     secrets: inherit
+
+  swift-xcode-27:
+    uses: ./.github/workflows/_ci.yml
+    with:
+      runner: xcode-27
+      xcode-version: "27.1"
+      # Run this compatibility check on the hosted macOS 27 image.
+      local-pool-capacity-url: ""
