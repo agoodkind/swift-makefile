@@ -19,12 +19,12 @@ import Foundation
 /// Resolves the pinned free, offline Periphery fork into the shared engine cache.
 enum Periphery {
   static let repository = "agoodkind/periphery"
-  static let revision = "bca88e7a7a026b2c69680a932e1513ea32e5d738"
-  static let releaseTag = "3.8.0-agoodkind.2"
-  static let assetName = "periphery-3.8.0-agoodkind.2-macos-arm64.zip"
-  static let assetSHA256 = "5edb9c7e66474cf82cd7edc5eb842e3d64209402df4249a37cd00fe5bfcc71d9"
-  static let binarySHA256 = "9481e34970169d29776725a67007f87762530594762b620e2295425dad270b12"
-  private static let expectedVersion = "3.8.0-agoodkind.2"
+  static let revision = "e5b4cd24b314467a2b6252f0336c298760d39e80"
+  static let releaseTag = "3.8.0-agoodkind.6"
+  static let assetName = "periphery-3.8.0-agoodkind.6-macos-arm64.zip"
+  static let assetSHA256 = "7e08e9cea2aa7abf71a2813b129ea84f6e5bd161ab5f22a52745e909f739ddfb"
+  static let binarySHA256 = "e8dcc97a0b3f358ebeb477e4c10e7c87bf6c7dbe00fafa9384d2e2b63aa26c69"
+  private static let expectedVersion = "3.8.0-agoodkind.6"
 
   static func cacheBaseDirectory() -> String {
     let home = Env.get("HOME", FileManager.default.homeDirectoryForCurrentUser.path)
